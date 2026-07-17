@@ -37,6 +37,7 @@ import {
   LAYER_KINDS,
   LAYER_OPACITY,
   useGlobeControlStore,
+  VECTOR_LAYER_STYLE_DEFAULTS,
   type TCoastlineResolution,
   type TGraticuleSpacing,
   type TLayerEntry,
@@ -75,16 +76,13 @@ const COASTLINE_GEOJSON_PATHS: Record<TCoastlineResolution, string> = {
   [COASTLINE_RESOLUTIONS.FIFTY_M]: "static/ne_50m_coastline.geojson",
 };
 
-// Phase-1 constants; per-layer styling controls arrive with the vector UI
-const vectorFillStyle = {
-  color: "#3388ff",
-  opacity: 0.35,
+// placement only; colors/opacity come from the layer entry's vectorStyle
+const vectorFillPlacement = {
   radius: 1.001,
   zOffset: 0.008,
 } as const;
 
-const vectorStrokeStyle: TOverlayLineStyle = {
-  color: "#88ccff",
+const vectorStrokePlacement = {
   radius: 1.002,
   zOffset: 0.01,
 } as const;
@@ -157,7 +155,9 @@ export function useGridOverlays(options: UseGridOverlaysOptions) {
     }
   );
 
-  function getLineProjectionOptions(style: TOverlayLineStyle) {
+  function getLineProjectionOptions(
+    style: Pick<TOverlayLineStyle, "radius" | "zOffset">
+  ) {
     return {
       radius: projectionHelper.value.isFlat ? 1 : style.radius,
       zOffset: projectionHelper.value.isFlat ? style.zOffset : 0,
@@ -532,9 +532,13 @@ export function useGridOverlays(options: UseGridOverlaysOptions) {
 
   function getFillProjectionOptions() {
     return {
-      radius: projectionHelper.value.isFlat ? 1 : vectorFillStyle.radius,
-      zOffset: projectionHelper.value.isFlat ? vectorFillStyle.zOffset : 0,
+      radius: projectionHelper.value.isFlat ? 1 : vectorFillPlacement.radius,
+      zOffset: projectionHelper.value.isFlat ? vectorFillPlacement.zOffset : 0,
     };
+  }
+
+  function getVectorStyle(entry: TLayerEntry) {
+    return entry.vectorStyle ?? VECTOR_LAYER_STYLE_DEFAULTS;
   }
 
   function createVectorLayerGroup(entry: TLayerEntry) {
@@ -543,11 +547,12 @@ export function useGridOverlays(options: UseGridOverlaysOptions) {
       return undefined;
     }
     const helper = projectionHelper.value;
+    const style = getVectorStyle(entry);
     const fill = new THREE.Mesh(
       geojson2gpuPolygonFillGeometry(data, helper, getFillProjectionOptions()),
       makeGpuProjectedPolygonMaterial({
-        color: vectorFillStyle.color,
-        opacity: vectorFillStyle.opacity,
+        color: style.fillColor,
+        opacity: style.fillOpacity,
         ...getFillProjectionOptions(),
       })
     );
@@ -557,11 +562,11 @@ export function useGridOverlays(options: UseGridOverlaysOptions) {
       geojson2gpuLineSegmentsGeometry(
         polygonsToOutlines(data),
         helper,
-        getLineProjectionOptions(vectorStrokeStyle)
+        getLineProjectionOptions(vectorStrokePlacement)
       ),
       makeGpuProjectedLineMaterial({
-        color: vectorStrokeStyle.color,
-        ...getLineProjectionOptions(vectorStrokeStyle),
+        color: style.strokeColor,
+        ...getLineProjectionOptions(vectorStrokePlacement),
       })
     );
     outline.name = `vectorOutline:${entry.id}`;
@@ -572,13 +577,30 @@ export function useGridOverlays(options: UseGridOverlaysOptions) {
     return group;
   }
 
+  // style changes are pure uniform updates; geometry is never rebuilt
+  function applyVectorLayerStyle(group: THREE.Group, entry: TLayerEntry) {
+    const style = getVectorStyle(entry);
+    for (const child of group.children) {
+      const material = (child as THREE.Mesh | THREE.LineSegments)
+        .material as THREE.ShaderMaterial;
+      if (child instanceof THREE.LineSegments) {
+        (material.uniforms.lineColor.value as THREE.Color).set(
+          style.strokeColor
+        );
+      } else if (child instanceof THREE.Mesh) {
+        (material.uniforms.fillColor.value as THREE.Color).set(style.fillColor);
+        material.uniforms.fillOpacity.value = style.fillOpacity;
+      }
+    }
+  }
+
   function updateVectorGroupProjection(group: THREE.Group) {
     for (const child of group.children) {
       if (child instanceof THREE.LineSegments) {
         updateGpuProjectedLineMaterial(
           child.material as THREE.ShaderMaterial,
           projectionHelper.value,
-          getLineProjectionOptions(vectorStrokeStyle)
+          getLineProjectionOptions(vectorStrokePlacement)
         );
       } else if (child instanceof THREE.Mesh) {
         updateGpuProjectedPolygonMaterial(
@@ -637,6 +659,7 @@ export function useGridOverlays(options: UseGridOverlaysOptions) {
         scene.add(group);
       }
       group.visible = entry.visible;
+      applyVectorLayerStyle(group, entry);
       updateVectorGroupProjection(group);
     }
 

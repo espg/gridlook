@@ -33,6 +33,14 @@ export type THoveredGridPoint = {
   screenY: number;
 };
 
+export type THoveredVectorFeature = {
+  layerId: string;
+  layerName: string;
+  properties: Record<string, unknown>;
+  screenX: number;
+  screenY: number;
+};
+
 export const LAYER_KINDS = {
   COASTLINES: "coastlines",
   GRATICULES: "graticules",
@@ -73,6 +81,18 @@ export const LAYER_OPACITY = {
   STEP: 0.05,
 } as const;
 
+export type TVectorLayerStyle = {
+  fillColor: string;
+  fillOpacity: number;
+  strokeColor: string;
+};
+
+export const VECTOR_LAYER_STYLE_DEFAULTS: TVectorLayerStyle = {
+  fillColor: "#3388ff",
+  fillOpacity: 0.35,
+  strokeColor: "#88ccff",
+} as const;
+
 export type TLayerEntry = {
   id: string;
   kind: TLayerKind;
@@ -83,6 +103,8 @@ export type TLayerEntry = {
   maskMode: TLandSeaMaskMode;
   // in-memory GeoJSON rendered by vector layers
   vectorData?: FeatureCollection;
+  // per-layer styling for vector layers
+  vectorStyle?: TVectorLayerStyle;
 };
 
 export function normalizeLayerOpacity(opacity: number) {
@@ -172,6 +194,7 @@ export const useGlobeControlStore = defineStore("globeControl", {
       isRotating: false,
       hoverEnabled: false,
       hoveredGridPoint: undefined as THoveredGridPoint | undefined,
+      hoveredVectorFeature: undefined as THoveredVectorFeature | undefined,
       catalogUrl: undefined as string | undefined,
       catalogData: undefined as TCatalog | undefined,
       // layer panel stack, ordered top → bottom; order determines render order
@@ -333,6 +356,7 @@ export const useGlobeControlStore = defineStore("globeControl", {
         opacity: LAYER_OPACITY.MAX,
         maskMode: LAND_SEA_MASK_MODES.OFF,
         vectorData: markRaw(data),
+        vectorStyle: { ...VECTOR_LAYER_STYLE_DEFAULTS },
       });
     },
     removeVectorLayer(id: string) {
@@ -346,6 +370,18 @@ export const useGlobeControlStore = defineStore("globeControl", {
       if (layer) {
         Object.assign(layer, patch);
       }
+    },
+    updateVectorLayerStyle(id: string, patch: Partial<TVectorLayerStyle>) {
+      const layer = this.layerStack.find((entry) => entry.id === id);
+      if (!layer || layer.kind !== LAYER_KINDS.VECTOR) {
+        return;
+      }
+      const style = layer.vectorStyle ?? { ...VECTOR_LAYER_STYLE_DEFAULTS };
+      Object.assign(style, patch);
+      if (patch.fillOpacity !== undefined) {
+        style.fillOpacity = normalizeLayerOpacity(patch.fillOpacity);
+      }
+      layer.vectorStyle = style;
     },
     updateLayerOpacity(id: string, opacity: number) {
       const layer = this.layerStack.find((entry) => entry.id === id);
@@ -387,6 +423,12 @@ export const useGlobeControlStore = defineStore("globeControl", {
     },
     clearHoveredGridPoint() {
       this.hoveredGridPoint = undefined;
+    },
+    setHoveredVectorFeature(feature: THoveredVectorFeature) {
+      this.hoveredVectorFeature = feature;
+    },
+    clearHoveredVectorFeature() {
+      this.hoveredVectorFeature = undefined;
     },
     resetExcept(keysToKeep: (keyof typeof this.$state)[] = []) {
       const state = this as Record<keyof typeof this.$state, unknown>;
