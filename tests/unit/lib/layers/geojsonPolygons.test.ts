@@ -290,6 +290,27 @@ it("routes non-polygon geometries to the line path", () => {
   expect(errorSpy).not.toHaveBeenCalled();
 });
 
+it("logs and skips a pole-enclosing ring instead of rendering blank", () => {
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  // a ring circling the north pole: lats all +85, lons 0..350 step 10, closed
+  const ring: number[][] = [];
+  for (let lon = 0; lon <= 350; lon += 10) {
+    ring.push([lon, 85]);
+  }
+  ring.push([0, 85]);
+
+  const geometry = geojson2gpuPolygonFillGeometry(
+    polygonFeatureCollection([ring]),
+    helper
+  );
+
+  // no faces emitted, and it did not throw
+  expect(geometry.getAttribute("position").count).toBe(0);
+  expect(errorSpy).toHaveBeenCalledWith(
+    "skipping pole-enclosing polygon ring (spans ~360 deg lon)"
+  );
+});
+
 it("logs and skips unknown geometry", () => {
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   const geojson: FeatureCollection = {
