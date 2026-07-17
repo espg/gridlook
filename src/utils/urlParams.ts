@@ -16,6 +16,7 @@ const URL_PARAMETERS = {
   PROJECTION_CENTER_LON: "projectionCenterLon",
   GRID_TYPE: "gridtype",
   CATALOG: "catalog",
+  VECTOR_LAYERS: "vectorlayers",
   DIM_INDICES: "dimIndices",
   DIM_MIN_BOUNDS: "dimMinBounds",
   DIM_MAX_BOUNDS: "dimMaxBounds",

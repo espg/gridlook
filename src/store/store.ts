@@ -116,6 +116,9 @@ export type TLayerEntry = {
   vectorStyle?: TVectorLayerStyle;
   // numeric feature properties available for choropleth (scanned at ingest)
   vectorNumericProperties?: string[];
+  // source URL for URL-injected vector layers; drives deep-linking (file
+  // and drag-drop layers have none and stay session-only)
+  vectorSourceUrl?: string;
 };
 
 export function normalizeLayerOpacity(opacity: number) {
@@ -354,7 +357,8 @@ export const useGlobeControlStore = defineStore("globeControl", {
       id: string,
       name: string,
       data: FeatureCollection,
-      visible = true
+      visible = true,
+      sourceUrl?: string
     ) {
       // insert at the top of the stack; markRaw because the FeatureCollection
       // is render-only input — deep reactivity over large coordinate arrays
@@ -369,6 +373,7 @@ export const useGlobeControlStore = defineStore("globeControl", {
         vectorData: markRaw(data),
         vectorStyle: { ...VECTOR_LAYER_STYLE_DEFAULTS },
         vectorNumericProperties: scanNumericProperties(data),
+        vectorSourceUrl: sourceUrl,
       });
     },
     removeVectorLayer(id: string) {
