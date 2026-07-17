@@ -6,6 +6,7 @@ import { useGridCameraState } from "./useGridCameraState.ts";
 import { useGridHistogram } from "./useGridHistogram.ts";
 import { useGridOverlays } from "./useGridOverlays.ts";
 import { useGridScene } from "./useGridScene.ts";
+import { useVectorFeatureHover } from "./useVectorFeatureHover.ts";
 
 import { fetchDimensionDetails } from "@/lib/data/dimensionData.ts";
 import {
@@ -107,6 +108,8 @@ export function useSharedGridLogic() {
       syncVectorLayersOnReady();
     },
   });
+
+  useVectorFeatureHover(hoveredGeoPoint);
 
   const {
     updateCoastlines: updateCoastlinesInternal,
