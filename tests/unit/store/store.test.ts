@@ -100,6 +100,27 @@ it("styles vector layers with defaults and clamped updates", () => {
   expect(grid?.vectorStyle).toBeUndefined();
 });
 
+it("records the source URL for URL-injected vector layers only", () => {
+  const store = useGlobeControlStore();
+  const data: FeatureCollection = { type: "FeatureCollection", features: [] };
+
+  store.addVectorLayer("from-file", "local.geojson", data);
+  store.addVectorLayer(
+    "from-url",
+    "shard_outlines.geojson",
+    data,
+    true,
+    "https://example.com/shard_outlines.geojson"
+  );
+
+  const fromFile = store.layerStack.find((layer) => layer.id === "from-file");
+  const fromUrl = store.layerStack.find((layer) => layer.id === "from-url");
+  expect(fromFile?.vectorSourceUrl).toBeUndefined();
+  expect(fromUrl?.vectorSourceUrl).toBe(
+    "https://example.com/shard_outlines.geojson"
+  );
+});
+
 it("caches numeric properties and tracks choropleth style state", () => {
   const store = useGlobeControlStore();
   const data: FeatureCollection = {

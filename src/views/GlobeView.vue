@@ -26,13 +26,14 @@ import {
 } from "@/lib/shaders/colormapShaders.ts";
 import { PresenterRole } from "@/lib/types/presenterSync.ts";
 import { useUrlParameterStore } from "@/store/paramStore.ts";
-import { useGlobeControlStore } from "@/store/store.ts";
+import { LAYER_KINDS, useGlobeControlStore } from "@/store/store.ts";
 import {
   usePresenterSync,
   isDisplayMode,
   isPresenterActive,
 } from "@/store/usePresenterSync.ts";
 import { useUrlSync } from "@/store/useUrlSync.ts";
+import { decodeVectorLayersParam } from "@/store/vectorLayerParams.ts";
 import Toast from "@/ui/common/Toast.vue";
 import { useLog } from "@/ui/common/useLog.ts";
 import { useVectorLayerInjection } from "@/ui/common/useVectorLayerInjection.ts";
@@ -97,7 +98,7 @@ if (urlParams.get("mode") === PresenterRole.DISPLAY) {
 const { varnameSelector, loading, colormap, invertColormap } =
   storeToRefs(store);
 
-const { paramVarname, paramGridType, paramDistractionFree } =
+const { paramVarname, paramGridType, paramDistractionFree, paramVectorLayers } =
   storeToRefs(urlParameterStore);
 
 type TGlobeHandle = {
@@ -410,12 +411,43 @@ const applyHyperglobePresenter = () => {
 
 onMounted(async () => {
   await loadCurrentSource(false);
+  await injectVectorLayersFromParam();
 });
+
+// Restore URL-sourced vector layers from the `vectorlayers` deep link.
+// Layers whose source URL is already in the stack are left untouched (the
+// parameter is also rewritten from the stack, so this is the common case on
+// hash rewrites); specs load in reverse so unshift keeps their order.
+async function injectVectorLayersFromParam() {
+  const specs = decodeVectorLayersParam(paramVectorLayers.value ?? "");
+  for (const spec of [...specs].reverse()) {
+    const alreadyLoaded = store.layerStack.some(
+      (entry) =>
+        entry.kind === LAYER_KINDS.VECTOR && entry.vectorSourceUrl === spec.url
+    );
+    if (alreadyLoaded) {
+      continue;
+    }
+    await addVectorLayerFromUrl(spec.url, {
+      visible: spec.visible,
+      style: spec.style,
+    });
+  }
+}
+
+watch(
+  () => paramVectorLayers.value,
+  () => {
+    void injectVectorLayersFromParam();
+  }
+);
 
 // Drag-and-drop layer injection: dropping a file anywhere in the window routes
 // GeoJSON to the vector path and PNG/JPEG/GeoTIFF to the texture path, matching
 // the formats the Upload button accepts (LayerPanel's onFileSelected).
-const { addVectorLayerFromFile } = useVectorLayerInjection();
+// addVectorLayerFromUrl also serves the `vectorlayers` deep-link restore.
+const { addVectorLayerFromFile, addVectorLayerFromUrl } =
+  useVectorLayerInjection();
 
 function dragHasFiles(e: DragEvent) {
   return Boolean(e.dataTransfer?.types.includes("Files"));

@@ -5,11 +5,18 @@ import {
   readVectorLayerFile,
   vectorLayerNameFromUrl,
 } from "@/lib/layers/vectorLayerFormats.ts";
-import { useGlobeControlStore } from "@/store/store.ts";
+import { useGlobeControlStore, type TVectorLayerStyle } from "@/store/store.ts";
+
+type TVectorLayerUrlOptions = {
+  visible?: boolean;
+  style?: Partial<TVectorLayerStyle>;
+};
 
 /**
  * Shared entry points for adding GeoJSON vector layers from user input
- * (file upload, drag-and-drop, URL). Errors surface as toasts.
+ * (file upload, drag-and-drop, URL) and from `vectorlayers` deep links.
+ * Errors surface as toasts. URL-injected layers record their source URL so
+ * they round-trip through the URL hash; file layers stay session-only.
  */
 export function useVectorLayerInjection() {
   const store = useGlobeControlStore();
@@ -26,14 +33,23 @@ export function useVectorLayerInjection() {
     }
   }
 
-  async function addVectorLayerFromUrl(url: string): Promise<boolean> {
+  async function addVectorLayerFromUrl(
+    url: string,
+    options?: TVectorLayerUrlOptions
+  ): Promise<boolean> {
     try {
       const data = await loadVectorLayerFromUrl(url);
+      const id = crypto.randomUUID();
       store.addVectorLayer(
-        crypto.randomUUID(),
+        id,
         vectorLayerNameFromUrl(url),
-        data
+        data,
+        options?.visible ?? true,
+        url
       );
+      if (options?.style) {
+        store.updateVectorLayerStyle(id, options.style);
+      }
       return true;
     } catch (error) {
       logError(error, "Couldn't load the URL as a vector layer");

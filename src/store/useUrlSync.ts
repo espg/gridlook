@@ -1,6 +1,6 @@
 import { watchDebounced } from "@vueuse/core";
 import { storeToRefs } from "pinia";
-import { watch } from "vue";
+import { computed, watch } from "vue";
 
 import {
   URL_PARAMETERS,
@@ -9,6 +9,10 @@ import {
 
 import { useUrlParameterStore } from "./paramStore.ts";
 import { useGlobeControlStore, type TGlobeControlStoreKeys } from "./store.ts";
+import {
+  encodeVectorLayersParam,
+  vectorLayerSpecsFromStack,
+} from "./vectorLayerParams.ts";
 
 type TUrlSyncEntry = {
   key:
@@ -161,6 +165,20 @@ export function useUrlSync() {
         [URL_PARAMETERS.PROJECTION_CENTER_LAT]: center.lat,
         [URL_PARAMETERS.PROJECTION_CENTER_LON]: center.lon,
       });
+    },
+    { debounce: 200 }
+  );
+
+  // Debounced: URL-sourced vector layers (source URL + style/choropleth
+  // state). File-injected layers carry no source URL and are not encoded;
+  // an empty encoding deletes the parameter.
+  const vectorLayersParam = computed(() =>
+    encodeVectorLayersParam(vectorLayerSpecsFromStack(store.layerStack))
+  );
+  watchDebounced(
+    vectorLayersParam,
+    (value) => {
+      changeURLHash({ [URL_PARAMETERS.VECTOR_LAYERS]: value });
     },
     { debounce: 200 }
   );
