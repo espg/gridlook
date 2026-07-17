@@ -73,7 +73,22 @@ export function parseFeatureCollection(text: string): FeatureCollection {
   if (!Array.isArray(candidate.features)) {
     throw new Error("the FeatureCollection has no features array");
   }
-  return parsed as FeatureCollection;
+  const collection = parsed as FeatureCollection;
+  // GeoJSON permits `geometry: null` (an "unlocated" feature), but the
+  // rendering and picking paths dereference `feature.geometry.type`
+  // unconditionally. Drop such features here so a mostly-good file still
+  // loads and neither path ever sees a null geometry.
+  const usable = collection.features.filter(
+    (feature) =>
+      feature.geometry !== null &&
+      feature.geometry !== undefined &&
+      "type" in feature.geometry
+  );
+  const dropped = collection.features.length - usable.length;
+  if (dropped > 0) {
+    console.warn(`dropped ${dropped} feature(s) with null or missing geometry`);
+  }
+  return { ...collection, features: usable };
 }
 
 // layer display name from the URL basename (query/hash stripped)
