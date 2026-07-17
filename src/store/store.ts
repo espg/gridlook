@@ -6,6 +6,7 @@ import {
   LAND_SEA_MASK_MODES,
   type TLandSeaMaskMode,
 } from "@/lib/layers/landSeaMask.ts";
+import { scanNumericProperties } from "@/lib/layers/vectorChoropleth.ts";
 import {
   PROJECTION_TYPES,
   type TProjectionCenter,
@@ -85,12 +86,20 @@ export type TVectorLayerStyle = {
   fillColor: string;
   fillOpacity: number;
   strokeColor: string;
+  // choropleth: when colorBy names a numeric feature property, fills derive
+  // per-feature colors from it through the named colormap; rangeLow/rangeHigh
+  // override the auto-computed data range per side (undefined = auto)
+  colorBy?: string;
+  colormap: TColorMap;
+  rangeLow?: number;
+  rangeHigh?: number;
 };
 
 export const VECTOR_LAYER_STYLE_DEFAULTS: TVectorLayerStyle = {
   fillColor: "#3388ff",
   fillOpacity: 0.35,
   strokeColor: "#88ccff",
+  colormap: "viridis",
 } as const;
 
 export type TLayerEntry = {
@@ -105,6 +114,8 @@ export type TLayerEntry = {
   vectorData?: FeatureCollection;
   // per-layer styling for vector layers
   vectorStyle?: TVectorLayerStyle;
+  // numeric feature properties available for choropleth (scanned at ingest)
+  vectorNumericProperties?: string[];
 };
 
 export function normalizeLayerOpacity(opacity: number) {
@@ -357,6 +368,7 @@ export const useGlobeControlStore = defineStore("globeControl", {
         maskMode: LAND_SEA_MASK_MODES.OFF,
         vectorData: markRaw(data),
         vectorStyle: { ...VECTOR_LAYER_STYLE_DEFAULTS },
+        vectorNumericProperties: scanNumericProperties(data),
       });
     },
     removeVectorLayer(id: string) {

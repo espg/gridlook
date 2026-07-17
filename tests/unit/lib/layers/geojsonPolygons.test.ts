@@ -4,6 +4,7 @@ import { afterEach, expect, it, vi } from "vitest";
 
 import { geojson2gpuLineSegmentsGeometry } from "@/lib/layers/geojson.ts";
 import {
+  applyVectorFeatureValues,
   geojson2gpuPolygonFillGeometry,
   polygonsToOutlines,
 } from "@/lib/layers/geojsonPolygons.ts";
@@ -309,6 +310,58 @@ it("logs and skips a pole-enclosing ring instead of rendering blank", () => {
   expect(errorSpy).toHaveBeenCalledWith(
     "skipping pole-enclosing polygon ring (spans ~360 deg lon)"
   );
+});
+
+it("maps feature values onto vertices without retriangulating", () => {
+  const square = (offset: number): number[][] => [
+    [offset, 0],
+    [offset + 1, 0],
+    [offset + 1, 1],
+    [offset, 1],
+    [offset, 0],
+  ];
+  const geojson: FeatureCollection = {
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        properties: { granuleCount: 7 },
+        geometry: { type: "Polygon", coordinates: [square(0)] },
+      },
+      {
+        type: "Feature",
+        properties: { granuleCount: 42 },
+        geometry: {
+          type: "MultiPolygon",
+          coordinates: [[square(10)], [square(20)]],
+        },
+      },
+    ],
+  };
+  const geometry = geojson2gpuPolygonFillGeometry(geojson, helper);
+  const featureValue = geometry.getAttribute("featureValue");
+  const position = geometry.getAttribute("position");
+
+  // starts as NaN (renders as the constant fill color)
+  expect(featureValue.count).toBe(position.count);
+  for (let i = 0; i < featureValue.count; i++) {
+    expect(featureValue.getX(i)).toBeNaN();
+  }
+
+  applyVectorFeatureValues(geometry, [7, 42]);
+  // vertices 0..5 belong to the first feature, the rest (both polygons of
+  // the MultiPolygon) to the second
+  for (let i = 0; i < featureValue.count; i++) {
+    expect(featureValue.getX(i)).toBe(i < 6 ? 7 : 42);
+  }
+  // color updates never rebuild the triangulation
+  expect(geometry.getAttribute("position")).toBe(position);
+  expect(geometry.getAttribute("featureValue")).toBe(featureValue);
+
+  // a second property missing on the first feature -> NaN fallback
+  applyVectorFeatureValues(geometry, [NaN, 3]);
+  expect(featureValue.getX(0)).toBeNaN();
+  expect(featureValue.getX(featureValue.count - 1)).toBe(3);
 });
 
 it("logs and skips unknown geometry", () => {
