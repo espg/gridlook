@@ -16,6 +16,7 @@ import {
 } from "@/lib/data/gridTypeDetector.ts";
 import { indexFromIndex, indexFromZarr } from "@/lib/data/sourceIndexing.ts";
 import { ZarrDataManager } from "@/lib/data/ZarrDataManager.ts";
+import { isSupportedVectorLayerFile } from "@/lib/layers/vectorLayerFormats.ts";
 import { PROJECTION_TYPES, clamp } from "@/lib/projection/projectionUtils.ts";
 import {
   availableColormaps,
@@ -32,6 +33,7 @@ import {
 import { useUrlSync } from "@/store/useUrlSync.ts";
 import Toast from "@/ui/common/Toast.vue";
 import { useLog } from "@/ui/common/useLog.ts";
+import { useVectorLayerInjection } from "@/ui/common/useVectorLayerInjection.ts";
 import { isMobileDevice } from "@/ui/common/viewConstants.ts";
 import type { TCameraState } from "@/ui/grids/composables/useGridCameraState.ts";
 import GridCurvilinear from "@/ui/grids/Curvilinear.vue";
@@ -46,6 +48,7 @@ import { toggleTimeAnimation } from "@/ui/overlays/controls/useTimeAnimation.ts"
 import GlobeControls from "@/ui/overlays/Controls.vue";
 import HoverReadout from "@/ui/overlays/HoverReadout.vue";
 import InfoPanel from "@/ui/overlays/InfoPanel.vue";
+import VectorHoverReadout from "@/ui/overlays/VectorHoverReadout.vue";
 
 const props = defineProps<{ src: string }>();
 
@@ -406,6 +409,38 @@ onMounted(async () => {
   await loadCurrentSource(false);
 });
 
+// Drag-and-drop injection of GeoJSON vector layers: dropping a .geojson/.json
+// file anywhere in the window adds it as a vector layer.
+const { addVectorLayerFromFile } = useVectorLayerInjection();
+
+function dragHasFiles(e: DragEvent) {
+  return Boolean(e.dataTransfer?.types.includes("Files"));
+}
+
+useEventListener(window, "dragover", (e: DragEvent) => {
+  if (dragHasFiles(e)) {
+    e.preventDefault();
+  }
+});
+
+useEventListener(window, "drop", async (e: DragEvent) => {
+  const files = e.dataTransfer?.files;
+  if (!files?.length) {
+    return;
+  }
+  e.preventDefault();
+  for (const file of Array.from(files)) {
+    if (isSupportedVectorLayerFile(file)) {
+      await addVectorLayerFromFile(file);
+    } else {
+      logError(
+        new Error("Only .geojson/.json FeatureCollections can be dropped"),
+        `Couldn't add "${file.name}" as a vector layer`
+      );
+    }
+  }
+});
+
 // Prevent the long-press context menu on touch-enabled devices (e.g. touchscreen
 // laptops) while still allowing right-click context menus from a regular mouse.
 let lastPointerType = "mouse";
@@ -492,6 +527,7 @@ useEventListener(window, "keydown", (e: KeyboardEvent) => {
         :is-rotated="detectedGridType === GRID_TYPES.REGULAR_ROTATED"
       />
       <HoverReadout v-if="detectedGridType !== undefined" />
+      <VectorHoverReadout v-if="detectedGridType !== undefined" />
     </div>
     <div
       v-if="!isDisplayMode"
