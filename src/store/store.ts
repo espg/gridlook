@@ -1,4 +1,6 @@
+import type { FeatureCollection } from "geojson";
 import { defineStore } from "pinia";
+import { markRaw } from "vue";
 
 import {
   LAND_SEA_MASK_MODES,
@@ -37,6 +39,7 @@ export const LAYER_KINDS = {
   GRID: "grid",
   MASK: "mask",
   TEXTURE: "texture",
+  VECTOR: "vector",
 } as const;
 
 export type TLayerKind = (typeof LAYER_KINDS)[keyof typeof LAYER_KINDS];
@@ -78,6 +81,8 @@ export type TLayerEntry = {
   opacity: number;
   // land/sea cutout applied to texture layers
   maskMode: TLandSeaMaskMode;
+  // in-memory GeoJSON rendered by vector layers
+  vectorData?: FeatureCollection;
 };
 
 export function normalizeLayerOpacity(opacity: number) {
@@ -305,6 +310,37 @@ export const useGlobeControlStore = defineStore("globeControl", {
     updateTextureLayer(
       id: string,
       patch: Partial<Pick<TLayerEntry, "visible" | "maskMode">>
+    ) {
+      const layer = this.layerStack.find((entry) => entry.id === id);
+      if (layer) {
+        Object.assign(layer, patch);
+      }
+    },
+    addVectorLayer(
+      id: string,
+      name: string,
+      data: FeatureCollection,
+      visible = true
+    ) {
+      // insert at the top of the stack; markRaw because the FeatureCollection
+      // is render-only input — deep reactivity over large coordinate arrays
+      // is wasted work
+      this.layerStack.unshift({
+        id,
+        kind: LAYER_KINDS.VECTOR,
+        name,
+        visible,
+        opacity: LAYER_OPACITY.MAX,
+        maskMode: LAND_SEA_MASK_MODES.OFF,
+        vectorData: markRaw(data),
+      });
+    },
+    removeVectorLayer(id: string) {
+      this.layerStack = this.layerStack.filter((layer) => layer.id !== id);
+    },
+    updateVectorLayer(
+      id: string,
+      patch: Partial<Pick<TLayerEntry, "visible">>
     ) {
       const layer = this.layerStack.find((entry) => entry.id === id);
       if (layer) {
