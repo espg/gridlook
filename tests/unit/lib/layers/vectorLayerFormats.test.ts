@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import {
   isSupportedVectorLayerFile,
@@ -68,6 +68,42 @@ it("rejects a FeatureCollection without a features array", () => {
   expect(() =>
     parseFeatureCollection(JSON.stringify({ type: "FeatureCollection" }))
   ).toThrow("features array");
+});
+
+it("drops features with null or missing geometry", () => {
+  const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const withNullGeometry = JSON.stringify({
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        properties: { shard: "good" },
+        geometry: {
+          type: "Polygon",
+          coordinates: [
+            [
+              [0, 0],
+              [1, 0],
+              [1, 1],
+              [0, 0],
+            ],
+          ],
+        },
+      },
+      { type: "Feature", properties: { shard: "unlocated" }, geometry: null },
+      { type: "Feature", properties: { shard: "absent" } },
+    ],
+  });
+
+  const parsed = parseFeatureCollection(withNullGeometry);
+  expect(parsed.features).toHaveLength(1);
+  expect(parsed.features[0].properties).toEqual({ shard: "good" });
+  // every surviving feature carries a usable geometry for pick/render inputs
+  expect(parsed.features.every((f) => f.geometry !== null)).toBe(true);
+  expect(warnSpy).toHaveBeenCalledWith(
+    "dropped 2 feature(s) with null or missing geometry"
+  );
+  warnSpy.mockRestore();
 });
 
 it("rejects oversized files before parsing", async () => {
