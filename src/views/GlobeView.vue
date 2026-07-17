@@ -16,6 +16,8 @@ import {
 } from "@/lib/data/gridTypeDetector.ts";
 import { indexFromIndex, indexFromZarr } from "@/lib/data/sourceIndexing.ts";
 import { ZarrDataManager } from "@/lib/data/ZarrDataManager.ts";
+import { isSupportedTextureLayerFile } from "@/lib/layers/textureLayerFormats.ts";
+import { saveTexture } from "@/lib/layers/textureStore.ts";
 import { isSupportedVectorLayerFile } from "@/lib/layers/vectorLayerFormats.ts";
 import { PROJECTION_TYPES, clamp } from "@/lib/projection/projectionUtils.ts";
 import {
@@ -409,8 +411,9 @@ onMounted(async () => {
   await loadCurrentSource(false);
 });
 
-// Drag-and-drop injection of GeoJSON vector layers: dropping a .geojson/.json
-// file anywhere in the window adds it as a vector layer.
+// Drag-and-drop layer injection: dropping a file anywhere in the window routes
+// GeoJSON to the vector path and PNG/JPEG/GeoTIFF to the texture path, matching
+// the formats the Upload button accepts (LayerPanel's onFileSelected).
 const { addVectorLayerFromFile } = useVectorLayerInjection();
 
 function dragHasFiles(e: DragEvent) {
@@ -432,10 +435,17 @@ useEventListener(window, "drop", async (e: DragEvent) => {
   for (const file of Array.from(files)) {
     if (isSupportedVectorLayerFile(file)) {
       await addVectorLayerFromFile(file);
+    } else if (isSupportedTextureLayerFile(file)) {
+      try {
+        const stored = await saveTexture(file.name, file);
+        store.addTextureLayer(stored.id, stored.name);
+      } catch (error) {
+        logError(error, "Couldn't store the uploaded texture");
+      }
     } else {
       logError(
-        new Error("Only .geojson/.json FeatureCollections can be dropped"),
-        `Couldn't add "${file.name}" as a vector layer`
+        new Error("Supported: PNG/JPEG/GeoTIFF images or GeoJSON files"),
+        `Couldn't add "${file.name}" as a layer`
       );
     }
   }
