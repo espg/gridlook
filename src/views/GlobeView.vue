@@ -50,6 +50,7 @@ import { toggleTimeAnimation } from "@/ui/overlays/controls/useTimeAnimation.ts"
 import GlobeControls from "@/ui/overlays/Controls.vue";
 import HoverReadout from "@/ui/overlays/HoverReadout.vue";
 import InfoPanel from "@/ui/overlays/InfoPanel.vue";
+import VectorChoroplethLegend from "@/ui/overlays/VectorChoroplethLegend.vue";
 import VectorHoverReadout from "@/ui/overlays/VectorHoverReadout.vue";
 
 const props = defineProps<{ src: string }>();
@@ -538,6 +539,7 @@ useEventListener(window, "keydown", (e: KeyboardEvent) => {
       />
       <HoverReadout v-if="detectedGridType !== undefined" />
       <VectorHoverReadout v-if="detectedGridType !== undefined" />
+      <VectorChoroplethLegend v-if="detectedGridType !== undefined" />
     </div>
     <div
       v-if="!isDisplayMode"
