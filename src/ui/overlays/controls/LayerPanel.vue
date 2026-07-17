@@ -19,15 +19,22 @@ import {
   saveTexture,
 } from "@/lib/layers/textureStore.ts";
 import {
+  isSupportedVectorLayerFile,
+  VECTOR_LAYER_UPLOAD_ACCEPT,
+} from "@/lib/layers/vectorLayerFormats.ts";
+import {
   COASTLINE_RESOLUTIONS,
   GRATICULE_SPACINGS,
   LAYER_KINDS,
   LAYER_OPACITY,
   useGlobeControlStore,
+  VECTOR_LAYER_STYLE_DEFAULTS,
   type TLayerEntry,
   type TLayerKind,
+  type TVectorLayerStyle,
 } from "@/store/store.ts";
 import { useLog } from "@/ui/common/useLog.ts";
+import { useVectorLayerInjection } from "@/ui/common/useVectorLayerInjection.ts";
 
 const store = useGlobeControlStore();
 const {
@@ -41,8 +48,14 @@ const {
   varnameDisplay,
 } = storeToRefs(store);
 const { logError } = useLog();
+const { addVectorLayerFromFile, addVectorLayerFromUrl } =
+  useVectorLayerInjection();
+
+const LAYER_UPLOAD_ACCEPT = `${TEXTURE_LAYER_UPLOAD_ACCEPT},${VECTOR_LAYER_UPLOAD_ACCEPT}`;
 
 const fileInput = ref<HTMLInputElement>();
+const vectorUrl = ref("");
+const vectorUrlLoading = ref(false);
 const draggedId = ref<string | undefined>(undefined);
 const dropTargetIndex = ref<number | undefined>(undefined);
 const LAYER_ENTRY_SELECTOR = ".layer-entry";
@@ -151,34 +164,24 @@ onMounted(async () => {
   } catch (error) {
     logError(error, "Couldn't load stored texture layers");
   }
-  await maybeAddDevVectorSample();
 });
-
-// dev-only: append `?vector_sample` to the URL to inject a bundled sample
-// vector layer (no injection UI yet — that lands with the vector UI phase)
-async function maybeAddDevVectorSample() {
-  if (
-    !import.meta.env.DEV ||
-    !new URLSearchParams(window.location.search).has("vector_sample")
-  ) {
-    return;
-  }
-  const { DEV_VECTOR_SAMPLE_ID, devVectorSampleCollection } =
-    await import("@/lib/layers/devVectorSample.ts");
-  if (!layerStack.value.some((layer) => layer.id === DEV_VECTOR_SAMPLE_ID)) {
-    store.addVectorLayer(
-      DEV_VECTOR_SAMPLE_ID,
-      "Sample vectors (dev)",
-      devVectorSampleCollection
-    );
-  }
-}
 
 async function onFileSelected(event: Event) {
   const input = event.target as HTMLInputElement;
   const file = input.files?.[0];
   input.value = "";
-  if (!file || !isSupportedTextureLayerFile(file)) {
+  if (!file) {
+    return;
+  }
+  if (isSupportedVectorLayerFile(file)) {
+    await addVectorLayerFromFile(file);
+    return;
+  }
+  if (!isSupportedTextureLayerFile(file)) {
+    logError(
+      new Error("Supported: PNG/JPEG/GeoTIFF images or GeoJSON files"),
+      `Couldn't add "${file.name}" as a layer`
+    );
     return;
   }
   try {
@@ -189,13 +192,57 @@ async function onFileSelected(event: Event) {
   }
 }
 
+async function loadVectorLayerUrl(close: () => void) {
+  const url = vectorUrl.value.trim();
+  if (!url || vectorUrlLoading.value) {
+    return;
+  }
+  vectorUrlLoading.value = true;
+  try {
+    if (await addVectorLayerFromUrl(url)) {
+      vectorUrl.value = "";
+      close();
+    }
+  } finally {
+    vectorUrlLoading.value = false;
+  }
+}
+
 async function removeLayer(layer: TLayerEntry) {
+  if (layer.kind === LAYER_KINDS.VECTOR) {
+    store.removeVectorLayer(layer.id);
+    return;
+  }
   store.removeTextureLayer(layer.id);
   try {
     await deleteTexture(layer.id);
   } catch (error) {
     logError(error, "Couldn't delete the stored texture");
   }
+}
+
+function getVectorStyle(layer: TLayerEntry): TVectorLayerStyle {
+  return layer.vectorStyle ?? VECTOR_LAYER_STYLE_DEFAULTS;
+}
+
+function formatFillOpacity(layer: TLayerEntry) {
+  return `${(getVectorStyle(layer).fillOpacity * 100).toFixed(0)}%`;
+}
+
+function setVectorStyleColor(
+  layer: TLayerEntry,
+  key: "fillColor" | "strokeColor",
+  event: Event
+) {
+  store.updateVectorLayerStyle(layer.id, {
+    [key]: (event.target as HTMLInputElement).value,
+  });
+}
+
+function setVectorFillOpacity(layer: TLayerEntry, event: Event) {
+  store.updateVectorLayerStyle(layer.id, {
+    fillOpacity: (event.target as HTMLInputElement).valueAsNumber,
+  });
 }
 
 async function downloadLayer(layer: TLayerEntry) {
@@ -461,6 +508,75 @@ function getLayerName(layer: TLayerEntry) {
               </span>
             </button>
           </template>
+          <template v-if="layer.kind === LAYER_KINDS.VECTOR">
+            <PopupDialog dialog-class="layer-style-popover">
+              <template #trigger="{ toggle, open }">
+                <button
+                  class="button is-small is-light"
+                  :class="{ 'is-info': open }"
+                  type="button"
+                  title="Layer style"
+                  :aria-expanded="open"
+                  :aria-label="`${layer.name} style`"
+                  @click.stop="toggle"
+                  @mousedown.stop
+                  @touchstart.stop
+                >
+                  <span class="icon is-small">
+                    <i class="fa-solid fa-palette"></i>
+                  </span>
+                </button>
+              </template>
+
+              <template #default>
+                <p class="dialog-section-label">Style</p>
+                <label class="layer-style-row">
+                  <span class="layer-style-label">Fill</span>
+                  <input
+                    type="color"
+                    :value="getVectorStyle(layer).fillColor"
+                    :aria-label="`${layer.name} fill color`"
+                    @input="setVectorStyleColor(layer, 'fillColor', $event)"
+                  />
+                </label>
+                <label class="layer-style-row">
+                  <span class="layer-style-label">Fill opacity</span>
+                  <input
+                    class="layer-style-opacity"
+                    type="range"
+                    :min="LAYER_OPACITY.MIN"
+                    :max="LAYER_OPACITY.MAX"
+                    :step="LAYER_OPACITY.STEP"
+                    :value="getVectorStyle(layer).fillOpacity"
+                    :aria-label="`${layer.name} fill opacity`"
+                    @input="setVectorFillOpacity(layer, $event)"
+                  />
+                  <span class="tag is-light layer-style-value">
+                    {{ formatFillOpacity(layer) }}
+                  </span>
+                </label>
+                <label class="layer-style-row">
+                  <span class="layer-style-label">Stroke</span>
+                  <input
+                    type="color"
+                    :value="getVectorStyle(layer).strokeColor"
+                    :aria-label="`${layer.name} stroke color`"
+                    @input="setVectorStyleColor(layer, 'strokeColor', $event)"
+                  />
+                </label>
+              </template>
+            </PopupDialog>
+            <button
+              class="button is-small is-light"
+              type="button"
+              title="Delete layer"
+              @click="removeLayer(layer)"
+            >
+              <span class="icon is-small">
+                <i class="fa-solid fa-trash"></i>
+              </span>
+            </button>
+          </template>
           <template v-if="canChangeLayerOpacity(layer)">
             <PopupDialog dialog-class="layer-opacity-popover">
               <template #trigger="{ toggle, open }">
@@ -537,12 +653,54 @@ function getLayerName(layer: TLayerEntry) {
       <button
         class="button is-small is-light"
         type="button"
-        title="Upload a texture image (PNG, JPG, or GeoTIFF)"
+        title="Upload a texture image (PNG, JPG, GeoTIFF) or a GeoJSON vector layer"
         @click="fileInput?.click()"
       >
         <span class="icon is-small"><i class="fa-solid fa-upload"></i></span>
         <span>Upload</span>
       </button>
+      <PopupDialog dialog-class="vector-url-popover">
+        <template #trigger="{ toggle, open }">
+          <button
+            class="button is-small is-light"
+            :class="{ 'is-info': open }"
+            type="button"
+            title="Add a GeoJSON vector layer from a URL"
+            :aria-expanded="open"
+            @click.stop="toggle"
+          >
+            <span class="icon is-small"><i class="fa-solid fa-link"></i></span>
+            <span>GeoJSON URL</span>
+          </button>
+        </template>
+
+        <template #default="{ close }">
+          <form @submit.prevent="loadVectorLayerUrl(close)">
+            <p class="dialog-section-label">GeoJSON layer URL</p>
+            <div class="field has-addons mb-0">
+              <div class="control is-expanded">
+                <input
+                  v-model="vectorUrl"
+                  class="input is-small"
+                  type="url"
+                  placeholder="https://…/shard_outlines.geojson"
+                  aria-label="GeoJSON layer URL"
+                />
+              </div>
+              <div class="control">
+                <button
+                  class="button is-small is-info"
+                  :class="{ 'is-loading': vectorUrlLoading }"
+                  type="submit"
+                  :disabled="vectorUrlLoading || !vectorUrl.trim()"
+                >
+                  Load
+                </button>
+              </div>
+            </div>
+          </form>
+        </template>
+      </PopupDialog>
       <button
         class="button is-small is-light"
         :class="{ 'is-loading': store.gridExportLoading }"
@@ -559,7 +717,7 @@ function getLayerName(layer: TLayerEntry) {
       </button>
       <input
         ref="fileInput"
-        :accept="TEXTURE_LAYER_UPLOAD_ACCEPT"
+        :accept="LAYER_UPLOAD_ACCEPT"
         class="is-hidden"
         type="file"
         @change="onFileSelected"
@@ -646,5 +804,36 @@ function getLayerName(layer: TLayerEntry) {
 .layer-opacity-value {
   min-width: 2.5rem;
   justify-content: center;
+}
+
+.layer-style-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 12rem;
+
+  &:not(:last-child) {
+    margin-bottom: 0.45rem;
+  }
+}
+
+.layer-style-label {
+  flex: 1;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.layer-style-opacity {
+  flex: 2;
+  min-width: 5rem;
+}
+
+.layer-style-value {
+  min-width: 2.5rem;
+  justify-content: center;
+}
+
+.vector-url-popover .input {
+  min-width: 14rem;
 }
 </style>
