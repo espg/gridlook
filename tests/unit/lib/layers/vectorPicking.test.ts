@@ -156,6 +156,21 @@ it("returns the topmost (last drawn) of overlapping features", () => {
   });
 });
 
+it("does not pick pole-enclosing rings (no fill is drawn for them)", () => {
+  // a ring circling the north pole: lats all +85, lons 0..350 step 10, closed
+  const ring: number[][] = [];
+  for (let lon = 0; lon <= 350; lon += 10) {
+    ring.push([lon, 85]);
+  }
+  ring.push([0, 85]);
+  const collection = collectionOf([polygonFeature([ring], { shard: "pole" })]);
+
+  // no hit anywhere near the ring, matching the fill which skips it entirely
+  expect(findVectorFeatureAtPoint(collection, 89, 0)).toBeNull();
+  expect(findVectorFeatureAtPoint(collection, 87, 200)).toBeNull();
+  expect(findVectorFeatureAtPoint(collection, 85, 45)).toBeNull();
+});
+
 it("ignores non-polygon geometries and degenerate rings", () => {
   const line: Feature = {
     type: "Feature",

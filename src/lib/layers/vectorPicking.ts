@@ -9,6 +9,7 @@
 import type { Feature, FeatureCollection, Position } from "geojson";
 
 import { unwrapLongitude } from "./geojson.ts";
+import { longitudeWinding } from "./geojsonPolygons.ts";
 
 type TPickPolygon = {
   featureIndex: number;
@@ -28,6 +29,12 @@ function buildPickPolygon(
 ): TPickPolygon | null {
   const outer = rings[0];
   if (!outer || outer.length < 4) {
+    return null;
+  }
+  // Mirror the fill's phase-1 guard: a pole-enclosing ring winds ~360 degrees
+  // of longitude, so the unwrapped even-odd test doubles back on itself and is
+  // undefined there. Such rings render no fill, so picking must skip them too.
+  if (Math.abs(longitudeWinding(outer)) >= 359.9) {
     return null;
   }
   const referenceLon = outer[0][0];

@@ -216,4 +216,4 @@ function polygonsToOutlines(geojson: FeatureCollection): FeatureCollection {
   return { ...geojson, features };
 }
 
-export { geojson2gpuPolygonFillGeometry, polygonsToOutlines };
+export { geojson2gpuPolygonFillGeometry, longitudeWinding, polygonsToOutlines };
