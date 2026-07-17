@@ -100,6 +100,55 @@ it("styles vector layers with defaults and clamped updates", () => {
   expect(grid?.vectorStyle).toBeUndefined();
 });
 
+it("caches numeric properties and tracks choropleth style state", () => {
+  const store = useGlobeControlStore();
+  const data: FeatureCollection = {
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        properties: { shard: "4331422", granuleCount: 12 },
+        geometry: { type: "Point", coordinates: [0, 0] },
+      },
+      {
+        type: "Feature",
+        properties: { granuleCount: 7, area: 1.5 },
+        geometry: { type: "Point", coordinates: [1, 0] },
+      },
+    ],
+  };
+
+  store.addVectorLayer("vector-layer", "Shard outlines", data);
+  const entry = store.layerStack.find((layer) => layer.id === "vector-layer");
+  // scanned once at ingest; string properties don't qualify
+  expect(entry?.vectorNumericProperties).toEqual(["area", "granuleCount"]);
+  expect(entry?.vectorStyle?.colorBy).toBeUndefined();
+  expect(entry?.vectorStyle?.colormap).toBe(
+    VECTOR_LAYER_STYLE_DEFAULTS.colormap
+  );
+
+  store.updateVectorLayerStyle("vector-layer", {
+    colorBy: "granuleCount",
+    colormap: "turbo",
+    rangeLow: 0,
+    rangeHigh: 20,
+  });
+  expect(entry?.vectorStyle?.colorBy).toBe("granuleCount");
+  expect(entry?.vectorStyle?.colormap).toBe("turbo");
+  expect(entry?.vectorStyle?.rangeLow).toBe(0);
+  expect(entry?.vectorStyle?.rangeHigh).toBe(20);
+
+  // undefined clears back to auto range / constant styling
+  store.updateVectorLayerStyle("vector-layer", {
+    colorBy: undefined,
+    rangeLow: undefined,
+    rangeHigh: undefined,
+  });
+  expect(entry?.vectorStyle?.colorBy).toBeUndefined();
+  expect(entry?.vectorStyle?.rangeLow).toBeUndefined();
+  expect(entry?.vectorStyle?.rangeHigh).toBeUndefined();
+});
+
 it("tracks the hovered vector feature", () => {
   const store = useGlobeControlStore();
 

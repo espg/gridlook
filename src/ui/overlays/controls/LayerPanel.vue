@@ -19,9 +19,18 @@ import {
   saveTexture,
 } from "@/lib/layers/textureStore.ts";
 import {
+  computeAutoRange,
+  featurePropertyValues,
+  type TChoroplethRange,
+} from "@/lib/layers/vectorChoropleth.ts";
+import {
   isSupportedVectorLayerFile,
   VECTOR_LAYER_UPLOAD_ACCEPT,
 } from "@/lib/layers/vectorLayerFormats.ts";
+import {
+  availableColormaps,
+  type TColorMap,
+} from "@/lib/shaders/colormapShaders.ts";
 import {
   COASTLINE_RESOLUTIONS,
   GRATICULE_SPACINGS,
@@ -35,6 +44,7 @@ import {
 } from "@/store/store.ts";
 import { useLog } from "@/ui/common/useLog.ts";
 import { useVectorLayerInjection } from "@/ui/common/useVectorLayerInjection.ts";
+import { formatValue } from "@/utils/formatValue.ts";
 
 const store = useGlobeControlStore();
 const {
@@ -242,6 +252,59 @@ function setVectorStyleColor(
 function setVectorFillOpacity(layer: TLayerEntry, event: Event) {
   store.updateVectorLayerStyle(layer.id, {
     fillOpacity: (event.target as HTMLInputElement).valueAsNumber,
+  });
+}
+
+const COLORMAP_NAMES = Object.keys(availableColormaps) as TColorMap[];
+
+// auto-range memo: vectorData is immutable per layer, so id + property is a
+// stable key and each scan runs once
+const autoRangeCache = new Map<string, TChoroplethRange | undefined>();
+
+function getAutoRange(layer: TLayerEntry): TChoroplethRange | undefined {
+  const property = getVectorStyle(layer).colorBy;
+  if (!property || !layer.vectorData) {
+    return undefined;
+  }
+  const key = `${layer.id}:${property}`;
+  if (!autoRangeCache.has(key)) {
+    autoRangeCache.set(
+      key,
+      computeAutoRange(featurePropertyValues(layer.vectorData, property))
+    );
+  }
+  return autoRangeCache.get(key);
+}
+
+function formatAutoBound(bound: number | undefined) {
+  return bound === undefined ? "auto" : formatValue(bound);
+}
+
+function setVectorColorBy(layer: TLayerEntry, event: Event) {
+  const value = (event.target as HTMLSelectElement).value;
+  // manual range bounds belong to the previous property; reset to auto
+  store.updateVectorLayerStyle(layer.id, {
+    colorBy: value || undefined,
+    rangeLow: undefined,
+    rangeHigh: undefined,
+  });
+}
+
+function setVectorColormap(layer: TLayerEntry, event: Event) {
+  store.updateVectorLayerStyle(layer.id, {
+    colormap: (event.target as HTMLSelectElement).value as TColorMap,
+  });
+}
+
+function setVectorRangeBound(
+  layer: TLayerEntry,
+  key: "rangeLow" | "rangeHigh",
+  event: Event
+) {
+  const raw = (event.target as HTMLInputElement).value.trim();
+  const parsed = raw === "" ? NaN : Number(raw);
+  store.updateVectorLayerStyle(layer.id, {
+    [key]: Number.isFinite(parsed) ? parsed : undefined,
   });
 }
 
@@ -564,6 +627,75 @@ function getLayerName(layer: TLayerEntry) {
                     @input="setVectorStyleColor(layer, 'strokeColor', $event)"
                   />
                 </label>
+                <template v-if="layer.vectorNumericProperties?.length">
+                  <p class="dialog-section-label mt-3">Color by property</p>
+                  <label class="layer-style-row">
+                    <span class="layer-style-label">Property</span>
+                    <div class="select is-small">
+                      <select
+                        :value="getVectorStyle(layer).colorBy ?? ''"
+                        :aria-label="`${layer.name} choropleth property`"
+                        @change="setVectorColorBy(layer, $event)"
+                      >
+                        <option value="">None</option>
+                        <option
+                          v-for="property in layer.vectorNumericProperties"
+                          :key="property"
+                          :value="property"
+                        >
+                          {{ property }}
+                        </option>
+                      </select>
+                    </div>
+                  </label>
+                  <template v-if="getVectorStyle(layer).colorBy">
+                    <label class="layer-style-row">
+                      <span class="layer-style-label">Colormap</span>
+                      <div class="select is-small">
+                        <select
+                          :value="getVectorStyle(layer).colormap"
+                          :aria-label="`${layer.name} choropleth colormap`"
+                          @change="setVectorColormap(layer, $event)"
+                        >
+                          <option
+                            v-for="name in COLORMAP_NAMES"
+                            :key="name"
+                            :value="name"
+                          >
+                            {{ name }}
+                          </option>
+                        </select>
+                      </div>
+                    </label>
+                    <label class="layer-style-row">
+                      <span class="layer-style-label">Range</span>
+                      <input
+                        class="input is-small layer-style-bound"
+                        type="number"
+                        step="any"
+                        :value="getVectorStyle(layer).rangeLow ?? ''"
+                        :placeholder="formatAutoBound(getAutoRange(layer)?.low)"
+                        :aria-label="`${layer.name} choropleth range minimum`"
+                        title="Minimum (empty = auto from data)"
+                        @change="setVectorRangeBound(layer, 'rangeLow', $event)"
+                      />
+                      <input
+                        class="input is-small layer-style-bound"
+                        type="number"
+                        step="any"
+                        :value="getVectorStyle(layer).rangeHigh ?? ''"
+                        :placeholder="
+                          formatAutoBound(getAutoRange(layer)?.high)
+                        "
+                        :aria-label="`${layer.name} choropleth range maximum`"
+                        title="Maximum (empty = auto from data)"
+                        @change="
+                          setVectorRangeBound(layer, 'rangeHigh', $event)
+                        "
+                      />
+                    </label>
+                  </template>
+                </template>
               </template>
             </PopupDialog>
             <button
@@ -831,6 +963,10 @@ function getLayerName(layer: TLayerEntry) {
 .layer-style-value {
   min-width: 2.5rem;
   justify-content: center;
+}
+
+.layer-style-bound {
+  width: 5.5rem;
 }
 
 .vector-url-popover .input {

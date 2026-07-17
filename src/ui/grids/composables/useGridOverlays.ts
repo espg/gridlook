@@ -12,6 +12,7 @@ import {
 } from "@/lib/layers/equirectLayer.ts";
 import { geojson2gpuLineSegmentsGeometry } from "@/lib/layers/geojson.ts";
 import {
+  applyVectorFeatureValues,
   geojson2gpuPolygonFillGeometry,
   polygonsToOutlines,
 } from "@/lib/layers/geojsonPolygons.ts";
@@ -21,6 +22,7 @@ import {
 } from "@/lib/layers/gpuProjectedLines.ts";
 import {
   makeGpuProjectedPolygonMaterial,
+  updateGpuProjectedPolygonChoropleth,
   updateGpuProjectedPolygonMaterial,
 } from "@/lib/layers/gpuProjectedPolygons.ts";
 import {
@@ -30,6 +32,10 @@ import {
 } from "@/lib/layers/landSeaMask.ts";
 import { ResourceCache } from "@/lib/layers/ResourceCache.ts";
 import { getTexture } from "@/lib/layers/textureStore.ts";
+import {
+  featurePropertyValues,
+  resolveChoroplethRange,
+} from "@/lib/layers/vectorChoropleth.ts";
 import type { ProjectionHelper } from "@/lib/projection/projectionUtils.ts";
 import {
   COASTLINE_RESOLUTIONS,
@@ -577,7 +583,8 @@ export function useGridOverlays(options: UseGridOverlaysOptions) {
     return group;
   }
 
-  // style changes are pure uniform updates; geometry is never rebuilt
+  // style changes are pure uniform updates; geometry is never rebuilt (a
+  // colorBy change refills the featureValue attribute, nothing more)
   function applyVectorLayerStyle(group: THREE.Group, entry: TLayerEntry) {
     const style = getVectorStyle(entry);
     for (const child of group.children) {
@@ -590,8 +597,40 @@ export function useGridOverlays(options: UseGridOverlaysOptions) {
       } else if (child instanceof THREE.Mesh) {
         (material.uniforms.fillColor.value as THREE.Color).set(style.fillColor);
         material.uniforms.fillOpacity.value = style.fillOpacity;
+        applyVectorChoropleth(child, entry, style);
       }
     }
+  }
+
+  // Per-feature values ride the featureValue attribute (raw property values,
+  // refilled only when colorBy changes); colormap and range are uniforms.
+  function applyVectorChoropleth(
+    mesh: THREE.Mesh,
+    entry: TLayerEntry,
+    style: ReturnType<typeof getVectorStyle>
+  ) {
+    const material = mesh.material as THREE.ShaderMaterial;
+    const data = entry.vectorData;
+    if (!data || !style.colorBy) {
+      delete mesh.userData.choroplethProperty;
+      delete mesh.userData.choroplethValues;
+      updateGpuProjectedPolygonChoropleth(material, undefined);
+      return;
+    }
+    if (mesh.userData.choroplethProperty !== style.colorBy) {
+      const values = featurePropertyValues(data, style.colorBy);
+      applyVectorFeatureValues(mesh.geometry, values);
+      mesh.userData.choroplethProperty = style.colorBy;
+      mesh.userData.choroplethValues = values;
+    }
+    const range = resolveChoroplethRange(
+      mesh.userData.choroplethValues as Float32Array,
+      style
+    );
+    updateGpuProjectedPolygonChoropleth(
+      material,
+      range ? { colormap: style.colormap, ...range } : undefined
+    );
   }
 
   function updateVectorGroupProjection(group: THREE.Group) {

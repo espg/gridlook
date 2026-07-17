@@ -31,6 +31,7 @@ interface GpuPolygonFillBuilder {
   latLon: number[];
   triLatLonB: number[];
   triLatLonC: number[];
+  featureIndex: number[];
 }
 
 // Densify ring edges and unwrap longitudes against the polygon's first
@@ -71,7 +72,8 @@ function addTriangle(
   helper: ProjectionHelper,
   builder: GpuPolygonFillBuilder,
   radius: number,
-  zOffset: number
+  zOffset: number,
+  featureIndex: number
 ) {
   for (let i = 0; i < 3; i++) {
     const [lon, lat] = corners[i];
@@ -83,6 +85,7 @@ function addTriangle(
     builder.latLon.push(lat, normalizedLon);
     builder.triLatLonB.push(latB, ProjectionHelper.normalizeLongitude(lonB));
     builder.triLatLonC.push(latC, ProjectionHelper.normalizeLongitude(lonC));
+    builder.featureIndex.push(featureIndex);
   }
 }
 
@@ -91,7 +94,8 @@ function addPolygonFill(
   helper: ProjectionHelper,
   builder: GpuPolygonFillBuilder,
   radius: number,
-  zOffset: number
+  zOffset: number,
+  featureIndex: number
 ) {
   if (rings.length === 0 || rings[0].length < 4) {
     return;
@@ -131,7 +135,8 @@ function addPolygonFill(
       helper,
       builder,
       radius,
-      zOffset
+      zOffset,
+      featureIndex
     );
   }
 }
@@ -148,25 +153,31 @@ function geojson2gpuPolygonFillGeometry(
     latLon: [],
     triLatLonB: [],
     triLatLonC: [],
+    featureIndex: [],
   };
 
-  for (const feature of geojson.features) {
+  for (const [featureIndex, feature] of geojson.features.entries()) {
     if (feature.geometry.type === "Polygon") {
       addPolygonFill(
         feature.geometry.coordinates as number[][][],
         helper,
         builder,
         radius,
-        zOffset
+        zOffset,
+        featureIndex
       );
     } else if (feature.geometry.type === "MultiPolygon") {
       for (const rings of feature.geometry.coordinates as number[][][][]) {
-        addPolygonFill(rings, helper, builder, radius, zOffset);
+        addPolygonFill(rings, helper, builder, radius, zOffset, featureIndex);
       }
     }
     // other geometry types are handled by the line path (polygonsToOutlines)
   }
 
+  return fillGeometryFromBuilder(builder);
+}
+
+function fillGeometryFromBuilder(builder: GpuPolygonFillBuilder) {
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute(
     "position",
@@ -184,8 +195,42 @@ function geojson2gpuPolygonFillGeometry(
     "triLatLonC",
     new THREE.Float32BufferAttribute(builder.triLatLonC, 2)
   );
+  // choropleth input, refilled by applyVectorFeatureValues; NaN renders as
+  // the constant fill color
+  geometry.setAttribute(
+    "featureValue",
+    new THREE.Float32BufferAttribute(
+      new Float32Array(builder.positions.length / 3).fill(NaN),
+      1
+    )
+  );
+  // vertex -> source-feature mapping, kept CPU-side so per-feature colors can
+  // be recomputed (colorBy changes) without retriangulating
+  geometry.userData.featureIndex = Uint32Array.from(builder.featureIndex);
   geometry.computeBoundingSphere();
   return geometry;
+}
+
+// Refill the featureValue attribute from per-feature values (indexed in
+// source-feature order) using the vertex mapping recorded at triangulation
+// time. Pure attribute update: no retriangulation, no new buffers.
+function applyVectorFeatureValues(
+  geometry: THREE.BufferGeometry,
+  values: ArrayLike<number>
+) {
+  const attribute = geometry.getAttribute(
+    "featureValue"
+  ) as THREE.BufferAttribute;
+  const featureIndex = geometry.userData.featureIndex as
+    | Uint32Array
+    | undefined;
+  if (!attribute || !featureIndex) {
+    return;
+  }
+  for (let i = 0; i < featureIndex.length; i++) {
+    attribute.setX(i, values[featureIndex[i]] ?? NaN);
+  }
+  attribute.needsUpdate = true;
 }
 
 // Convert Polygon/MultiPolygon features to ring outlines so the existing GPU
@@ -216,4 +261,9 @@ function polygonsToOutlines(geojson: FeatureCollection): FeatureCollection {
   return { ...geojson, features };
 }
 
-export { geojson2gpuPolygonFillGeometry, longitudeWinding, polygonsToOutlines };
+export {
+  applyVectorFeatureValues,
+  geojson2gpuPolygonFillGeometry,
+  longitudeWinding,
+  polygonsToOutlines,
+};

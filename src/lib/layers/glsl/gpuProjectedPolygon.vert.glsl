@@ -10,9 +10,11 @@ uniform float zOffset;
 attribute vec2 latLon;
 attribute vec2 triLatLonB;
 attribute vec2 triLatLonC;
+attribute float featureValue;
 
 varying float vHidden;
 varying vec2 vProjectedXY;
+varying float vFeatureValue;
 
 bool isInvalidProjection(vec3 projected) {
   return is_nan(projected.x) || is_nan(projected.y) || is_nan(projected.z);
@@ -88,6 +90,7 @@ void main() {
     hideTriangle = maxSpan > projectionRadius;
   }
 
+  vFeatureValue = featureValue;
   vHidden = hideTriangle ? 1.0 : 0.0;
   if (hideTriangle) {
     vProjectedXY = vec2(0.0);
