@@ -73,6 +73,7 @@ export function useSharedGridLogic() {
   let updateCoastlines: TAsyncVoidFunction = async () => {};
   let updateGraticules: TAsyncVoidFunction = async () => {};
   let syncTextureLayersOnReady: TAsyncVoidFunction = async () => {};
+  let syncVectorLayersOnReady: TVoidFunction = () => {};
 
   const {
     canvas,
@@ -103,6 +104,7 @@ export function useSharedGridLogic() {
       updateCoastlines();
       updateGraticules();
       void syncTextureLayersOnReady();
+      syncVectorLayersOnReady();
     },
   });
 
@@ -111,6 +113,7 @@ export function useSharedGridLogic() {
     updateGraticules: updateGraticulesInternal,
     updateLandSeaMask,
     updateTextureLayers,
+    updateVectorLayers,
     updateLayerProjectionUniforms,
     updateOverlayProjectionUniforms,
   } = useGridOverlays({
@@ -126,6 +129,7 @@ export function useSharedGridLogic() {
   updateCoastlines = updateCoastlinesInternal;
   updateGraticules = updateGraticulesInternal;
   syncTextureLayersOnReady = () => updateTextureLayers();
+  syncVectorLayersOnReady = () => updateVectorLayers();
 
   // the mask mode may already be set from the URL before the grid mounts
   store.positionMaskLayerForMode(landSeaMaskChoice.value);
@@ -145,6 +149,7 @@ export function useSharedGridLogic() {
     () => store.layerStack,
     () => {
       void updateTextureLayers();
+      updateVectorLayers();
     },
     { deep: true }
   );
@@ -190,6 +195,7 @@ export function useSharedGridLogic() {
         void updateOverlayProjectionUniforms(true);
         updateLandSeaMask();
         void updateTextureLayers(true);
+        updateVectorLayers();
         configureCameraForProjection();
       } else if (centerChanged) {
         void updateOverlayProjectionUniforms();

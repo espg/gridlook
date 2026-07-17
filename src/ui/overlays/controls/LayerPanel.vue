@@ -53,6 +53,7 @@ const LAYER_ICONS: Record<TLayerKind, string> = {
   [LAYER_KINDS.GRID]: "fa-border-all",
   [LAYER_KINDS.MASK]: "fa-mask",
   [LAYER_KINDS.TEXTURE]: "fa-image",
+  [LAYER_KINDS.VECTOR]: "fa-draw-polygon",
 };
 
 const MASK_LAYER_OPTIONS = {
@@ -150,7 +151,28 @@ onMounted(async () => {
   } catch (error) {
     logError(error, "Couldn't load stored texture layers");
   }
+  await maybeAddDevVectorSample();
 });
+
+// dev-only: append `?vector_sample` to the URL to inject a bundled sample
+// vector layer (no injection UI yet — that lands with the vector UI phase)
+async function maybeAddDevVectorSample() {
+  if (
+    !import.meta.env.DEV ||
+    !new URLSearchParams(window.location.search).has("vector_sample")
+  ) {
+    return;
+  }
+  const { DEV_VECTOR_SAMPLE_ID, devVectorSampleCollection } =
+    await import("@/lib/layers/devVectorSample.ts");
+  if (!layerStack.value.some((layer) => layer.id === DEV_VECTOR_SAMPLE_ID)) {
+    store.addVectorLayer(
+      DEV_VECTOR_SAMPLE_ID,
+      "Sample vectors (dev)",
+      devVectorSampleCollection
+    );
+  }
+}
 
 async function onFileSelected(event: Event) {
   const input = event.target as HTMLInputElement;
@@ -292,6 +314,8 @@ function toggleLayer(layer: TLayerEntry) {
     }
   } else if (layer.kind === LAYER_KINDS.TEXTURE) {
     store.updateTextureLayer(layer.id, { visible: !layer.visible });
+  } else if (layer.kind === LAYER_KINDS.VECTOR) {
+    store.updateVectorLayer(layer.id, { visible: !layer.visible });
   }
 }
 

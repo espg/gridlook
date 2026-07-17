@@ -12,9 +12,17 @@ import {
 } from "@/lib/layers/equirectLayer.ts";
 import { geojson2gpuLineSegmentsGeometry } from "@/lib/layers/geojson.ts";
 import {
+  geojson2gpuPolygonFillGeometry,
+  polygonsToOutlines,
+} from "@/lib/layers/geojsonPolygons.ts";
+import {
   makeGpuProjectedLineMaterial,
   updateGpuProjectedLineMaterial,
 } from "@/lib/layers/gpuProjectedLines.ts";
+import {
+  makeGpuProjectedPolygonMaterial,
+  updateGpuProjectedPolygonMaterial,
+} from "@/lib/layers/gpuProjectedPolygons.ts";
 import {
   getLandSeaMask,
   LAND_SEA_MASK_MODES,
@@ -67,6 +75,20 @@ const COASTLINE_GEOJSON_PATHS: Record<TCoastlineResolution, string> = {
   [COASTLINE_RESOLUTIONS.FIFTY_M]: "static/ne_50m_coastline.geojson",
 };
 
+// Phase-1 constants; per-layer styling controls arrive with the vector UI
+const vectorFillStyle = {
+  color: "#3388ff",
+  opacity: 0.35,
+  radius: 1.001,
+  zOffset: 0.008,
+} as const;
+
+const vectorStrokeStyle: TOverlayLineStyle = {
+  color: "#88ccff",
+  radius: 1.002,
+  zOffset: 0.01,
+} as const;
+
 const GRATICULE_GEOJSON_PATHS: Record<TGraticuleSpacing, string> = {
   [GRATICULE_SPACINGS.FIFTEEN_DEGREES]: "static/ne_50m_graticules_15.geojson",
   [GRATICULE_SPACINGS.THIRTY_DEGREES]: "static/ne_50m_graticules_30.geojson",
@@ -96,6 +118,7 @@ export function useGridOverlays(options: UseGridOverlaysOptions) {
   let coastlineUpdateId = 0;
   let graticuleUpdateId = 0;
   const textureLayerMeshes = new Map<string, THREE.Mesh>();
+  const vectorLayerGroups = new Map<string, THREE.Group>();
   const textureCache = new Map<
     string,
     { maskMode: TLandSeaMaskMode; layerTexture: TImageLayerTexture }
@@ -355,6 +378,8 @@ export function useGridOverlays(options: UseGridOverlaysOptions) {
         );
       } else if (layer instanceof THREE.LineSegments) {
         applyLineStackPosition(layer, renderOrder);
+      } else if (layer instanceof THREE.Group) {
+        applyVectorStackPosition(layer, renderOrder);
       }
     }
   }
@@ -372,6 +397,9 @@ export function useGridOverlays(options: UseGridOverlaysOptions) {
     if (entry.kind === LAYER_KINDS.TEXTURE) {
       return textureLayerMeshes.get(entry.id);
     }
+    if (entry.kind === LAYER_KINDS.VECTOR) {
+      return vectorLayerGroups.get(entry.id);
+    }
     return undefined;
   }
 
@@ -383,6 +411,17 @@ export function useGridOverlays(options: UseGridOverlaysOptions) {
     lineSegments.renderOrder = renderOrder;
     material.transparent = renderOrder > 0;
     material.needsUpdate = true;
+  }
+
+  function applyVectorStackPosition(group: THREE.Group, renderOrder: number) {
+    for (const child of group.children) {
+      if (child instanceof THREE.LineSegments) {
+        // outlines draw just above their fill
+        applyLineStackPosition(child, renderOrder + 0.5);
+      } else if (child instanceof THREE.Mesh) {
+        child.renderOrder = renderOrder;
+      }
+    }
   }
 
   async function getLayerTexture(entry: TLayerEntry) {
@@ -491,12 +530,129 @@ export function useGridOverlays(options: UseGridOverlaysOptions) {
     redraw();
   }
 
+  function getFillProjectionOptions() {
+    return {
+      radius: projectionHelper.value.isFlat ? 1 : vectorFillStyle.radius,
+      zOffset: projectionHelper.value.isFlat ? vectorFillStyle.zOffset : 0,
+    };
+  }
+
+  function createVectorLayerGroup(entry: TLayerEntry) {
+    const data = entry.vectorData;
+    if (!data) {
+      return undefined;
+    }
+    const helper = projectionHelper.value;
+    const fill = new THREE.Mesh(
+      geojson2gpuPolygonFillGeometry(data, helper, getFillProjectionOptions()),
+      makeGpuProjectedPolygonMaterial({
+        color: vectorFillStyle.color,
+        opacity: vectorFillStyle.opacity,
+        ...getFillProjectionOptions(),
+      })
+    );
+    fill.name = `vectorFill:${entry.id}`;
+    fill.frustumCulled = false;
+    const outline = new THREE.LineSegments(
+      geojson2gpuLineSegmentsGeometry(
+        polygonsToOutlines(data),
+        helper,
+        getLineProjectionOptions(vectorStrokeStyle)
+      ),
+      makeGpuProjectedLineMaterial({
+        color: vectorStrokeStyle.color,
+        ...getLineProjectionOptions(vectorStrokeStyle),
+      })
+    );
+    outline.name = `vectorOutline:${entry.id}`;
+    outline.frustumCulled = false;
+    const group = new THREE.Group();
+    group.name = `vectorLayer:${entry.id}`;
+    group.add(fill, outline);
+    return group;
+  }
+
+  function updateVectorGroupProjection(group: THREE.Group) {
+    for (const child of group.children) {
+      if (child instanceof THREE.LineSegments) {
+        updateGpuProjectedLineMaterial(
+          child.material as THREE.ShaderMaterial,
+          projectionHelper.value,
+          getLineProjectionOptions(vectorStrokeStyle)
+        );
+      } else if (child instanceof THREE.Mesh) {
+        updateGpuProjectedPolygonMaterial(
+          child.material as THREE.ShaderMaterial,
+          projectionHelper.value,
+          getFillProjectionOptions()
+        );
+      }
+    }
+  }
+
+  function removeVectorLayerGroup(id: string) {
+    const group = vectorLayerGroups.get(id);
+    if (!group) {
+      return;
+    }
+    getScene()?.remove(group);
+    for (const child of group.children) {
+      if (child instanceof THREE.Mesh || child instanceof THREE.LineSegments) {
+        child.geometry.dispose();
+        (child.material as THREE.ShaderMaterial).dispose();
+      }
+    }
+    vectorLayerGroups.delete(id);
+  }
+
+  /**
+   * Sync vector layer groups (fill mesh + outline lines) with the store's
+   * layer stack. Geometry is GPU-projected from lat/lon attributes, so
+   * projection changes only need material uniform updates, no rebuilds.
+   */
+  function updateVectorLayers() {
+    const scene = getScene();
+    if (!scene) {
+      return;
+    }
+    const entries = store.layerStack.filter(
+      (entry) => entry.kind === LAYER_KINDS.VECTOR
+    );
+    const wanted = new Set(entries.map((entry) => entry.id));
+
+    for (const id of [...vectorLayerGroups.keys()]) {
+      if (!wanted.has(id)) {
+        removeVectorLayerGroup(id);
+      }
+    }
+
+    for (const entry of entries) {
+      let group = vectorLayerGroups.get(entry.id);
+      if (!group) {
+        group = createVectorLayerGroup(entry);
+        if (!group) {
+          continue;
+        }
+        vectorLayerGroups.set(entry.id, group);
+        scene.add(group);
+      }
+      group.visible = entry.visible;
+      updateVectorGroupProjection(group);
+    }
+
+    applyLayerOrders();
+    redraw();
+  }
+
   function updateLayerProjectionUniforms() {
     if (landSeaMask) {
       updateEquirectLayerProjection(landSeaMask, projectionHelper.value);
     }
     for (const mesh of textureLayerMeshes.values()) {
       updateEquirectLayerProjection(mesh, projectionHelper.value);
+    }
+    for (const group of vectorLayerGroups.values()) {
+      updateVectorGroupProjection(group);
     }
     redraw();
   }
@@ -516,6 +672,7 @@ export function useGridOverlays(options: UseGridOverlaysOptions) {
     updateGraticules,
     updateLandSeaMask,
     updateTextureLayers,
+    updateVectorLayers,
     updateLayerProjectionUniforms,
     updateOverlayProjectionUniforms,
   };
