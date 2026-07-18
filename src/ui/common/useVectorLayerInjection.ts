@@ -12,6 +12,14 @@ type TVectorLayerUrlOptions = {
   style?: Partial<TVectorLayerStyle>;
 };
 
+// Module-scoped so overlapping restore passes never double-add the same source
+// URL. `addVectorLayerFromUrl` awaits a network fetch before the entry lands in
+// the stack, so a same-URL caller that starts during that window can't see the
+// pending layer via a stack scan; this in-flight set closes that gap. Realistic
+// trigger: a `hashchange` (e.g. rapid presenter/display re-navigation) firing
+// the restore watch while onMounted's restore is still fetching.
+const inFlightVectorLayerUrls = new Set<string>();
+
 /**
  * Shared entry points for adding GeoJSON vector layers from user input
  * (file upload, drag-and-drop, URL) and from `vectorlayers` deep links.
@@ -37,6 +45,12 @@ export function useVectorLayerInjection() {
     url: string,
     options?: TVectorLayerUrlOptions
   ): Promise<boolean> {
+    // Another add for this URL is already mid-fetch; skip rather than race it
+    // to a duplicate entry (dedup across the fetch window, see the set above).
+    if (inFlightVectorLayerUrls.has(url)) {
+      return false;
+    }
+    inFlightVectorLayerUrls.add(url);
     try {
       const data = await loadVectorLayerFromUrl(url);
       const id = crypto.randomUUID();
@@ -54,6 +68,8 @@ export function useVectorLayerInjection() {
     } catch (error) {
       logError(error, "Couldn't load the URL as a vector layer");
       return false;
+    } finally {
+      inFlightVectorLayerUrls.delete(url);
     }
   }
 
