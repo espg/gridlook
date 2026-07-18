@@ -5,7 +5,12 @@ import {
   readVectorLayerFile,
   vectorLayerNameFromUrl,
 } from "@/lib/layers/vectorLayerFormats.ts";
-import { useGlobeControlStore, type TVectorLayerStyle } from "@/store/store.ts";
+import {
+  LAYER_KINDS,
+  useGlobeControlStore,
+  type TVectorLayerStyle,
+} from "@/store/store.ts";
+import type { TVectorLayerSpec } from "@/store/vectorLayerParams.ts";
 
 type TVectorLayerUrlOptions = {
   visible?: boolean;
@@ -19,6 +24,63 @@ type TVectorLayerUrlOptions = {
 // trigger: a `hashchange` (e.g. rapid presenter/display re-navigation) firing
 // the restore watch while onMounted's restore is still fetching.
 const inFlightVectorLayerUrls = new Set<string>();
+
+type TGlobeControlStore = ReturnType<typeof useGlobeControlStore>;
+type TAddVectorLayerFromUrl = (
+  url: string,
+  options?: TVectorLayerUrlOptions
+) => Promise<boolean>;
+
+/**
+ * Reconcile the URL-sourced vector layers in the stack against the decoded
+ * `vectorlayers` deep-link specs (the restore-on-hashchange path). Removes
+ * URL-sourced layers whose source is absent from `specs`, re-applies
+ * visibility/style to ones still present without re-fetching, and adds the
+ * missing ones. File/drag-drop layers (no `vectorSourceUrl`) are untouched.
+ *
+ * No explicit loop guard is needed: `useUrlSync` re-serializes the stack to a
+ * byte-stable `vectorlayers` value, so re-applying identical state produces an
+ * unchanged parameter and its debounced watcher never rewrites the hash.
+ */
+async function reconcileVectorLayerStack(
+  store: TGlobeControlStore,
+  addVectorLayerFromUrl: TAddVectorLayerFromUrl,
+  specs: TVectorLayerSpec[]
+): Promise<void> {
+  const desiredUrls = new Set(specs.map((spec) => spec.url));
+
+  // Drop URL-sourced layers no longer named by the param (snapshot the stack
+  // first — removeVectorLayer reassigns it).
+  for (const entry of [...store.layerStack]) {
+    if (
+      entry.kind === LAYER_KINDS.VECTOR &&
+      entry.vectorSourceUrl &&
+      !desiredUrls.has(entry.vectorSourceUrl)
+    ) {
+      store.removeVectorLayer(entry.id);
+    }
+  }
+
+  // Re-apply present layers in place; add missing ones. Specs load in reverse
+  // so unshift keeps their top → bottom order.
+  for (const spec of [...specs].reverse()) {
+    const existing = store.layerStack.find(
+      (entry) =>
+        entry.kind === LAYER_KINDS.VECTOR && entry.vectorSourceUrl === spec.url
+    );
+    if (existing) {
+      store.updateVectorLayer(existing.id, { visible: spec.visible ?? true });
+      if (spec.style) {
+        store.updateVectorLayerStyle(existing.id, spec.style);
+      }
+      continue;
+    }
+    await addVectorLayerFromUrl(spec.url, {
+      visible: spec.visible,
+      style: spec.style,
+    });
+  }
+}
 
 /**
  * Shared entry points for adding GeoJSON vector layers from user input
@@ -73,5 +135,10 @@ export function useVectorLayerInjection() {
     }
   }
 
-  return { addVectorLayerFromFile, addVectorLayerFromUrl };
+  return {
+    addVectorLayerFromFile,
+    addVectorLayerFromUrl,
+    reconcileVectorLayersFromSpecs: (specs: TVectorLayerSpec[]) =>
+      reconcileVectorLayerStack(store, addVectorLayerFromUrl, specs),
+  };
 }

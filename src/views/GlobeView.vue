@@ -26,7 +26,7 @@ import {
 } from "@/lib/shaders/colormapShaders.ts";
 import { PresenterRole } from "@/lib/types/presenterSync.ts";
 import { useUrlParameterStore } from "@/store/paramStore.ts";
-import { LAYER_KINDS, useGlobeControlStore } from "@/store/store.ts";
+import { useGlobeControlStore } from "@/store/store.ts";
 import {
   usePresenterSync,
   isDisplayMode,
@@ -414,25 +414,15 @@ onMounted(async () => {
   await injectVectorLayersFromParam();
 });
 
-// Restore URL-sourced vector layers from the `vectorlayers` deep link.
-// Layers whose source URL is already in the stack are left untouched (the
-// parameter is also rewritten from the stack, so this is the common case on
-// hash rewrites); specs load in reverse so unshift keeps their order.
+// Restore URL-sourced vector layers from the `vectorlayers` deep link. On a
+// hashchange (e.g. presenter → display navigation) this reconciles the stack
+// against the decoded param: removes URL-sourced layers absent from the new
+// value, re-applies visibility/style to ones still present, and adds the rest.
+// File/drag-drop layers stay untouched (see reconcileVectorLayersFromSpecs).
 async function injectVectorLayersFromParam() {
-  const specs = decodeVectorLayersParam(paramVectorLayers.value ?? "");
-  for (const spec of [...specs].reverse()) {
-    const alreadyLoaded = store.layerStack.some(
-      (entry) =>
-        entry.kind === LAYER_KINDS.VECTOR && entry.vectorSourceUrl === spec.url
-    );
-    if (alreadyLoaded) {
-      continue;
-    }
-    await addVectorLayerFromUrl(spec.url, {
-      visible: spec.visible,
-      style: spec.style,
-    });
-  }
+  await reconcileVectorLayersFromSpecs(
+    decodeVectorLayersParam(paramVectorLayers.value ?? "")
+  );
 }
 
 watch(
@@ -445,8 +435,8 @@ watch(
 // Drag-and-drop layer injection: dropping a file anywhere in the window routes
 // GeoJSON to the vector path and PNG/JPEG/GeoTIFF to the texture path, matching
 // the formats the Upload button accepts (LayerPanel's onFileSelected).
-// addVectorLayerFromUrl also serves the `vectorlayers` deep-link restore.
-const { addVectorLayerFromFile, addVectorLayerFromUrl } =
+// reconcileVectorLayersFromSpecs also serves the `vectorlayers` deep-link restore.
+const { addVectorLayerFromFile, reconcileVectorLayersFromSpecs } =
   useVectorLayerInjection();
 
 function dragHasFiles(e: DragEvent) {
