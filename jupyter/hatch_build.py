@@ -49,5 +49,9 @@ class ViteBuildHook(BuildHookInterface):
             raise RuntimeError(f"gridlook-jupyter: npm run build produced no {dist}/index.html")
         if static.exists():
             shutil.rmtree(static)
-        shutil.copytree(dist, static)
-        self.app.display_info(f"gridlook-jupyter: packaged {dist} -> {static}")
+        # vite.config.ts keeps sourcemaps on for dev/standalone builds; the wheel is a
+        # server-extension artifact that never needs them, so drop *.map on the way in.
+        shutil.copytree(dist, static, ignore=shutil.ignore_patterns("*.map"))
+        self.app.display_info(
+            f"gridlook-jupyter: packaged {dist} -> {static} (source maps excluded)"
+        )
