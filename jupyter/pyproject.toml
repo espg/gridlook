@@ -1,0 +1,47 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gridlook-jupyter"
+# Static version: this fork's tags belong to upstream gridlook releases, so no hatch-vcs.
+version = "0.1.0"
+description = "Jupyter server extension serving the gridlook viewer with a streaming S3 byte-range proxy"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+authors = [{ name = "Shane Grigsby", email = "refuge@rocktalus.com" }]
+dependencies = [
+    "jupyter-server>=2",
+    "obstore>=0.10",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8",
+    "pytest-jupyter[server]>=0.10",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["gridlook_jupyter"]
+
+[tool.hatch.build.targets.wheel.shared-data]
+"jupyter-config/jupyter_server_config.d" = "etc/jupyter/jupyter_server_config.d"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "gridlook_jupyter",
+    "jupyter-config",
+    "README.md",
+]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
