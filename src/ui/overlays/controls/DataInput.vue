@@ -6,6 +6,7 @@ import CatalogPanel from "./CatalogPanel.vue";
 import { useGlobeControlStore } from "@/store/store.ts";
 import Modal from "@/ui/common/Modal.vue";
 import { fetchCatalog, type TCatalogEntry } from "@/utils/catalog.ts";
+import { maybeRewriteS3Uri } from "@/utils/proxyRewrite.ts";
 
 const props = defineProps<{ currentSource: string }>();
 
@@ -41,10 +42,13 @@ function close() {
 }
 
 async function setLocationHash() {
-  const next = dataPath.value.trim();
+  let next = dataPath.value.trim();
   if (!next) {
     return;
   }
+  // Served by gridlook-jupyter, s3:// inputs route through its proxy;
+  // standalone, they pass through untouched.
+  next = await maybeRewriteS3Uri(next);
   const filenameToCheck = next.endsWith("/") ? next.slice(0, -1) : next;
   // Catalogs are expected to be JSON files, so if the input ends with .json, we
   // can try to fetch it as a catalog before setting the location hash
