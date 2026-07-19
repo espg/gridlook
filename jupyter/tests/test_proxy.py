@@ -47,6 +47,28 @@ async def test_suffix_range(jp_fetch, seeded):
     assert resp.body == PAYLOAD[-16:]
 
 
+async def test_out_of_range_416(jp_fetch, seeded):
+    with pytest.raises(HTTPClientError) as e:
+        await jp_fetch(
+            "gridlook",
+            "s3",
+            ALLOWED_BUCKET,
+            "data/chunk.bin",
+            headers={"Range": "bytes=999999-1000000"},
+        )
+    assert e.value.code == 416
+    assert e.value.response.headers["Content-Range"] == f"bytes */{len(PAYLOAD)}"
+
+
+async def test_zero_suffix_range_416(jp_fetch, seeded):
+    with pytest.raises(HTTPClientError) as e:
+        await jp_fetch(
+            "gridlook", "s3", ALLOWED_BUCKET, "data/chunk.bin", headers={"Range": "bytes=-0"}
+        )
+    assert e.value.code == 416
+    assert e.value.response.headers["Content-Range"] == f"bytes */{len(PAYLOAD)}"
+
+
 async def test_head(jp_fetch, seeded):
     resp = await jp_fetch("gridlook", "s3", ALLOWED_BUCKET, "data/chunk.bin", method="HEAD")
     assert resp.code == 200
