@@ -68,6 +68,21 @@ async def test_missing_key_404(jp_fetch, seeded):
     assert b"no such object" in e.value.response.body
 
 
+@pytest.mark.parametrize("key", ["../secret/x", "a/../b", "....//x"])
+async def test_malformed_key_400_get(jp_fetch, seeded, key):
+    with pytest.raises(HTTPClientError) as e:
+        await jp_fetch("gridlook", "s3", ALLOWED_BUCKET, key)
+    assert e.value.code == 400
+    assert b"invalid key" in e.value.response.body
+
+
+@pytest.mark.parametrize("key", ["../secret/x", "a/../b", "....//x"])
+async def test_malformed_key_400_head(jp_fetch, seeded, key):
+    with pytest.raises(HTTPClientError) as e:
+        await jp_fetch("gridlook", "s3", ALLOWED_BUCKET, key, method="HEAD")
+    assert e.value.code == 400
+
+
 async def test_non_allowlisted_bucket_403(jp_fetch, seeded):
     with pytest.raises(HTTPClientError) as e:
         await jp_fetch("gridlook", "s3", "sneaky-bucket", "any/key")

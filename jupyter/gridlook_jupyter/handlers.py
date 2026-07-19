@@ -105,6 +105,10 @@ class S3ProxyHandler(JupyterHandler):
             result = await obstore.get_async(store, key, options=options)
         except (NotFoundError, FileNotFoundError) as e:
             raise web.HTTPError(404, f"no such object: s3://{bucket}/{key}") from e
+        except ValueError as e:
+            # obstore's path parser rejects malformed keys (``..``, empty segments)
+            # before any I/O; that is a bad client request, not a server fault.
+            raise web.HTTPError(400, f"invalid key: {key}") from e
         except (BaseError, OSError) as e:
             # Includes out-of-bounds ranges; obstore surfaces them as generic errors.
             raise web.HTTPError(502, f"S3 error for s3://{bucket}/{key}: {e}") from e
@@ -132,6 +136,8 @@ class S3ProxyHandler(JupyterHandler):
             meta = await obstore.head_async(store, key)
         except (NotFoundError, FileNotFoundError) as e:
             raise web.HTTPError(404, f"no such object: s3://{bucket}/{key}") from e
+        except ValueError as e:
+            raise web.HTTPError(400, f"invalid key: {key}") from e
         except (BaseError, OSError) as e:
             raise web.HTTPError(502, f"S3 error for s3://{bucket}/{key}: {e}") from e
         self.set_header("Accept-Ranges", "bytes")
