@@ -1,0 +1,56 @@
+name: Jupyter
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "jupyter/**"
+      - "src/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/jupyter.yml"
+  pull_request:
+    paths:
+      - "jupyter/**"
+      - "src/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/jupyter.yml"
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build the wheel (runs the vite build hook)
+        run: uv build --wheel jupyter -o jupyter/dist-py
+
+      - name: Assert the wheel carries the SPA
+        run: unzip -l jupyter/dist-py/*.whl | grep -q "gridlook_jupyter/static/index.html"
+
+      - name: Install the wheel with test deps
+        run: |
+          uv venv
+          uv pip install "$(ls jupyter/dist-py/*.whl)[test]" ruff
+
+      - name: Ruff
+        run: |
+          uv run ruff check jupyter/gridlook_jupyter jupyter/tests jupyter/hatch_build.py
+          uv run ruff format --check jupyter/gridlook_jupyter jupyter/tests jupyter/hatch_build.py
+
+      - name: Pytest
+        run: uv run pytest jupyter/tests -v
