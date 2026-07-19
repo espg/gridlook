@@ -19,8 +19,16 @@ _RANGE_RE = re.compile(r"^bytes=(\d*)-(\d*)$")
 _STREAM_CHUNK = 256 * 1024
 
 
+class _RangeNotSatisfiableError(Exception):
+    """Raised by range parsing for a well-formed but unsatisfiable range (e.g. ``bytes=-0``)."""
+
+
 def parse_range_header(header: str):
-    """Map a single-range ``Range`` header to obstore get options, or None to ignore it."""
+    """Map a single-range ``Range`` header to obstore get options, or None to ignore it.
+
+    Raises :class:`_RangeNotSatisfiableError` for a syntactically valid range that can never
+    be satisfied (a zero-length suffix, ``bytes=-0``).
+    """
     m = _RANGE_RE.match(header.strip())
     if m is None:
         return None
@@ -32,7 +40,10 @@ def parse_range_header(header: str):
     if start:
         return {"offset": int(start)}
     if end:
-        return {"suffix": int(end)}
+        suffix = int(end)
+        if suffix == 0:  # bytes=-0 selects the last zero bytes: unsatisfiable
+            raise _RangeNotSatisfiableError
+        return {"suffix": suffix}
     return None
 
 
@@ -95,11 +106,33 @@ class S3ProxyHandler(JupyterHandler):
             )
         return proxy.get_store(bucket)
 
+    async def _send_range_not_satisfiable(self, store, key):
+        """Emit a 416 with ``Content-Range: bytes */<size>``; head the object for the size.
+
+        RFC 9110 §14.4 requires a numeric complete-length in the unsatisfied-range form
+        (``*/*`` is not valid there), so we head the object — a single request on this cold
+        error path — and only fall back to ``*/*`` if that head itself fails.
+        """
+        size = None
+        try:
+            meta = await obstore.head_async(store, key)
+            size = meta["size"]
+        except (BaseError, OSError, ValueError):
+            pass
+        self.set_status(416)
+        self.set_header("Content-Type", "text/plain; charset=utf-8")
+        self.set_header("Content-Range", f"bytes */{size}" if size is not None else "bytes */*")
+        self.finish("range not satisfiable")
+
     @web.authenticated
     async def get(self, bucket, key):
         store = self._store_for(bucket)
         range_header = self.request.headers.get("Range")
-        rng = parse_range_header(range_header) if range_header else None
+        try:
+            rng = parse_range_header(range_header) if range_header else None
+        except _RangeNotSatisfiableError:
+            await self._send_range_not_satisfiable(store, key)
+            return
         options = {"range": rng} if rng is not None else {}
         try:
             result = await obstore.get_async(store, key, options=options)
@@ -110,7 +143,11 @@ class S3ProxyHandler(JupyterHandler):
             # before any I/O; that is a bad client request, not a server fault.
             raise web.HTTPError(400, f"invalid key: {key}") from e
         except (BaseError, OSError) as e:
-            # Includes out-of-bounds ranges; obstore surfaces them as generic errors.
+            # A range that runs past EOF surfaces as a generic "range invalid" error;
+            # that is a client range fault (416), not an upstream/gateway fault (502).
+            if rng is not None and "range" in str(e).lower():
+                await self._send_range_not_satisfiable(store, key)
+                return
             raise web.HTTPError(502, f"S3 error for s3://{bucket}/{key}: {e}") from e
 
         size = result.meta["size"]
