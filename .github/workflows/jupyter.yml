@@ -43,14 +43,13 @@ jobs:
         run: unzip -l jupyter/dist-py/*.whl | grep -q "gridlook_jupyter/static/index.html"
 
       - name: Install the wheel with test deps
-        run: |
-          uv venv
-          uv pip install "$(ls jupyter/dist-py/*.whl)[test]" ruff
+        # setup-uv's python-version input already created and activated .venv
+        run: uv pip install "$(ls jupyter/dist-py/*.whl)[test]" ruff
 
       - name: Ruff
         run: |
-          uv run ruff check jupyter/gridlook_jupyter jupyter/tests jupyter/hatch_build.py
-          uv run ruff format --check jupyter/gridlook_jupyter jupyter/tests jupyter/hatch_build.py
+          ruff check jupyter/gridlook_jupyter jupyter/tests jupyter/hatch_build.py
+          ruff format --check jupyter/gridlook_jupyter jupyter/tests jupyter/hatch_build.py
 
       - name: Pytest
-        run: uv run pytest jupyter/tests -v
+        run: pytest jupyter/tests -v
