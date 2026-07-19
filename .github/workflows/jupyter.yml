@@ -42,6 +42,9 @@ jobs:
       - name: Assert the wheel carries the SPA
         run: unzip -l jupyter/dist-py/*.whl | grep -q "gridlook_jupyter/static/index.html"
 
+      - name: Assert the wheel ships no source maps
+        run: "! unzip -l jupyter/dist-py/*.whl | grep -q '\\.map$'"
+
       - name: Install the wheel with test deps
         # setup-uv's python-version input already created and activated .venv
         run: uv pip install "$(ls jupyter/dist-py/*.whl)[test]" ruff
