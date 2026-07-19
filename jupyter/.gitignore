@@ -1,3 +1,5 @@
+# Built SPA copied in by the wheel build hook (hatch_build.py)
+gridlook_jupyter/static/
 __pycache__/
 *.egg-info/
 .venv/
