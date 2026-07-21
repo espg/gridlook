@@ -21,6 +21,7 @@ moczarr (and its xarray/zarr stack) is an extras-gated dependency
 (``gridlook-jupyter[hive]``); everything module-level here imports without it.
 """
 
+import asyncio
 import functools
 import hashlib
 import json
@@ -55,6 +56,27 @@ _AOI_TOKEN_RE = re.compile(r"-?\d+")
 #: math (``nside = 2**refinement_level``, ``12*nside*nside``) in JS doubles, so
 #: anything above this renders wrong at HTTP 200.
 _FLOAT64_EXACT_MAX_ORDER = 24
+
+
+#: Per-event-loop build semaphores, keyed by loop and rebuilt when the
+#: configured limit changes. Bounds concurrent ``build_view`` offloads so a
+#: burst of opens can't hold N×(dataset + store) transiently on top of the
+#: resident cache; over-limit opens wait on ``acquire`` (they queue, no 503).
+#: Keyed by loop (not a bare module global) so it stays sound across the fresh
+#: event loop each test — and each real server process — runs under.
+_BUILD_SEMAPHORES: dict[asyncio.AbstractEventLoop, tuple[int, asyncio.Semaphore]] = {}
+
+
+def _build_semaphore(limit: int) -> asyncio.Semaphore:
+    """The build semaphore for the running loop, sized to *limit* (min 1)."""
+    loop = asyncio.get_running_loop()
+    limit = max(1, limit)
+    cached = _BUILD_SEMAPHORES.get(loop)
+    if cached is None or cached[0] != limit:
+        sem = asyncio.Semaphore(limit)
+        _BUILD_SEMAPHORES[loop] = (limit, sem)
+        return sem
+    return cached[1]
 
 
 class ViewTooLargeError(Exception):
@@ -362,7 +384,10 @@ class HiveOpenHandler(PlainTextErrorMixin, JupyterHandler):
                 max_cells=proxy.hive_max_cells,
             )
             try:
-                view = await IOLoop.current().run_in_executor(None, build)
+                # Cap concurrent materializations (each holds ds + store copy
+                # transiently); over-limit opens queue on acquire.
+                async with _build_semaphore(proxy.hive_max_concurrent_builds):
+                    view = await IOLoop.current().run_in_executor(None, build)
             except ViewTooLargeError as e:
                 raise web.HTTPError(
                     413,
