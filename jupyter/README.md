@@ -44,7 +44,8 @@ e.g. on a hub: `https://hub.example.org/user/<you>/gridlook/`.
 | `/gridlook/`                  | the static gridlook SPA                                                                                                                 |
 | `/gridlook/api/health`        | tiny JSON probe (`{"extension": "gridlook-jupyter", ...}`)                                                                              |
 | `/gridlook/s3/<bucket>/<key>` | streaming S3 proxy — GET/HEAD only, `Range` pass-through (206), no LIST                                                                 |
-| `/gridlook/hive/…`            | **reserved** for the phase-6 moczarr virtual-store endpoint (an `open_hive()` AOI served as one flat zarr store) — not implemented here |
+| `/gridlook/hive/open`         | open (or LRU-refresh) a **morton-hive virtual-store view** via moczarr — see below                                                      |
+| `/gridlook/hive/<view>/<key>` | serve one zarr object (metadata / whole chunk) of an open view                                                                          |
 
 ## Configuration
 
@@ -58,6 +59,11 @@ Via traitlets (`jupyter_server_config.py`, or `--GridlookProxy.…` on the comma
 c.GridlookProxy.allowed_buckets = ["my-zagg-outputs"]
 c.GridlookProxy.region = "us-west-2"          # optional; ambient AWS config otherwise
 c.GridlookProxy.static_dir = "/path/to/dist"  # optional; dev override for the SPA files
+
+# /gridlook/hive/ knobs (phase 6d; defaults shown)
+c.GridlookProxy.hive_max_views = 8            # LRU bound on materialized views
+c.GridlookProxy.hive_max_cells = 500_000      # per-view cell bound; 413 beyond
+c.GridlookProxy.allow_local_hive_stores = False  # local-path stores (dev only)
 ```
 
 Or environment variables (used only when the trait is not configured):
@@ -71,6 +77,58 @@ S3 credentials come from the ambient chain (instance/pod role, `AWS_*` env, shar
 the standard hub setup. The proxy streams responses chunk-by-chunk and never buffers whole
 objects; there are no presigned URLs, so nothing credential-shaped is ever exposed to the
 browser.
+
+## Morton-hive virtual store (`/gridlook/hive/`)
+
+Phase 6d of the viewer plan: a zagg **morton-hive** store is many leaf zarrs, but gridlook
+expects one zarr source — and post-englacial/zagg#314 stores are **morton-only**, so gridlook's
+existing HEALPix path (which consumes NESTED `cell_ids`) cannot read a leaf directly. The hive
+endpoint closes both gaps hub-side with [moczarr](https://github.com/espg/moczarr):
+`open_hive()` selects a product/AOI/window, **fabricates the exact NESTED `cell_ids`
+coordinate**, and the extension serves the result as **one flat zarr v3 store** the browser's
+unmodified zarrita reads.
+
+```
+GET /gridlook/hive/open?store=<url>[&product=<name>][&aoi=<decimal,csv>][&window=<label>]
+  -> {"view": "<id>", "url": ".../gridlook/hive/<id>", "cells": N, "cell_order": K, "cached": false}
+GET /gridlook/hive/<view>/<zarr-key>      # zarr.json documents and whole chunks
+```
+
+- `store` — hive store root: `s3://bucket/prefix` (bucket must be allowlisted, same posture as
+  the S3 proxy) or a local path (only when `GridlookProxy.allow_local_hive_stores` is enabled —
+  dev/tests).
+- `product` — named product root under a multi-product store (zagg D19).
+- `aoi` — comma-separated morton decimals (mixed orders fine); omit for the whole store.
+- `window` — window label on a time-windowed (`morton-hive/2`) store.
+
+Views are **materialized on open** into an in-memory zarr store and held in a per-server LRU
+cache: `GridlookProxy.hive_max_views` (default 8) bounds the cache, and
+`GridlookProxy.hive_max_cells` (default 500 000) bounds a single view — an over-size selection
+gets a 413 telling you to narrow the AOI. Re-opening the same selection refreshes the existing
+view; evicted view URLs 404 until re-opened. Materialize-on-open keeps the serve path free of
+zarr chunk/codec arithmetic; a streaming/virtual encoding is the future optimization if views
+outgrow memory.
+
+The served attrs carry a **pre-6c compatibility shim**: gridlook's grid detector currently
+accepts only `dggs.name == "healpix"`, so the view advertises the healpix-shaped block with
+`coordinate: "cell_ids"` + `refinement_level` — the fabricated NESTED ids are plain HEALPix
+NESTED indices, exactly what the existing sparse-HEALPix render path consumes. When phase 6c
+teaches the detector the morton convention entry, the shim goes away.
+
+### CryoCloud MVP recipe: render a hive store
+
+```bash
+# 1. install the extension wheel plus the hive extra (moczarr; git source until PyPI)
+pip install gridlook_jupyter-<version>-py3-none-any.whl "gridlook-jupyter[hive]"
+# 2. allowlist the bucket holding the store (or use env GRIDLOOK_ALLOWED_BUCKETS)
+#    e.g. in jupyter_server_config.py: c.GridlookProxy.allowed_buckets = ["my-zagg-outputs"]
+#    ...then restart your server so the extension picks it up.
+```
+
+3. Open a view (in a notebook, `requests.get(...)`, or just a browser tab):
+   `https://<hub>/user/<you>/gridlook/hive/open?store=s3://my-zagg-outputs/store-root&aoi=4331422`
+4. Copy the returned `url`, open the app at `https://<hub>/user/<you>/gridlook/`, and paste the
+   view URL as the dataset source. The view renders through the existing HEALPix path.
 
 ## `s3://` inputs in the app
 
@@ -93,3 +151,8 @@ jupyter server --GridlookProxy.static_dir="$(pwd)/../dist" --GridlookProxy.allow
 
 Tests exercise the proxy against an obstore `LocalStore` via the `GridlookProxy.store_factory`
 seam — no real S3 needed.
+
+The hive tests run against moczarr's committed SERC fixture and need moczarr importable from a
+**repo checkout** (so the fixture sits next to the package): `uv pip install -e
+/path/to/moczarr` (or set `GRIDLOOK_MOCZARR_TESTDATA` to a checkout's `tests/data`). Without
+moczarr the hive suite skips.
