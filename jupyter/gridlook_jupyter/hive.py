@@ -107,8 +107,15 @@ class HiveViewCache:
     def view_id(
         store_url: str, product: str | None, window: str | None, aoi: tuple[str, ...] | None
     ) -> str:
+        # Canonicalize so selections that name the SAME data collapse to one id
+        # (one materialization, one LRU slot): strip the store's trailing slash
+        # (build_view rstrips it for the data path anyway), normalize empty
+        # params to absent, and sort+dedupe the aoi tokens (order and repeats
+        # don't change the cover).
+        aoi_canon = sorted({int(t) for t in aoi}) if aoi else None
         payload = json.dumps(
-            [store_url, product, window, list(aoi) if aoi else None], separators=(",", ":")
+            [store_url.rstrip("/"), product or None, window or None, aoi_canon],
+            separators=(",", ":"),
         )
         return hashlib.sha256(payload.encode()).hexdigest()[:_VIEW_ID_HEX]
 
