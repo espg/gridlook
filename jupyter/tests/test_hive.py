@@ -147,6 +147,39 @@ class TestServedRefinementLevel:
             _served_refinement_level(ids, words, cell_order=24)
 
 
+class TestViewIdCanonicalization:
+    """Selections naming the same data hash to one view id (no LRU thrash)."""
+
+    def test_aoi_order_and_dupes_collapse(self):
+        from gridlook_jupyter.hive import HiveViewCache
+
+        base = HiveViewCache.view_id("s3://b/root", None, None, ("4331421", "4331422"))
+        reordered = HiveViewCache.view_id("s3://b/root", None, None, ("4331422", "4331421"))
+        duped = HiveViewCache.view_id("s3://b/root", None, None, ("4331421", "4331421", "4331422"))
+        assert base == reordered == duped
+
+    def test_trailing_slash_collapses(self):
+        from gridlook_jupyter.hive import HiveViewCache
+
+        assert HiveViewCache.view_id("s3://b/root", None, None, None) == HiveViewCache.view_id(
+            "s3://b/root/", None, None, None
+        )
+
+    def test_empty_params_equal_absent(self):
+        from gridlook_jupyter.hive import HiveViewCache
+
+        assert HiveViewCache.view_id("s3://b/root", "", "", None) == HiveViewCache.view_id(
+            "s3://b/root", None, None, None
+        )
+
+    def test_distinct_selections_differ(self):
+        from gridlook_jupyter.hive import HiveViewCache
+
+        a = HiveViewCache.view_id("s3://b/root", None, None, ("4331421",))
+        b = HiveViewCache.view_id("s3://b/root", None, None, ("4331422",))
+        assert a != b
+
+
 async def test_cell_ids_match_moczarr_fabrication_golden(jp_fetch):
     out = await _open(jp_fetch)
     ids = await _fetch_array(jp_fetch, out["view"], "cell_ids", "<u8")
