@@ -51,6 +51,12 @@ describe("parseHiveManifest", () => {
     expect(parseHiveManifest(rest).pathGrouping).toBe(1);
   });
 
+  it("rejects an explicit path_grouping: null (only absent defaults, moczarr)", () => {
+    expect(() =>
+      parseHiveManifest({ ...SERC_MANIFEST, [Key.PATH_GROUPING]: null })
+    ).toThrow(/path_grouping/);
+  });
+
   it("accepts a grouped manifest (the path_grouping: 3 fixture case)", () => {
     const grouped = { ...SERC_MANIFEST, [Key.PATH_GROUPING]: 3 };
     expect(parseHiveManifest(grouped).pathGrouping).toBe(3);

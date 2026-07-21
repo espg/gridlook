@@ -44,13 +44,15 @@ function asInt(value: unknown, key: string): number {
 }
 
 /**
- * The `path_grouping` chunk width. Absent/null reads as 1 (zagg D21:
- * existing stores are retroactively 1); anything but a positive integer is
- * malformed -- readers chunk per the manifest, never by assumption.
+ * The `path_grouping` chunk width. An ABSENT key reads as 1 (zagg D21:
+ * existing stores are retroactively 1), matching moczarr's
+ * `payload.get("path_grouping", 1)`; an explicit `null` -- like anything but a
+ * positive integer -- is malformed and loud, so a serializer-nulled or
+ * hand-edited manifest can't read differently in the browser than in Python.
  */
 function pathGroupingOf(raw: Record<string, unknown>): number {
   const value = raw["path_grouping"];
-  if (value === undefined || value === null) {
+  if (value === undefined) {
     return 1;
   }
   const grouping = asInt(value, "path_grouping");
