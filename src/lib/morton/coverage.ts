@@ -11,10 +11,14 @@
  * deliberately no LIST fallback here. The leaf bitmap tier (zstd) stays
  * server-side; the browser consumes the box/ranges tiers only.
  *
- * Posture split, mirroring moczarr: the envelope is a regenerable cache, so
- * an unusable payload PARSES as null (the caller reports no-coverage);
- * malformed ranges inside a well-formed envelope THROW (a corrupt cache
- * must never yield a plausible partial answer).
+ * Posture split, mirroring moczarr's parse_root_coverage vs ranges_words
+ * exactly: the tolerant (-> null) bucket gates on `spec` + `encoding` ONLY --
+ * a missing/unknown envelope is a regenerable-cache miss, so the caller reports
+ * no-coverage. Everything structural (the `order` shape, the `ranges` shape,
+ * endpoint validity) is LOUD: a well-formed envelope carrying a corrupt body
+ * must never silently read empty, because there is no LIST fallback to recover
+ * the true coverage. A numeric-string `order` (e.g. "6") reads like a JSON
+ * number, as moczarr's ranges_words does.
  */
 
 import {
@@ -41,9 +45,32 @@ export interface RootCoverage {
 }
 
 /**
- * A usable store-root coverage envelope, or null. Tolerant by design: a
- * non-object payload, an unknown spec, a non-"ranges" encoding, or missing
- * required keys read as absent (the root MOC is a regenerable cache).
+ * The envelope's common order as an integer. Mirrors moczarr's ranges_words,
+ * which reads a numeric-string `order` (e.g. "6") as readily as a JSON number;
+ * a missing, non-numeric, or non-integer order is malformed and loud -- a
+ * corrupt order inside a well-formed envelope must never silently drop
+ * coverage.
+ */
+function coverageOrder(value: unknown): number {
+  if (typeof value === "number" && Number.isInteger(value)) {
+    return value;
+  }
+  if (typeof value === "string" && /^\d+$/.test(value)) {
+    return Number(value);
+  }
+  throw new Error(
+    `coverage order must be an integer (got ${JSON.stringify(value)})`
+  );
+}
+
+/**
+ * A usable store-root coverage envelope, or null. Tolerant ONLY at the
+ * envelope gate (moczarr parse_root_coverage): a non-object payload, an
+ * unknown `spec`, or a non-"ranges" `encoding` reads as absent -- the root MOC
+ * is a regenerable cache. A well-formed envelope with a malformed `order` or a
+ * non-list `ranges` is LOUD (moczarr ranges_words): a corrupt body must never
+ * read as no-coverage. Per-range structural and endpoint checks stay loud at
+ * expansion (checkRange).
  */
 export function parseRootCoverage(payload: unknown): RootCoverage | null {
   if (
@@ -54,35 +81,39 @@ export function parseRootCoverage(payload: unknown): RootCoverage | null {
     return null;
   }
   const raw = payload as Record<string, unknown>;
-  const order = raw["order"];
-  const ranges = raw["ranges"];
-  const usable =
-    raw["spec"] === COVERAGE_SPEC &&
-    raw["encoding"] === "ranges" &&
-    typeof order === "number" &&
-    Number.isInteger(order) &&
-    Array.isArray(ranges);
-  if (!usable) {
+  if (raw["spec"] !== COVERAGE_SPEC || raw["encoding"] !== "ranges") {
     return null;
+  }
+  const order = coverageOrder(raw["order"]);
+  const ranges = raw["ranges"];
+  if (!Array.isArray(ranges)) {
+    throw new Error(
+      `coverage ranges must be a list of [first, last] pairs ` +
+        `(got ${JSON.stringify(ranges)})`
+    );
   }
   return {
     spec: COVERAGE_SPEC,
     encoding: "ranges",
-    order: order as number,
+    order,
     ranges: ranges as [string, string][],
   };
 }
 
 /** Validated (base, loRank, hiRank) of one range; throws when malformed. */
-function checkRange(
-  lo: unknown,
-  hi: unknown,
-  order: number
-): [string, number, number] {
+function checkRange(range: unknown, order: number): [string, number, number] {
+  if (!Array.isArray(range) || range.length !== 2) {
+    // A mangled cache must be loud, never a plausible partial answer.
+    throw new Error(
+      `coverage range must be a [first, last] pair (got ${JSON.stringify(range)})`
+    );
+  }
+  const [lo, hi] = range;
   if (typeof lo !== "string" || typeof hi !== "string") {
     // Spec section 7.3: endpoints are decimal strings, never JSON numbers.
     throw new Error(
-      `coverage range endpoints must be decimal strings (got [${lo}, ${hi}])`
+      `coverage range endpoints must be decimal strings ` +
+        `(got [${JSON.stringify(lo)}, ${JSON.stringify(hi)}])`
     );
   }
   const base = decimalBase(lo);
@@ -108,8 +139,8 @@ function checkRange(
  */
 export function rangesShardIds(envelope: RootCoverage): string[] {
   const ids: string[] = [];
-  for (const [lo, hi] of envelope.ranges) {
-    const [base, loRank, hiRank] = checkRange(lo, hi, envelope.order);
+  for (const range of envelope.ranges) {
+    const [base, loRank, hiRank] = checkRange(range, envelope.order);
     for (let r = loRank; r <= hiRank; r++) {
       ids.push(base + rankTail(r, envelope.order));
     }
@@ -127,8 +158,8 @@ export function rangesContain(
   }
   const base = decimalBase(shardId);
   const rank = decimalRank(shardId);
-  return envelope.ranges.some(([lo, hi]) => {
-    const [rangeBase, loRank, hiRank] = checkRange(lo, hi, envelope.order);
+  return envelope.ranges.some((range) => {
+    const [rangeBase, loRank, hiRank] = checkRange(range, envelope.order);
     return rangeBase === base && loRank <= rank && rank <= hiRank;
   });
 }
