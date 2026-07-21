@@ -320,3 +320,22 @@ class TestOversizeView:
         assert e.value.code == 413
         assert b"hive_max_cells" in e.value.response.body
         assert b"aoi=" in e.value.response.body
+
+
+class TestConcurrentBuildBound:
+    @pytest.fixture
+    def hive_config(self):
+        # Fewer permitted concurrent builds than the burst below: the extras
+        # must queue on the semaphore, not fail.
+        return {"local_hive_store_roots": [str(TESTDATA)], "hive_max_concurrent_builds": 2}
+
+    async def test_burst_of_opens_all_succeed(self, jp_fetch):
+        import asyncio
+
+        # Four distinct selections (distinct view ids ⇒ four real builds) opened
+        # at once; with a bound of 2 the extras wait, and all four still 200.
+        aois = ["4331421", "4331422", "4331424", "4331421,4331422"]
+        outs = await asyncio.gather(*(_open(jp_fetch, aoi=a) for a in aois))
+        assert len({o["view"] for o in outs}) == 4
+        for o in outs:
+            assert o["cells"] > 0

@@ -63,6 +63,7 @@ c.GridlookProxy.static_dir = "/path/to/dist"  # optional; dev override for the S
 # /gridlook/hive/ knobs (phase 6d; defaults shown)
 c.GridlookProxy.hive_max_views = 8            # LRU bound on materialized views
 c.GridlookProxy.hive_max_cells = 500_000      # per-view cell bound; 413 beyond
+c.GridlookProxy.hive_max_concurrent_builds = 2  # concurrent materializations; over-limit opens queue
 c.GridlookProxy.local_hive_store_roots = []   # allowed roots for local-path stores (dev only)
 ```
 

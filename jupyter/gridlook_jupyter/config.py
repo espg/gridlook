@@ -75,7 +75,18 @@ class GridlookProxy(Configurable):
             "Maximum cells a single hive view may materialize; /gridlook/hive/open "
             "returns 413 beyond it. Views are held in memory (~100 B/cell at "
             "typical zagg variable counts), so hive_max_views * hive_max_cells "
-            "bounds the cache footprint."
+            "bounds the RESIDENT cache footprint."
+        ),
+    ).tag(config=True)
+
+    hive_max_concurrent_builds = Int(
+        2,
+        help=(
+            "Maximum hive views materialized concurrently. Each in-flight open "
+            "holds its xarray dataset plus a MemoryStore copy transiently, ON TOP "
+            "of the resident cache, so a burst of opens can exceed the resident "
+            "bound; this caps that transient peak. Over-limit opens QUEUE (they "
+            "wait, they are not rejected)."
         ),
     ).tag(config=True)
 
