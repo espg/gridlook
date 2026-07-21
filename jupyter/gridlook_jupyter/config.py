@@ -3,7 +3,7 @@
 import os
 from pathlib import Path
 
-from traitlets import Bool, Int, List, Unicode, default
+from traitlets import Int, List, Unicode, default
 from traitlets.config import Configurable
 
 #: Bounded per-process cache of bucket -> store (buckets come from the allowlist,
@@ -47,12 +47,16 @@ class GridlookProxy(Configurable):
         ),
     ).tag(config=True)
 
-    allow_local_hive_stores = Bool(
-        False,
+    local_hive_store_roots = List(
+        Unicode(),
         help=(
-            "Allow /gridlook/hive/open to open hive stores from local filesystem "
-            "paths (development/tests). s3:// stores are always gated by "
-            "allowed_buckets. Env fallback: GRIDLOOK_ALLOW_LOCAL_HIVE_STORES=1."
+            "Root directories under which /gridlook/hive/open may open local "
+            "filesystem hive stores (development/tests). Empty (the default) "
+            "disables local stores entirely; a requested path is accepted only "
+            "when its realpath is contained in one of these (also realpath'd) "
+            "roots, so 'dev' can't become whole-filesystem reach. s3:// stores "
+            "are always gated by allowed_buckets instead. Env fallback: "
+            "GRIDLOOK_LOCAL_HIVE_STORE_ROOTS (comma-separated)."
         ),
     ).tag(config=True)
 
@@ -75,13 +79,10 @@ class GridlookProxy(Configurable):
         ),
     ).tag(config=True)
 
-    @default("allow_local_hive_stores")
-    def _default_allow_local_hive_stores(self):
-        return os.environ.get("GRIDLOOK_ALLOW_LOCAL_HIVE_STORES", "").strip().lower() in (
-            "1",
-            "true",
-            "yes",
-        )
+    @default("local_hive_store_roots")
+    def _default_local_hive_store_roots(self):
+        env = os.environ.get("GRIDLOOK_LOCAL_HIVE_STORE_ROOTS", "")
+        return [r.strip() for r in env.split(",") if r.strip()]
 
     @default("allowed_buckets")
     def _default_allowed_buckets(self):

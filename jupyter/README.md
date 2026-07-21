@@ -63,7 +63,7 @@ c.GridlookProxy.static_dir = "/path/to/dist"  # optional; dev override for the S
 # /gridlook/hive/ knobs (phase 6d; defaults shown)
 c.GridlookProxy.hive_max_views = 8            # LRU bound on materialized views
 c.GridlookProxy.hive_max_cells = 500_000      # per-view cell bound; 413 beyond
-c.GridlookProxy.allow_local_hive_stores = False  # local-path stores (dev only)
+c.GridlookProxy.local_hive_store_roots = []   # allowed roots for local-path stores (dev only)
 ```
 
 Or environment variables (used only when the trait is not configured):
@@ -95,8 +95,8 @@ GET /gridlook/hive/<view>/<zarr-key>      # zarr.json documents and whole chunks
 ```
 
 - `store` — hive store root: `s3://bucket/prefix` (bucket must be allowlisted, same posture as
-  the S3 proxy) or a local path (only when `GridlookProxy.allow_local_hive_stores` is enabled —
-  dev/tests).
+  the S3 proxy) or a local path whose realpath is contained in one of
+  `GridlookProxy.local_hive_store_roots` (empty by default — local stores disabled; dev/tests).
 - `product` — named product root under a multi-product store (zagg D19).
 - `aoi` — comma-separated morton decimals (mixed orders fine); omit for the whole store.
 - `window` — window label on a time-windowed (`morton-hive/2`) store.

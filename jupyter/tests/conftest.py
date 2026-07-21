@@ -28,8 +28,8 @@ def allowed_buckets():
 
 @pytest.fixture
 def hive_config():
-    """GridlookProxy hive traits; override per test class (LRU/size knobs)."""
-    return {"allow_local_hive_stores": True}
+    """GridlookProxy hive traits; override per test module/class (roots, LRU, size)."""
+    return {"local_hive_store_roots": []}
 
 
 @pytest.fixture
