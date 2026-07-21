@@ -27,12 +27,19 @@ def allowed_buckets():
 
 
 @pytest.fixture
-def jp_server_config(static_root, allowed_buckets):
+def hive_config():
+    """GridlookProxy hive traits; override per test class (LRU/size knobs)."""
+    return {"allow_local_hive_stores": True}
+
+
+@pytest.fixture
+def jp_server_config(static_root, allowed_buckets, hive_config):
     return {
         "ServerApp": {"jpserver_extensions": {"gridlook_jupyter": True}},
         "GridlookProxy": {
             "allowed_buckets": allowed_buckets,
             "static_dir": str(static_root),
+            **hive_config,
         },
     }
 
