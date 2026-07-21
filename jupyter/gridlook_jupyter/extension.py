@@ -9,6 +9,7 @@ from tornado import web
 
 from .config import GridlookProxy
 from .handlers import HealthHandler, S3ProxyHandler
+from .hive import HiveOpenHandler, HiveViewCache, HiveViewHandler
 
 
 def load_extension(serverapp):
@@ -26,9 +27,11 @@ def load_extension(serverapp):
     handlers = [
         (escaped + r"/api/health", HealthHandler),
         (escaped + r"/s3/([^/]+)/(.+)", S3ProxyHandler),
-        # /gridlook/hive/... is RESERVED: phase 6 mounts the moczarr virtual-store
-        # endpoint there (an open_hive() AOI served as one flat zarr store).
-        # Do not claim that namespace with other routes.
+        # Phase 6d: the moczarr virtual store on the namespace phase 4 reserved —
+        # an open_hive() product/AOI/window selection served as ONE flat zarr
+        # store (fabricated NESTED cell_ids included; see hive.py).
+        (escaped + r"/hive/open", HiveOpenHandler),
+        (escaped + r"/hive/([0-9a-f]{16})/(.+)", HiveViewHandler),
         (escaped + r"$", web.RedirectHandler, {"url": base + "/"}),
         (
             escaped + r"/(.*)",
@@ -37,6 +40,7 @@ def load_extension(serverapp):
         ),
     ]
     serverapp.web_app.settings["gridlook_proxy"] = proxy
+    serverapp.web_app.settings["gridlook_hive_views"] = HiveViewCache(proxy)
     serverapp.web_app.add_handlers(".*$", handlers)
     serverapp.log.info(
         "gridlook-jupyter loaded: app at %s/, proxy %s",

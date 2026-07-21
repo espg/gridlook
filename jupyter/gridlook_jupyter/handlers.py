@@ -77,10 +77,8 @@ class HealthHandler(JupyterHandler):
         )
 
 
-class S3ProxyHandler(JupyterHandler):
-    """Streaming byte-range proxy: GET/HEAD only, no LIST, hub-side credentials only."""
-
-    SUPPORTED_METHODS = ("GET", "HEAD")
+class PlainTextErrorMixin:
+    """Surface HTTPError log messages as plain-text bodies (pointed, curl-readable)."""
 
     def write_error(self, status_code, **kwargs):
         exc = kwargs.get("exc_info", (None, None, None))[1]
@@ -89,6 +87,12 @@ class S3ProxyHandler(JupyterHandler):
             message = exc.log_message
         self.set_header("Content-Type", "text/plain; charset=utf-8")
         self.finish(message or f"error {status_code}")
+
+
+class S3ProxyHandler(PlainTextErrorMixin, JupyterHandler):
+    """Streaming byte-range proxy: GET/HEAD only, no LIST, hub-side credentials only."""
+
+    SUPPORTED_METHODS = ("GET", "HEAD")
 
     def _store_for(self, bucket: str):
         proxy: GridlookProxy = self.settings["gridlook_proxy"]

@@ -17,10 +17,21 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# The /gridlook/hive/ virtual store (phase 6d): moczarr opens morton-hive
+# stores hub-side and fabricates the NESTED cell_ids view. Not on PyPI yet —
+# the git source is the interim shape (tests run against a local checkout).
+hive = [
+    "moczarr @ git+https://github.com/espg/moczarr",
+]
 test = [
     "pytest>=8",
     "pytest-jupyter[server]>=0.10",
 ]
+
+[tool.hatch.metadata]
+# The [hive] extra's moczarr pin is a git direct reference until moczarr
+# publishes to PyPI; drop this (and the pin's @ git+…) when it does.
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["gridlook_jupyter"]
