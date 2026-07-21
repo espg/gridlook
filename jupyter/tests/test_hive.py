@@ -98,6 +98,55 @@ async def test_zarr_json_carries_healpix_shim_attrs(jp_fetch):
     assert attrs["morton_hive"]["cell_order"] == 8
 
 
+#: Golden point/area order-29 packed words (moczarr test_convention, suffix bands
+#: §1) — a point word (suffix 48/61) clips to order 24 in fabrication.
+POINT_NORTH_WORD = 4733760060091642301  # suffix 61
+POINT_SOUTH_WORD = 13712984013617909360  # suffix 48
+
+
+class TestServedRefinementLevel:
+    """refinement_level comes from the SERVED ids' order, not the manifest cell_order."""
+
+    def test_area_store_uses_manifest_order(self):
+        from gridlook_jupyter.hive import _served_refinement_level
+
+        # Non-point words (low suffix bands) at order 8: served ids sit at 8.
+        words = np.array([8, 4108, 12], dtype=np.uint64)
+        ids = np.array([0, 1, 100], dtype=np.uint64)
+        assert _served_refinement_level(ids, words, cell_order=8) == 8
+
+    def test_point_store_clips_to_float64_ceiling(self):
+        from moczarr.convention import is_point_word
+        from moczarr.fabricate import fabricate_cell_ids
+
+        from gridlook_jupyter.hive import _served_refinement_level
+
+        words = np.array([POINT_NORTH_WORD, POINT_SOUTH_WORD], dtype=np.uint64)
+        assert bool(np.asarray(is_point_word(words)).all())
+        ids = fabricate_cell_ids(words)  # point words clip to order 24
+        # Manifest says order 29 (points are order-29 encoded); the served ids
+        # are at order 24, and THAT is what the shim must declare.
+        assert _served_refinement_level(ids, words, cell_order=29) == 24
+
+    def test_area_above_float64_ceiling_rejected(self):
+        from gridlook_jupyter.hive import ViewNotFloat64ExactError, _served_refinement_level
+
+        words = np.array([25], dtype=np.uint64)  # non-point (suffix 25)
+        ids = np.array([0, 1], dtype=np.uint64)
+        with pytest.raises(ViewNotFloat64ExactError):
+            _served_refinement_level(ids, words, cell_order=25)
+
+    def test_ids_beyond_float64_range_rejected(self):
+        from gridlook_jupyter.hive import ViewNotFloat64ExactError, _served_refinement_level
+
+        # Non-point words at a declared order 24, but an id past 12*4**24 (a
+        # mixed store whose real order-29 areas ride past the point clip).
+        words = np.array([24], dtype=np.uint64)
+        ids = np.array([0, 12 * 4**24], dtype=np.uint64)
+        with pytest.raises(ViewNotFloat64ExactError):
+            _served_refinement_level(ids, words, cell_order=24)
+
+
 async def test_cell_ids_match_moczarr_fabrication_golden(jp_fetch):
     out = await _open(jp_fetch)
     ids = await _fetch_array(jp_fetch, out["view"], "cell_ids", "<u8")
