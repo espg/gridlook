@@ -210,13 +210,41 @@ def _shim_dggs_attrs(ds, refinement_level: int) -> None:
     the detector the morton convention entry natively; when it lands, this shim
     can serve the stored block unmodified.
     """
-    dggs = dict(ds.attrs.get("dggs") or {})
+    from moczarr.convention import MORTON_CONVENTION_UUID
+
+    source_dggs = ds.attrs.get("dggs")
+    dggs = dict(source_dggs or {})
     dggs.update(
         {"name": "healpix", "refinement_level": int(refinement_level), "coordinate": "cell_ids"}
     )
     dggs.setdefault("spatial_dimension", "cells")
     ds.attrs["dggs"] = dggs
-    ds.attrs.setdefault("zarr_conventions", [_DGGS_CONVENTION_ENTRY])
+    # Serve ONE coherent envelope: the block above now says healpix, so the
+    # stored morton-dggs convention entry (which claims a packed-morton
+    # coordinate) contradicts it — drop it, keeping the generic dggs registry
+    # entry the detector reads. The store's own block is preserved verbatim
+    # under a private attr for provenance (nothing is lost, just re-flavored).
+    if source_dggs is not None:
+        ds.attrs["_gridlook_source_dggs"] = source_dggs
+    conventions = ds.attrs.get("zarr_conventions")
+    kept = (
+        [
+            e
+            for e in conventions
+            if not (
+                isinstance(e, dict)
+                and (
+                    e.get("name") in ("morton-dggs", "morton")
+                    or e.get("uuid") == MORTON_CONVENTION_UUID
+                )
+            )
+        ]
+        if isinstance(conventions, list)
+        else []
+    )
+    if not any(isinstance(e, dict) and e.get("name") == "dggs" for e in kept):
+        kept.append(_DGGS_CONVENTION_ENTRY)
+    ds.attrs["zarr_conventions"] = kept
 
 
 def build_view(

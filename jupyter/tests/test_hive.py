@@ -98,6 +98,22 @@ async def test_zarr_json_carries_healpix_shim_attrs(jp_fetch):
     assert attrs["morton_hive"]["cell_order"] == 8
 
 
+async def test_zarr_conventions_single_coherent_block(jp_fetch):
+    out = await _open(jp_fetch)
+    resp = await jp_fetch("gridlook", "hive", out["view"], "zarr.json")
+    attrs = json.loads(resp.body)["attributes"]
+    conventions = attrs["zarr_conventions"]
+    names = [e.get("name") for e in conventions]
+    # The served envelope no longer claims the morton-dggs convention (it would
+    # contradict the healpix-flavored dggs block); exactly the generic dggs
+    # registry entry remains.
+    assert "morton-dggs" not in names
+    assert names.count("dggs") == 1
+    # Provenance: the store's own morton block is preserved verbatim.
+    assert attrs["_gridlook_source_dggs"]["name"] == "morton"
+    assert attrs["_gridlook_source_dggs"]["coordinate"] == "morton"
+
+
 #: Golden point/area order-29 packed words (moczarr test_convention, suffix bands
 #: §1) — a point word (suffix 48/61) clips to order 24 in fabrication.
 POINT_NORTH_WORD = 4733760060091642301  # suffix 61
