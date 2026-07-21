@@ -42,6 +42,12 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+@pytest.fixture
+def hive_config():
+    """Configure TESTDATA as the allowed local root so the fixture is openable."""
+    return {"local_hive_store_roots": [str(TESTDATA)]}
+
+
 async def _open(jp_fetch, **params):
     resp = await jp_fetch("gridlook", "hive", "open", params={"store": str(SERC), **params})
     assert resp.code == 200
@@ -163,19 +169,49 @@ async def test_missing_object_404(jp_fetch):
 class TestLocalStoresDisabled:
     @pytest.fixture
     def hive_config(self):
-        return {"allow_local_hive_stores": False}
+        return {"local_hive_store_roots": []}
 
     async def test_local_path_403(self, jp_fetch):
         with pytest.raises(HTTPClientError) as e:
             await jp_fetch("gridlook", "hive", "open", params={"store": str(SERC)})
         assert e.value.code == 403
-        assert b"allow_local_hive_stores" in e.value.response.body
+        assert b"local_hive_store_roots" in e.value.response.body
+
+
+class TestLocalStoreRootContainment:
+    """Only paths inside a configured root open; everything else is a uniform 403."""
+
+    @pytest.fixture
+    def hive_config(self):
+        # SERC's parent is allowed, but not the filesystem at large.
+        return {"local_hive_store_roots": [str(TESTDATA)]}
+
+    @pytest.mark.parametrize(
+        "outside",
+        [
+            "/etc/passwd",  # a file that exists
+            "/etc",  # a directory that exists (no manifest)
+            "/nonexistent/hive/store",  # a path that does not exist
+            str(TESTDATA.parent),  # the parent of the root (just above containment)
+        ],
+    )
+    async def test_outside_root_uniform_403(self, jp_fetch, outside):
+        with pytest.raises(HTTPClientError) as e:
+            await jp_fetch("gridlook", "hive", "open", params={"store": outside})
+        assert e.value.code == 403
+        # No existence/type distinction: identical body for file / dir / missing.
+        assert b"not within an allowed root" in e.value.response.body
+        assert b"local_hive_store_roots" in e.value.response.body
+
+    async def test_fixture_inside_root_opens(self, jp_fetch):
+        out = await _open(jp_fetch)
+        assert out["cells"] == len(np.load(GOLDEN))
 
 
 class TestLruEviction:
     @pytest.fixture
     def hive_config(self):
-        return {"allow_local_hive_stores": True, "hive_max_views": 2}
+        return {"local_hive_store_roots": [str(TESTDATA)], "hive_max_views": 2}
 
     async def test_third_view_evicts_least_recent(self, jp_fetch):
         a = await _open(jp_fetch, aoi="4331421")
@@ -194,7 +230,7 @@ class TestLruEviction:
 class TestOversizeView:
     @pytest.fixture
     def hive_config(self):
-        return {"allow_local_hive_stores": True, "hive_max_cells": 10}
+        return {"local_hive_store_roots": [str(TESTDATA)], "hive_max_cells": 10}
 
     async def test_whole_store_413(self, jp_fetch):
         with pytest.raises(HTTPClientError) as e:

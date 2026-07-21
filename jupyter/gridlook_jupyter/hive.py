@@ -24,6 +24,7 @@ moczarr (and its xarray/zarr stack) is an extras-gated dependency
 import functools
 import hashlib
 import json
+import os
 import re
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -225,14 +226,35 @@ def _authorize_store_root(proxy: GridlookProxy, store_url: str, product: str | N
         raise web.HTTPError(
             403, f"unsupported store scheme in {store_url!r}: use s3://… or a local path"
         )
-    elif not proxy.allow_local_hive_stores:
+    elif not _local_path_allowed(proxy, store_url):
+        # Uniform body regardless of whether the path exists / is a file /
+        # is a directory: an authenticated user must not learn the on-box
+        # filesystem layout by probing store= (existence/type oracle).
         raise web.HTTPError(
             403,
-            "local-path hive stores are disabled — set "
-            "GridlookProxy.allow_local_hive_stores = True (development only)",
+            "local-path hive store is not within an allowed root — set "
+            "GridlookProxy.local_hive_store_roots (development only)",
         )
     root = store_url.rstrip("/")
     return f"{root}/{product}" if product else root
+
+
+def _local_path_allowed(proxy: GridlookProxy, store_url: str) -> bool:
+    """Whether *store_url* resolves inside one of the configured local roots.
+
+    Containment is checked on ``realpath`` (symlinks resolved) so a path that
+    is textually under a root but links outside it is rejected. Empty roots
+    (the default) disable local stores entirely.
+    """
+    roots = proxy.local_hive_store_roots
+    if not roots:
+        return False
+    real = os.path.realpath(store_url)
+    for root in roots:
+        rroot = os.path.realpath(root)
+        if real == rroot or real.startswith(rroot + os.sep):
+            return True
+    return False
 
 
 class HiveOpenHandler(PlainTextErrorMixin, JupyterHandler):
