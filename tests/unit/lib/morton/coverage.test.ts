@@ -57,7 +57,8 @@ describe("parseRootCoverage", () => {
     expect(parsed.ranges).toHaveLength(5);
   });
 
-  it("reads unusable payloads as absent (regenerable-cache posture)", () => {
+  it("gates the tolerant-null bucket on spec/encoding only (moczarr)", () => {
+    // Envelope-level miss reads as no-coverage (regenerable cache).
     expect(parseRootCoverage(null)).toBeNull();
     expect(parseRootCoverage([])).toBeNull();
     expect(parseRootCoverage("moc")).toBeNull();
@@ -67,10 +68,29 @@ describe("parseRootCoverage", () => {
     expect(
       parseRootCoverage({ ...SERC_COVERAGE, encoding: "bitmap" })
     ).toBeNull();
-    expect(parseRootCoverage({ ...SERC_COVERAGE, order: "6" })).toBeNull();
-    expect(
+  });
+
+  it("reads a numeric-string order like moczarr's ranges_words", () => {
+    const parsed = parseRootCoverage({ ...SERC_COVERAGE, order: "6" });
+    expect(parsed?.order).toBe(6);
+    expect(rangesShardIds(parsed!)).toEqual(SERC_SHARDS);
+  });
+
+  it("is loud on a structurally-corrupt body (never silent-empty)", () => {
+    // A well-formed envelope with a mangled order/ranges must throw, not
+    // read as no-coverage -- there is no LIST fallback to recover coverage.
+    expect(() => parseRootCoverage({ ...SERC_COVERAGE, order: "six" })).toThrow(
+      /coverage order/
+    );
+    expect(() =>
+      parseRootCoverage({ ...SERC_COVERAGE, order: undefined })
+    ).toThrow(/coverage order/);
+    expect(() =>
       parseRootCoverage({ ...SERC_COVERAGE, ranges: undefined })
-    ).toBeNull();
+    ).toThrow(/coverage ranges must be a list/);
+    expect(() =>
+      parseRootCoverage({ ...SERC_COVERAGE, ranges: "4331244" })
+    ).toThrow(/coverage ranges must be a list/);
   });
 });
 
@@ -99,6 +119,17 @@ describe("rangesShardIds", () => {
     expect(() =>
       rangesShardIds(envelope({ ranges: [[4331422, 4331423]] }))
     ).toThrow(/decimal strings/);
+    // A non-array / wrong-arity range entry is loud, not a silent skip.
+    expect(() =>
+      rangesShardIds(
+        envelope({ ranges: ["4331422"] as unknown as [string, string][] })
+      )
+    ).toThrow(/\[first, last\] pair/);
+    expect(() =>
+      rangesShardIds(
+        envelope({ ranges: [["4331422"]] as unknown as [string, string][] })
+      )
+    ).toThrow(/\[first, last\] pair/);
   });
 });
 
