@@ -55,7 +55,7 @@ const props = defineProps<{
   datasources?: TSources;
 }>();
 
-type TIndexingScheme = "nested" | "ring" | "zuniq";
+type TIndexingScheme = healpixGeo.GridOptions["scheme"];
 class GridParameters {
   nside: number;
   indexingScheme: TIndexingScheme;
@@ -71,27 +71,6 @@ class GridParameters {
     this.ellipsoid = ellipsoid;
   }
 }
-type TSchemeNamespace = {
-  lonLatToHealpix: (
-    lon: number,
-    lat: number,
-    level: number,
-    ellipsoid: healpixGeo.EllipsoidLike
-  ) => bigint;
-  healpixToLonLat: (
-    ipix: bigint,
-    level: number,
-    ellipsoid: healpixGeo.EllipsoidLike
-  ) => healpixGeo.Coordinate;
-  vertex: (
-    ipix: bigint,
-    level: number,
-    u: number,
-    v: number,
-    ellipsoid: healpixGeo.EllipsoidLike
-  ) => healpixGeo.Coordinate;
-};
-
 // By convention, HEALPIX uses -1.6375e+30 to mark invalid or unseen pixels.
 const HEALPIX_UNSEEN = -1.6375e30;
 
@@ -144,10 +123,21 @@ const { setHoverLookup, clearHoverLookup } =
 
 const hoverData = ref<Float32Array | null>(null);
 const hoverCellIndexMap = ref<Map<bigint, number> | null>(null);
-const hoverNside = ref<number | null>(null);
-const hoverIndexingScheme = ref<string | null>(null);
 const healpixGrid = ref<GridParameters | null>(null);
 const gridPrepared = ref<boolean>(false);
+
+// Reusable wasm handles: constructed once per component instance and freed on
+// unmount, so the ellipsoid parsing and scheme dispatch happen outside the hot
+// loops. GlobeView re-keys this component (`:key="globeKey"`) on any dataset or
+// variable change, so a grid-parameter change is always a fresh mount rather
+// than a rebuild in place. `dataGrid` lives at the dataset's level and scheme
+// (hover lookups); `baseGrid` at level 0 for the 12 base-cell meshes, whose
+// geometry is scheme-independent (nested ids 0..11).
+let dataGrid: healpixGeo.Grid | null = null;
+let baseGrid: healpixGeo.Grid | null = null;
+// Set on unmount: `onBeforeMount` is async and Vue does not await it, so the
+// tail of that hook can resume after the component is already gone.
+let disposed = false;
 
 const HEALPIX_NUMCHUNKS = 12;
 
@@ -181,8 +171,7 @@ const { datasourceUpdate } = useGridDataLoader({
 });
 
 function fetchGrid() {
-  const gridParams = unpackGridParameters();
-  if (gridParams === null) {
+  if (baseGrid === null) {
     throw new Error("failed to fetch grid parameters");
   }
 
@@ -190,12 +179,10 @@ function fetchGrid() {
   try {
     for (let ipix = 0; ipix < HEALPIX_NUMCHUNKS; ipix++) {
       const { geometry } = makeHealpixGeometry(
-        1,
+        baseGrid,
         BigInt(ipix),
         gridStep,
-        projectionHelper.value,
-        gridParams.indexingScheme,
-        gridParams?.ellipsoid ?? null
+        projectionHelper.value
       );
       const mesh = mainMeshes[ipix];
       if (!mesh) {
@@ -221,20 +208,16 @@ async function getGridParameters(): Promise<GridParameters> {
     );
 
     if ("grid_mapping_name" in crs.attrs) {
-      const params = {
+      return {
         nside: crs.attrs["healpix_nside"] as number,
         indexingScheme: "nested" as TIndexingScheme,
         ellipsoid: null,
       };
-      console.log("crs info:", params);
-
-      return params;
     }
   } catch {
     // ignore
   }
 
-  console.log("try dggs convention");
   const group = await ZarrDataManager.getParentGroup(
     props.datasources!,
     varnameSelector.value
@@ -247,7 +230,6 @@ async function getGridParameters(): Promise<GridParameters> {
     throw new Error("grid metadata found but is empty");
   }
   const level = metadata["refinement_level"] as number;
-  console.log("found dggs convention:", metadata);
   return {
     nside: 2 ** level,
     indexingScheme: metadata["indexing_scheme"] as TIndexingScheme,
@@ -526,12 +508,10 @@ function generateHealpixIndices(positionValues: Float32Array, steps: number) {
 }
 
 function makeHealpixGeometry(
-  nside: number,
+  grid: healpixGeo.Grid,
   ipix: bigint,
   steps: number,
-  helper: ProjectionHelper,
-  scheme: TIndexingScheme,
-  ellipsoid: TEllipsoid
+  helper: ProjectionHelper
 ) {
   const vertexCount = steps * steps;
   const positionValues = new Float32Array(vertexCount * 3);
@@ -541,19 +521,17 @@ function makeHealpixGeometry(
   const latLonValues = new Float32Array(vertexCount * 2);
   let vertexIndex = 0;
 
-  let level: number = Math.log2(nside);
+  // One wasm call for the whole steps × steps subdivision: interleaved
+  // [lon, lat, ...] with `i` outer and `j` inner, u = i / (steps - 1) —
+  // the same layout as the loops below.
+  const lonlats = grid.vertices(ipix, steps);
 
   for (let i = 0; i < steps; ++i) {
     const u = i / (steps - 1);
     for (let j = 0; j < steps; ++j) {
       const v = j / (steps - 1);
-      const { lon, lat } = (healpixGeo[scheme] as TSchemeNamespace).vertex(
-        BigInt(ipix),
-        level,
-        u,
-        v,
-        healpixGeo.parseEllipsoid(ellipsoid)
-      );
+      const lon = lonlats[vertexIndex * 2];
+      const lat = lonlats[vertexIndex * 2 + 1];
 
       latitudes[vertexIndex] = lat;
       longitudes[vertexIndex] = lon;
@@ -583,17 +561,22 @@ function getUnshuffleIndex(
   unshuffleIndex: { [key: number]: Float32Array }
 ): Float32Array {
   if (unshuffleIndex[size] === undefined) {
-    const len = size * size;
-    const temp = new Float32Array(len);
-    let idx = 0;
-
-    let level = Math.log2(size);
-    for (let i = 0; i < size; ++i) {
-      for (let j = 0; j < size; ++j) {
-        temp[idx++] = Number(healpixGeo["nested"].bitCombine(level, j, i));
-      }
+    // The z-order table only depends on `size`, so a throwaway
+    // level-log2(size) grid produces it in a single wasm call; entry
+    // `row * size + col` holds bitCombine(col, row). Float32 represents
+    // these indices exactly through 2^24 (size 4096).
+    const grid = new healpixGeo.Grid({
+      scheme: "nested",
+      level: Math.log2(size),
+    });
+    try {
+      unshuffleIndex[size] = Float32Array.from(
+        grid.bitCombineTable(size),
+        Number
+      );
+    } finally {
+      grid.free();
     }
-    unshuffleIndex[size] = temp;
   }
   return unshuffleIndex[size];
 }
@@ -721,22 +704,20 @@ function healpixHoverLookup(
   lat: number,
   lon: number
 ): TGridHoverLookupResult | null {
-  const grid = unpackGridParameters();
-  if (!hoverData.value || grid === null) {
+  if (!hoverData.value || dataGrid === null) {
     return null;
   }
 
-  const level: number = Math.log2(grid.nside);
-  const scheme = grid.indexingScheme;
-  const ellipsoid = grid.ellipsoid ?? null;
-
   const normalizedLon = ProjectionHelper.normalizeLongitude(lon);
-  const pixelIndex = (healpixGeo[scheme] as TSchemeNamespace).lonLatToHealpix(
-    normalizedLon,
-    lat,
-    level,
-    healpixGeo.parseEllipsoid(ellipsoid)
-  );
+  // The only inputs healpix-geo rejects here are non-finite longitudes and
+  // latitudes outside [-90, 90] (longitude wrap is fine, exact poles are fine).
+  // Check them explicitly rather than catching, so genuine errors still surface.
+  if (!Number.isFinite(normalizedLon) || !(lat >= -90 && lat <= 90)) {
+    return null;
+  }
+  const pixelIndex = dataGrid.lonLatToHealpix(
+    new Float64Array([normalizedLon, lat])
+  )[0];
 
   const dataIndex = hoverCellIndexMap.value
     ? hoverCellIndexMap.value.get(pixelIndex)
@@ -754,37 +735,19 @@ function healpixHoverLookup(
     };
   }
   const value = hoverData.value[dataIndex];
-  const pixelAngles = (healpixGeo[scheme] as TSchemeNamespace).healpixToLonLat(
-    BigInt(pixelIndex),
-    level,
-    healpixGeo.parseEllipsoid(ellipsoid)
+  const [pixelLon, pixelLat] = dataGrid.healpixToLonLat(
+    new BigUint64Array([pixelIndex])
   );
 
   const isMissing = !Number.isFinite(value) || value === HEALPIX_UNSEEN;
   return {
-    lat: pixelAngles.lat,
-    lon: ProjectionHelper.normalizeLongitude(pixelAngles.lon),
+    lat: pixelLat,
+    lon: ProjectionHelper.normalizeLongitude(pixelLon),
     value: isMissing ? null : value,
     status: isMissing
       ? HOVERED_GRID_POINT_STATUS.MISSING
       : HOVERED_GRID_POINT_STATUS.VALUE,
   };
-}
-
-function unpackGridParameters(): GridParameters | null {
-  const obj = healpixGrid.value;
-  if (obj === null) {
-    return null;
-  }
-  const grid = { ...obj };
-
-  let ellipsoid = obj.ellipsoid;
-  if (ellipsoid !== null) {
-    ellipsoid = { ...ellipsoid };
-  }
-  grid.ellipsoid = ellipsoid;
-
-  return grid;
 }
 
 async function fetchAndRenderData(
@@ -793,13 +756,10 @@ async function fetchAndRenderData(
   const { dimensionRanges, indices } = await prepareDimensionData(datavar);
 
   const cellCoord = await getCells();
-  const gridParams = unpackGridParameters();
-  if (gridParams === null) {
+  if (dataGrid === null) {
     throw new Error("no grid parameters available");
   }
 
-  hoverNside.value = gridParams.nside;
-  hoverIndexingScheme.value = gridParams.indexingScheme;
   hoverData.value = castDataVarToFloat32(
     (await ZarrDataManager.getVariableDataFromArray(datavar, indices)).data
   );
@@ -823,7 +783,7 @@ async function fetchAndRenderData(
   const { dataMin, dataMax, histogramSummaries } = await processHealpixChunks(
     datavar,
     cellCoord,
-    gridParams.nside,
+    dataGrid.nside,
     indices
   );
 
@@ -851,6 +811,24 @@ watch(healpixGrid, async () => {
   }
 });
 
+// Returns the `[dataGrid, baseGrid]` pair described at the top of this module.
+function makeGridHandles(
+  grid: GridParameters
+): [healpixGeo.Grid, healpixGeo.Grid] {
+  return [
+    new healpixGeo.Grid({
+      scheme: grid.indexingScheme,
+      level: Math.log2(grid.nside),
+      ellipsoid: grid.ellipsoid,
+    }),
+    new healpixGeo.Grid({
+      scheme: "nested",
+      level: 0,
+      ellipsoid: grid.ellipsoid,
+    }),
+  ];
+}
+
 onBeforeMount(async () => {
   const low = store.selection?.low as number;
   const high = store.selection?.high as number;
@@ -861,7 +839,18 @@ onBeforeMount(async () => {
   );
 
   const grid = await getGridParameters();
+  if (disposed) {
+    // Unmounted while the metadata fetch was in flight. Nothing has been
+    // allocated yet, so bailing here both keeps the wasm handles below from
+    // outliving the component and stops the mesh loop from stranding meshes
+    // that `onBeforeUnmount` has already run past.
+    return;
+  }
   healpixGrid.value = grid;
+
+  const [data, base] = makeGridHandles(grid);
+  dataGrid = data;
+  baseGrid = base;
 
   const gridStep = 64 + 1;
   for (let ipix = 0; ipix < HEALPIX_NUMCHUNKS; ++ipix) {
@@ -878,12 +867,10 @@ onBeforeMount(async () => {
     updateProjectionUniforms(material, helper);
 
     const { geometry } = makeHealpixGeometry(
-      1,
+      baseGrid,
       BigInt(ipix),
       gridStep,
-      projectionHelper.value,
-      grid.indexingScheme,
-      grid.ellipsoid
+      projectionHelper.value
     );
     const mesh = createWrappedProjectionMesh(
       geometry,
@@ -899,6 +886,7 @@ onBeforeMount(async () => {
 });
 
 onBeforeUnmount(() => {
+  disposed = true;
   for (let ipix = 0; ipix < HEALPIX_NUMCHUNKS; ++ipix) {
     const mesh = mainMeshes[ipix];
     if (!mesh) {
@@ -915,6 +903,10 @@ onBeforeUnmount(() => {
     getScene()?.remove(mesh);
     mainMeshes[ipix] = undefined;
   }
+  dataGrid?.free();
+  baseGrid?.free();
+  dataGrid = null;
+  baseGrid = null;
 });
 
 defineExpose({
