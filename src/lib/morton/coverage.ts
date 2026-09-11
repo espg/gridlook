@@ -32,8 +32,6 @@ import type { HiveManifest } from "@/lib/morton/manifest.ts";
 
 /** Convention version of coverage envelopes. */
 const COVERAGE_SPEC = "morton-moc/1";
-/** Root coverage object name at a store/product root. */
-const ROOT_COVERAGE_NAME = "coverage.moc";
 
 export interface RootCoverage {
   spec: string;
