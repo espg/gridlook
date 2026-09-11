@@ -133,7 +133,7 @@ export function getHealpixTextureIndex(pixel: number, nside: number) {
 // Float32Array unshuffle table (getUnshuffleIndex, <= v1.5.0), which rounded
 // pixel indices above 2^24 (~16.7M cells per face). Throw instead of
 // corrupting; datasets that deep must use the sparse "cell" path.
-export const HEALPIX_MAX_DENSE_NSIDE = 2 ** 16;
+const HEALPIX_MAX_DENSE_NSIDE = 2 ** 16;
 
 function buildDenseHealpixTexture(data: Float32Array, nside: number) {
   if (nside > HEALPIX_MAX_DENSE_NSIDE) {

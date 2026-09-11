@@ -3,20 +3,20 @@
 
 import type { FeatureCollection } from "geojson";
 
-export const VECTOR_LAYER_MIME_TYPES = {
+const VECTOR_LAYER_MIME_TYPES = {
   GEOJSON: "application/geo+json",
   JSON: "application/json",
 } as const;
 
-export type TVectorLayerMimeType =
+type TVectorLayerMimeType =
   (typeof VECTOR_LAYER_MIME_TYPES)[keyof typeof VECTOR_LAYER_MIME_TYPES];
 
-export const VECTOR_LAYER_FILE_EXTENSIONS = {
+const VECTOR_LAYER_FILE_EXTENSIONS = {
   GEOJSON: ".geojson",
   JSON: ".json",
 } as const;
 
-export type TVectorLayerFileExtension =
+type TVectorLayerFileExtension =
   (typeof VECTOR_LAYER_FILE_EXTENSIONS)[keyof typeof VECTOR_LAYER_FILE_EXTENSIONS];
 
 const SUPPORTED_VECTOR_LAYER_MIME_TYPES = Object.values(
