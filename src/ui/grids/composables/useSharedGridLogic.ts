@@ -19,7 +19,7 @@ import { ProjectionHelper } from "@/lib/projection/projectionUtils.ts";
 import { availableColormaps } from "@/lib/shaders/colormapShaders.ts";
 import { getColormapScaleOffset } from "@/lib/shaders/gridShaders.ts";
 import type { TSources } from "@/lib/types/GlobeTypes.ts";
-import { useGlobeControlStore } from "@/store/store.ts";
+import { BUILTIN_LAYER_IDS, useGlobeControlStore } from "@/store/store.ts";
 import { useLog } from "@/ui/common/useLog.ts";
 
 type TVoidFunction = () => void;
@@ -87,6 +87,7 @@ export function useSharedGridLogic() {
     makeSnapshot,
     applyCameraPreset,
     registerUpdateLOD,
+    registerAnimationCallback,
     updateBaseSurface,
     configureCameraForProjection,
     hoveredGeoPoint,
@@ -134,15 +135,9 @@ export function useSharedGridLogic() {
   syncTextureLayersOnReady = () => updateTextureLayers();
   syncVectorLayersOnReady = () => updateVectorLayers();
 
-  // the mask mode may already be set from the URL before the grid mounts
-  store.positionMaskLayerForMode(landSeaMaskChoice.value);
-
   watch(
     [() => landSeaMaskChoice.value, () => landSeaMaskUseTexture.value],
-    ([newChoice], [oldChoice]) => {
-      if (newChoice !== oldChoice) {
-        store.positionMaskLayerForMode(newChoice);
-      }
+    () => {
       updateLandSeaMask();
     }
   );
@@ -153,6 +148,9 @@ export function useSharedGridLogic() {
     () => {
       void updateTextureLayers();
       updateVectorLayers();
+      for (const cb of colormapChangeCallbacks) {
+        cb();
+      }
     },
     { deep: true }
   );
@@ -200,9 +198,11 @@ export function useSharedGridLogic() {
         void updateTextureLayers(true);
         updateVectorLayers();
         configureCameraForProjection();
-      } else if (centerChanged) {
+      } else if (centerChanged && projectionHelper.value.isFlat) {
         void updateOverlayProjectionUniforms();
         updateLayerProjectionUniforms();
+      } else if (centerChanged) {
+        return;
       }
 
       for (const cb of projectionChangeCallbacks) {
@@ -223,11 +223,15 @@ export function useSharedGridLogic() {
       high,
       invertColormap.value
     );
+    const gridVisible =
+      store.layerStack.find((layer) => layer.id === BUILTIN_LAYER_IDS.GRID)
+        ?.visible ?? true;
 
     for (const myMesh of meshes) {
       if (!myMesh) {
         continue;
       }
+      myMesh.visible = gridVisible;
       const material = myMesh.material as THREE.ShaderMaterial;
       material.uniforms.colormap.value = availableColormaps[colormap.value];
       material.uniforms.addOffset.value = addOffset;
@@ -295,6 +299,7 @@ export function useSharedGridLogic() {
     getDataVar,
     fetchDimensionDetails,
     registerUpdateLOD,
+    registerAnimationCallback,
     updateLandSeaMask,
     updateColormap,
     updateHistogram,

@@ -27,6 +27,7 @@ type TGridDataLoaderOptions = {
   updateColormap: () => void;
   prepareDatasource?: () => void | Promise<void>;
   resetDataVars?: () => void;
+  refreshStreamlines?: (reuseCached?: boolean) => void | Promise<void>;
 };
 
 function createGetData(
@@ -52,24 +53,29 @@ function createGetData(
     try {
       do {
         state.pendingUpdate.value = false;
-        const requestVarname = store.varnameSelector;
-        const datavar = await options.getDataVar(requestVarname, datasources);
-        if (state.disposed || datasources !== options.getDatasources()) {
-          shouldStopLoading = false;
-          return;
+        try {
+          const requestVarname = store.varnameSelector;
+          const datavar = await options.getDataVar(requestVarname, datasources);
+          if (state.disposed || datasources !== options.getDatasources()) {
+            shouldStopLoading = false;
+            return;
+          }
+          if (requestVarname !== store.varnameSelector) {
+            state.pendingUpdate.value = true;
+            continue;
+          }
+          if (datavar !== undefined) {
+            await options.fetchAndRenderData(datavar);
+          }
+        } catch (error) {
+          // A live source may roll over while an older timestep is loading.
+          // If a newer update is already queued, retry it instead of dropping
+          // the only notification for the newly available timestep.
+          if (!state.disposed && !state.pendingUpdate.value) {
+            logError(error, "Could not fetch data");
+          }
         }
-        if (requestVarname !== store.varnameSelector) {
-          state.pendingUpdate.value = true;
-          continue;
-        }
-        if (datavar !== undefined) {
-          await options.fetchAndRenderData(datavar);
-        }
-      } while (state.pendingUpdate.value);
-    } catch (error) {
-      if (!state.disposed) {
-        logError(error, "Could not fetch data");
-      }
+      } while (!state.disposed && state.pendingUpdate.value);
     } finally {
       state.updatingData.value = false;
       if (!state.disposed && shouldStopLoading) {
@@ -101,7 +107,8 @@ function createDatasourceUpdate(
 function registerGridDataLoaderWatches(
   options: TGridDataLoaderOptions,
   store: TGlobeControlStore,
-  getData: () => Promise<void>
+  getData: () => Promise<void>,
+  logError: TLogError
 ) {
   watch(
     () => [...store.dimSlidersValues],
@@ -114,6 +121,29 @@ function registerGridDataLoaderWatches(
       }
       await getData();
       options.updateColormap();
+    }
+  );
+  watch(
+    () => store.streamlineSelectionRevision,
+    async () => {
+      try {
+        await options.refreshStreamlines?.();
+      } catch (error) {
+        logError(error, "Could not update vector components");
+      }
+    }
+  );
+  watch(
+    () => store.isStreamlineLayerEnabled(),
+    async (enabled) => {
+      if (!enabled) {
+        return;
+      }
+      try {
+        await options.refreshStreamlines?.(true);
+      } catch (error) {
+        logError(error, "Could not enable vector streamlines");
+      }
     }
   );
 }
@@ -129,7 +159,7 @@ export function useGridDataLoader(options: TGridDataLoaderOptions) {
   const getData = createGetData(options, store, state, logError);
   const datasourceUpdate = createDatasourceUpdate(options, getData);
 
-  registerGridDataLoaderWatches(options, store, getData);
+  registerGridDataLoaderWatches(options, store, getData, logError);
 
   onScopeDispose(() => {
     state.disposed = true;
