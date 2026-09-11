@@ -59,3 +59,48 @@ it("builds histograms without copying values and preserves invalid-value handlin
   expect(values[0]).toBeNaN();
   expect(values[2]).toBe(-999);
 });
+
+// Regression for the pre-webworker Float32Array unshuffle table
+// (getUnshuffleIndex, <= v1.5.0): pixel indices above 2^24 lost integer
+// precision, so neighboring pixels collapsed onto the same texture slot.
+// Pin the current mapping to an independent BigInt reference above that
+// threshold, up to the top of a level-13 (nside 8192) face.
+it("keeps texture indices exact above the historic 2^24 Float32 threshold", () => {
+  function referenceTextureIndex(pixel: bigint, nside: bigint) {
+    let x = 0n;
+    let y = 0n;
+    let bit = 1n;
+    for (let p = pixel; p > 0n; p >>= 2n) {
+      x += (p & 1n) * bit;
+      y += ((p >> 1n) & 1n) * bit;
+      bit <<= 1n;
+    }
+    return Number(y * nside + x);
+  }
+  const nside = 8192; // level 13: nside^2 = 2^26 cells per face
+  const pixels = [
+    2 ** 24 - 1,
+    2 ** 24,
+    2 ** 24 + 1,
+    2 ** 25 + 12345,
+    2 ** 26 - 2,
+    2 ** 26 - 1,
+  ];
+  const seen = new Set<number>();
+  for (const pixel of pixels) {
+    const index = getHealpixTextureIndex(pixel, nside);
+    expect(index).toBe(referenceTextureIndex(BigInt(pixel), BigInt(nside)));
+    seen.add(index);
+  }
+  // Float32 narrowing rounded neighbors together; exact indices are distinct.
+  expect(seen.size).toBe(pixels.length);
+});
+
+it("refuses dense textures whose unshuffle table would overflow", () => {
+  expect(() => buildHealpixTexture(new Float32Array(0), 0, 2 ** 17)).toThrow(
+    RangeError
+  );
+  expect(() => buildHealpixTexture(new Float32Array(0), 0, 2 ** 17)).toThrow(
+    /unshuffle table/
+  );
+});

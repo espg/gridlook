@@ -126,7 +126,23 @@ export function getHealpixTextureIndex(pixel: number, nside: number) {
   return y * nside + x;
 }
 
+// The dense unshuffle table interleaves each axis into a Uint32Array. That is
+// exact up to nside = 2^16 (interleaved per-axis offsets need at most 2*16
+// bits); beyond that the entries would wrap modulo 2^32 and silently scatter
+// values onto wrong pixels — the same failure class as the pre-webworker
+// Float32Array unshuffle table (getUnshuffleIndex, <= v1.5.0), which rounded
+// pixel indices above 2^24 (~16.7M cells per face). Throw instead of
+// corrupting; datasets that deep must use the sparse "cell" path.
+export const HEALPIX_MAX_DENSE_NSIDE = 2 ** 16;
+
 function buildDenseHealpixTexture(data: Float32Array, nside: number) {
+  if (nside > HEALPIX_MAX_DENSE_NSIDE) {
+    throw new RangeError(
+      `Dense HEALPix textures support nside <= ${HEALPIX_MAX_DENSE_NSIDE} ` +
+        `(got ${nside}): the Uint32 unshuffle table would overflow and ` +
+        `corrupt pixel placement. Provide a sparse "cell" coordinate instead.`
+    );
+  }
   const dataValues = new Float32Array(nside * nside);
   // Interleave each axis separately: O(nside) lookup storage instead of O(nside²).
   const spread = new Uint32Array(nside);
