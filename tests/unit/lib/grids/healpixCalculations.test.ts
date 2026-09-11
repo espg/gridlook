@@ -49,6 +49,24 @@ it("uses texture storage for exact nested-pixel hover values", () => {
   expect(getHealpixTextureIndex(8192 ** 2 - 1, 8192)).toBe(8192 ** 2 - 1);
 });
 
+// The dense build path interleaves through its own `spread` recurrence and
+// never calls getHealpixTextureIndex, so the two implementations of the
+// nested-pixel interleave are only cross-checked above at nside = 4 — two
+// bits per axis, too shallow to catch a drift in the recurrence. Pin them
+// together over a full face at a realistic depth (65,536 texels, sub-ms).
+it("places every dense texel where the pixel-index decoder says", () => {
+  const nside = 256;
+  const values = Float32Array.from({ length: nside ** 2 }, (_, pixel) => pixel);
+  const texture = buildHealpixTexture(values, 0, nside).dataValues;
+  const misplaced: number[] = [];
+  for (let pixel = 0; pixel < nside ** 2; pixel++) {
+    if (texture[getHealpixTextureIndex(pixel, nside)] !== pixel) {
+      misplaced.push(pixel);
+    }
+  }
+  expect(misplaced).toEqual([]);
+});
+
 it("builds histograms without copying values and preserves invalid-value handling", () => {
   const values = new Float32Array([NaN, Infinity, -999, -888, -1, 0, 1, 2, 3]);
   expect([...buildHistogramSummary(values, 0, 2, 2, -999, -888).bins]).toEqual([
