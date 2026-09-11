@@ -331,7 +331,14 @@ async function onFileSelected(event: Event) {
 
 async function removeLayer(layer: TLayerEntry) {
   expandedLayerId.value = undefined;
-  if (layer.kind !== LAYER_KINDS.TEXTURE && isLayerVisible(layer)) {
+  // Builtin layers keep their visibility in separate store flags that have to
+  // be cleared before the stack entry disappears; texture and vector layers
+  // carry `visible` on the entry itself, so it goes with them.
+  if (
+    layer.kind !== LAYER_KINDS.TEXTURE &&
+    layer.kind !== LAYER_KINDS.VECTOR &&
+    isLayerVisible(layer)
+  ) {
     toggleLayer(layer);
   }
   store.removeLayer(layer.id);
