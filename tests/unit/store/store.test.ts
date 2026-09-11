@@ -239,3 +239,23 @@ it("removes and restores built-in layers", () => {
     store.layerStack.filter((layer) => layer.id === BUILTIN_LAYER_IDS.MASK)
   ).toHaveLength(1);
 });
+
+// TEXTURE and VECTOR entries carry per-entry state (a stored texture id,
+// vectorData) that createBuiltinLayer cannot synthesise, so the generic
+// restore path has to refuse those kinds outright instead of unshifting a
+// builtin-shaped entry the overlay code cannot build.
+it("refuses to restore non-builtin layer kinds", () => {
+  const store = useGlobeControlStore();
+  const before = store.layerStack.length;
+
+  store.restoreBuiltinLayer(LAYER_KINDS.VECTOR);
+  store.restoreBuiltinLayer(LAYER_KINDS.TEXTURE);
+
+  expect(store.layerStack).toHaveLength(before);
+  expect(
+    store.layerStack.some(
+      (layer) =>
+        layer.kind === LAYER_KINDS.VECTOR || layer.kind === LAYER_KINDS.TEXTURE
+    )
+  ).toBe(false);
+});
