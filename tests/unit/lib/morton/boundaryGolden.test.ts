@@ -10,6 +10,7 @@
  * body) moves the mid-latitude cell's corners by ~0.1283 deg (~14.26 km) and
  * MUST fail the tolerance by orders of magnitude.
  */
+import healpixGeoPackage from "healpix-geo/package.json";
 import { expect, it } from "vitest";
 
 import golden from "../../../data/morton_boundary_golden.json";
@@ -55,6 +56,16 @@ function gridCorners(
   }
   return corners;
 }
+
+it("the fixture records the toolchain it was validated against", () => {
+  // The corners come from mortie and are compared against healpix-geo, and the
+  // tolerance is sized by a healpix-geo-internal kernel residual -- so a bump on
+  // either side has to show up as a named failure here, not as silently eaten
+  // headroom. The npm range is a caret, so `npm update` can move the installed
+  // healpix-geo out from under a fixture nobody regenerated.
+  expect(golden.mortie_version).toBe("1.0.0");
+  expect(golden.healpix_geo_version).toBe(healpixGeoPackage.version);
+});
 
 it.each(golden.cells)(
   "$label: word -> NESTED matches the mortie decode",
