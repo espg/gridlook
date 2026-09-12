@@ -49,6 +49,11 @@ CELLS = [
     ("south_midlat_o9", -45.0, 200.0, 9),
     ("midlat_o14", 45.0, 12.0, 14),
     ("midlat_o24", 45.0, 12.0, 24),
+    # A cell that genuinely crosses the antimeridian (corners land on both
+    # sides of the seam), so the longitude-range mismatch between mortie
+    # ([-180, 180), plus mort2polygon's seam normalization) and healpix-geo
+    # ([0, 360)) is pinned where it actually bites, not only at a base cell.
+    ("antimeridian_o9", 0.5, 179.99, 9),
 ]
 
 

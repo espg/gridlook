@@ -1,5 +1,6 @@
 /**
- * The latitude convention of published morton (zagg/mortie) stores.
+ * The latitude and longitude conventions of published morton (zagg/mortie)
+ * stores.
  *
  * mortie hashes geodetic WGS84 latitudes through a geodetic->authalic
  * conversion before the spherical HEALPix mapping, and applies the inverse
@@ -20,3 +21,23 @@ export const MORTON_STORE_ELLIPSOID = {
   // eslint-disable-next-line camelcase
   inverse_flattening: 298.257223563,
 } as const;
+
+/**
+ * healpix-geo longitude -> the mortie range.
+ *
+ * The two sides do not agree on the range: mortie emits `[-180, 180)` (a base
+ * cell in the south-west octant comes back at lon -135), healpix-geo emits
+ * `[0, 360)` (the same cell at 225). Anything that compares, clips against or
+ * hands off morton cell coordinates in mortie space -- a golden comparison, a
+ * GeoJSON ring, a seam-sensitive 2D projection -- must normalise through one
+ * definition, this one, or cells land 360 deg away.
+ *
+ * Note this is only the range: mortie's `mort2polygon` additionally rewrites a
+ * ring that TOUCHES the antimeridian so all its +/-180 vertices pick the
+ * hemisphere the rest of the ring is in, which is a per-ring decision and not
+ * something a per-vertex helper can reproduce. The +180 and -180 forms are the
+ * same meridian, so a comparison must still wrap the difference.
+ */
+export function normalizeLongitudeDeg(lon: number): number {
+  return ((((lon + 180) % 360) + 360) % 360) - 180;
+}

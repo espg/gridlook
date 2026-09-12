@@ -17,7 +17,10 @@ import { expect, it } from "vitest";
 
 import golden from "../../../data/morton_boundary_golden.json";
 
-import { MORTON_STORE_ELLIPSOID } from "@/lib/morton/convention.ts";
+import {
+  MORTON_STORE_ELLIPSOID,
+  normalizeLongitudeDeg,
+} from "@/lib/morton/convention.ts";
 import { wordToNested } from "@/lib/morton/word.ts";
 
 /** Max corner disagreement accepted for the pinned convention, in degrees. */
@@ -73,10 +76,10 @@ function gridCorners(
   nested: bigint
 ): Corners {
   const coords = grid.vertices(nested, 2); // 2x2 subdivision = the 4 corners
-  // interleaved lon,lat
+  // interleaved lon,lat; healpix-geo emits [0, 360), mortie [-180, 180)
   return MORTIE_RING_FROM_ZORDER.map((slot) => [
     coords[2 * slot + 1],
-    coords[2 * slot],
+    normalizeLongitudeDeg(coords[2 * slot]),
   ]);
 }
 
@@ -86,7 +89,10 @@ function zOrderCorners(
   nested: bigint
 ): Corners {
   const coords = grid.vertices(nested, 2);
-  return [0, 1, 2, 3].map((slot) => [coords[2 * slot + 1], coords[2 * slot]]);
+  return [0, 1, 2, 3].map((slot) => [
+    coords[2 * slot + 1],
+    normalizeLongitudeDeg(coords[2 * slot]),
+  ]);
 }
 
 it("the fixture records the toolchain it was validated against", () => {
@@ -97,6 +103,14 @@ it("the fixture records the toolchain it was validated against", () => {
   // healpix-geo out from under a fixture nobody regenerated.
   expect(golden.mortie_version).toBe("1.0.0");
   expect(golden.healpix_geo_version).toBe(healpixGeoPackage.version);
+});
+
+it("the longitude normaliser maps healpix-geo's range onto mortie's", () => {
+  expect(normalizeLongitudeDeg(225)).toBeCloseTo(-135, 12); // the south_base lon
+  expect(normalizeLongitudeDeg(-135)).toBe(-135); // already in range
+  expect(normalizeLongitudeDeg(0)).toBe(0);
+  expect(normalizeLongitudeDeg(180)).toBe(-180); // the seam picks the low end
+  expect(normalizeLongitudeDeg(359.5)).toBeCloseTo(-0.5, 12);
 });
 
 it.each(golden.cells)(
@@ -118,6 +132,14 @@ it.each(golden.cells)(
       ellipsoid: MORTON_STORE_ELLIPSOID,
     });
     const corners = gridCorners(grid, BigInt(cell.nested));
+    // Every corner is in mortie's longitude range. Without this the wrapped
+    // difference in vertexDeviationDeg is a blanket amnesty: it makes a raw
+    // healpix-geo lon of 225 and mortie's -135 look identical, and a consumer
+    // that trusts the green test hands three.js/d3 a cell 360 deg away.
+    for (const [, lon] of corners) {
+      expect(lon).toBeGreaterThanOrEqual(-180);
+      expect(lon).toBeLessThan(180);
+    }
     // Index-by-index, in ring order: the corner ORDER is part of the contract,
     // and the set-level check below cannot see it.
     cell.corners_lat_lon.forEach((reference, index) => {
