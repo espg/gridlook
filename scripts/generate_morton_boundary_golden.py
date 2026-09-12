@@ -43,15 +43,23 @@ CELLS = [
 
 
 def cell_entry(label: str, lat: float, lon: float, order: int) -> dict:
+    # `latitude=` is named at both mortie call sites on purpose: it is the very
+    # convention this fixture exists to pin, and mortie's default flipped once
+    # already (espg/mortie#186 made "authalic" the default; "geodetic-spherical"
+    # is the superseded value). A future default flip must break this script
+    # loudly rather than silently rewrite the golden under the other convention.
     word = int(
         np.asarray(
-            mortie.geo2mort(np.array([lat]), np.array([lon]), order=order),
+            mortie.geo2mort(
+                np.array([lat]), np.array([lon]), order=order, latitude="authalic"
+            ),
             dtype=np.uint64,
         )[0]
     )
     nested, got_order = mortie.mort2healpix(word)
     assert int(got_order) == order, (label, got_order, order)
-    ring = mortie.mort2polygon(word, step=1)  # closed ring, [lat, lon], geodetic WGS84
+    # closed ring, [lat, lon], geodetic WGS84
+    ring = mortie.mort2polygon(word, step=1, latitude="authalic")
     corners = ring[:-1]
     assert len(corners) == 4, (label, len(corners))
     return {
