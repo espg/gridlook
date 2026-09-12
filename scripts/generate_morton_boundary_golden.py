@@ -26,9 +26,7 @@ import sys
 import mortie
 import numpy as np
 
-OUT = os.path.join(
-    os.path.dirname(__file__), "..", "tests", "data", "morton_boundary_golden.json"
-)
+OUT = os.path.join(os.path.dirname(__file__), "..", "tests", "data", "morton_boundary_golden.json")
 
 #: (label, lat, lon, order) — orders 0/9/14/24 cover a base cell in each
 #: hemisphere, the shipped o9 store order at the ~45 deg latitude where the
