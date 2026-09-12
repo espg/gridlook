@@ -23,8 +23,18 @@ import {
 } from "@/lib/morton/convention.ts";
 import { wordToNested } from "@/lib/morton/word.ts";
 
-/** Max corner disagreement accepted for the pinned convention, in degrees. */
-const TOLERANCE_DEG = 1e-7; // ~1.1 cm; observed agreement is ~4e-9 deg
+/**
+ * Max corner disagreement accepted for the pinned convention, in degrees.
+ *
+ * 1e-7 deg (~1.1 cm) is bounded by the cdshealpix-versus-healpix-crate
+ * spherical vertex kernel (~4.2e-9 deg observed; mortie's own
+ * TestHealpixGeoInterop measures the same residual with BOTH sides on the
+ * plain sphere), NOT by the authalic series, which agrees ~4 orders tighter.
+ * So this tolerance is not an ellipsoid discriminator: swapping the pin for
+ * GRS80 (inverse_flattening 298.257222101) still clears it at every order.
+ * The ellipsoid identity is pinned by the golden.wgs84 equality test below.
+ */
+const TOLERANCE_DEG = 1e-7;
 /** [lat, lon] corner list. */
 type Corners = number[][];
 
@@ -103,6 +113,14 @@ it("the fixture records the toolchain it was validated against", () => {
   // healpix-geo out from under a fixture nobody regenerated.
   expect(golden.mortie_version).toBe("1.0.0");
   expect(golden.healpix_geo_version).toBe(healpixGeoPackage.version);
+});
+
+it("the pinned ellipsoid is the one the fixture was generated under", () => {
+  // The corner tolerance cannot do this job (see TOLERANCE_DEG): any
+  // WGS84-adjacent ellipsoid clears it. The specific flattening is only
+  // load-bearing because it is compared to the generator's own constants here.
+  expect(golden.convention).toBe("authalic-wgs84");
+  expect(MORTON_STORE_ELLIPSOID).toEqual(golden.wgs84);
 });
 
 it("the longitude normaliser maps healpix-geo's range onto mortie's", () => {
