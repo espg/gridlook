@@ -14,7 +14,12 @@ function areaWord(order: number): bigint {
 }
 
 it("decodes a uniform coordinate to its golden NESTED ids", () => {
-  const cells = golden.cells.filter((cell) => cell.order === 9);
+  // Sorted by word, the way a store is written: at one order the packed-word
+  // order and the NESTED order coincide, and a coordinate must arrive
+  // ascending (see the not-ascending test below).
+  const cells = golden.cells
+    .filter((cell) => cell.order === 9)
+    .sort((left, right) => (BigInt(left.word) < BigInt(right.word) ? -1 : 1));
   const decoded = decodeMortonCells(cells.map((cell) => BigInt(cell.word)));
   expect(decoded.order).toBe(9);
   expect(decoded.cells).toEqual(cells.map((cell) => Number(cell.nested)));
@@ -51,6 +56,17 @@ it("rejects mixed orders loudly", () => {
   expect(() => decodeMortonCells([POINT_NORTH_WORD, areaWord(9)])).toThrow(
     /mixed morton orders/
   );
+});
+
+it("rejects a coordinate that is not strictly ascending", () => {
+  // Descending, and duplicated: both break the one-contiguous-span-per-face
+  // assumption getHealpixFaceRange makes of the read range.
+  const [low, high] = [areaWord(9), areaWord(9) | (3n << 42n)];
+  expect(decodeMortonCells([low, high])).toBeTruthy();
+  expect(() => decodeMortonCells([high, low])).toThrow(
+    /not strictly ascending/
+  );
+  expect(() => decodeMortonCells([low, low])).toThrow(/not strictly ascending/);
 });
 
 it("rejects area words above the float64-exact order", () => {

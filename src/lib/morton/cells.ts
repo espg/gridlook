@@ -14,6 +14,16 @@
  * order 24, i.e. nside 2**24 and ~0.4 m cells, which the sparse healpix
  * texture cannot rasterize, so the render path refuses point coordinates
  * instead of building that grid (issue #8).
+ *
+ * The cells must also arrive strictly ascending. getHealpixFaceRange does not
+ * index cells by face: it slices the contiguous index span between the first
+ * and last cell falling in the face, and that span is the zarr read range. An
+ * out-of-order coordinate still renders correctly (out-of-face cells are
+ * skipped) but makes all twelve faces span nearly the whole array -- a silent
+ * 12x over-read -- and duplicate cells are dropped last-write-wins. For a
+ * uniform order the packed-word order and the NESTED order coincide, so a
+ * morton-sorted store satisfies this by construction; the single decode pass
+ * checks it rather than assuming it.
  */
 
 import { isPointWord, viewNestedId } from "@/lib/morton/word.ts";
@@ -63,6 +73,13 @@ export function decodeMortonCells(
         `mixed morton orders in one coordinate: cell 0 decodes to order ` +
           `${order} but cell ${index} to order ${decoded.order}; a healpix ` +
           "grid renders a single order"
+      );
+    } else if (decoded.cellId <= cells[index - 1]) {
+      throw new Error(
+        `morton coordinate is not strictly ascending at index ${index}: ` +
+          `cell ${decoded.cellId} follows ${cells[index - 1]}. The healpix ` +
+          "face ranges slice one contiguous index span per face, so cells " +
+          "must be stored in morton/NESTED order, once each"
       );
     }
     cells[index] = decoded.cellId;
