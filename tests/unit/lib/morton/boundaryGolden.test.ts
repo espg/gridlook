@@ -123,3 +123,36 @@ it("healpix-geo's authalic series matches mortie's reference vectors", async () 
     }
   }
 });
+
+it("healpix-geo's inverse authalic series matches mortie's reference vectors", async () => {
+  // The direction the boundary path actually runs: healpix-geo computes a
+  // vertex/centre on the authalic sphere and converts authalic -> geodetic on
+  // egress. Take the level-29 cell holding a reference authalic latitude, then
+  // read that same cell's centre back through both grids: the sphere gives the
+  // authalic centre, the ellipsoidal grid the geodetic one, so their difference
+  // IS the inverse series evaluated at that centre. Comparing the two offsets
+  // (rather than the latitudes) divides out the level-29 quantisation: the cell
+  // centre sits within ~1.1e-7 deg of the reference latitude, and the offset
+  // moves by <1e-9 deg over that span, so this pins the inverse series ~2
+  // orders tighter than the corner tolerance.
+  const { Grid } = await import("healpix-geo");
+  using authalic = new Grid({
+    scheme: "nested",
+    level: 29,
+    ellipsoid: MORTON_STORE_ELLIPSOID,
+  });
+  using sphere = new Grid({ scheme: "nested", level: 29 });
+  for (const lon of [0, 12.0, 123.456, -77.7]) {
+    for (const [authalicLat, geodetic] of golden.geodetic_pairs_deg) {
+      const cell = sphere.lonLatToHealpix(new Float64Array([lon, authalicLat]));
+      const sphereCentre = sphere.healpixToLonLat(cell);
+      const geodeticCentre = authalic.healpixToLonLat(cell);
+      expect(
+        Math.abs(geodeticCentre[1] - sphereCentre[1] - (geodetic - authalicLat))
+      ).toBeLessThan(1e-9);
+      // ...and the egress latitude itself lands on the geodetic partner, to
+      // within the level-29 cell the reference latitude was quantised into.
+      expect(Math.abs(geodeticCentre[1] - geodetic)).toBeLessThan(2e-7);
+    }
+  }
+});

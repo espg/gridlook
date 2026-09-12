@@ -94,15 +94,19 @@ def load_authalic_reference() -> dict:
     return payload
 
 
-def authalic_pairs(payload: dict) -> list[list[float]]:
-    """[geodetic, authalic] degree pairs.
+def reference_pairs(payload: dict, key: str) -> list[list[float]]:
+    """Degree pairs from one direction of mortie's reference table.
+
+    `forward_deg` rows are [geodetic, authalic] sampled at round geodetic
+    latitudes; `inverse_deg` rows are [authalic, geodetic] sampled at round
+    authalic ones, so the two are independent sample sets, not a transpose.
 
     The reference rows are decimal *strings* carrying more digits than float64
     (e.g. ['-89', '-88.99551395786199602910539']); float() truncating them to
     the nearest double is deliberate — float64 is the precision the browser
     compares at.
     """
-    return [[float(g), float(a)] for g, a in payload["forward_deg"]]
+    return [[float(first), float(second)] for first, second in payload[key]]
 
 
 def sphere_deviation_deg(cell: dict) -> float:
@@ -144,7 +148,10 @@ def main() -> None:
             "min_sphere_deviation_deg": 0.1,
             "expected_sphere_deviation_deg": sphere_deviation_deg(control),
         },
-        "authalic_pairs_deg": authalic_pairs(payload),
+        # Ingress: [geodetic, authalic]. Egress (what the boundary path runs):
+        # [authalic, geodetic].
+        "authalic_pairs_deg": reference_pairs(payload, "forward_deg"),
+        "geodetic_pairs_deg": reference_pairs(payload, "inverse_deg"),
     }
     with open(os.path.abspath(OUT), "w") as f:
         json.dump(fixture, f, indent=1)
