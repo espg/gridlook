@@ -3,11 +3,18 @@
 Phase 6d of the viewer plan (espg/gridlook#1): the hub-side answer to "a hive
 store is many leaves, but gridlook expects ONE zarr source". ``GET
 /gridlook/hive/open`` runs moczarr's ``open_hive()`` (product/AOI/window
-selection, fabricated NESTED ``cell_ids`` — post-englacial/zagg#314 stores are
-morton-only, so the fabrication is what makes them renderable at all) and
-MATERIALIZES the result into an in-memory zarr v3 store; ``GET
+selection) and MATERIALIZES the result into an in-memory zarr v3 store; ``GET
 /gridlook/hive/<view-id>/<key>`` then serves that store's objects (metadata and
 whole chunks — no Range support needed) to zarrita in the browser.
+
+Views are served NATIVE (issue #8, phase 6 v2): the packed-u64 ``morton``
+coordinate and the store's own morton ``dggs`` convention block pass through
+unmodified, and the browser decodes words to NESTED cells itself. The pre-6c
+compatibility shim that fabricated a ``cell_ids`` coordinate and rewrote the
+served ``dggs`` attrs to claim ``name: "healpix"`` is retired; the committed
+parity evidence (``tests/data/shim_parity_serc.json`` +
+``tests/unit/lib/morton/shimParity.test.ts``) pins that the native decode
+reproduces exactly the render inputs the shim used to serve.
 
 Materialize-on-open, deliberately: views are AOI-scale and bounded
 (``GridlookProxy.hive_max_cells``, 413 beyond), materializing keeps this module
@@ -51,10 +58,10 @@ _PRODUCT_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 _AOI_TOKEN_RE = re.compile(r"-?\d+")
 
 #: Highest HEALPix order whose NESTED ids stay below ``2**53`` and so survive
-#: as float64-exact JS Numbers in the browser (mirrors
-#: ``moczarr.fabricate.FLOAT64_EXACT_MAX_ORDER``). The frontend does all cell
-#: math (``nside = 2**refinement_level``, ``12*nside*nside``) in JS doubles, so
-#: anything above this renders wrong at HTTP 200.
+#: as float64-exact JS Numbers in the browser (mirrors the frontend codec's
+#: ``FLOAT64_EXACT_MAX_ORDER``, mortie spec §4 viewer cast). The browser's
+#: word decode throws on deeper AREA stores; rejecting at open keeps that a
+#: clean 422 instead of a mid-render error.
 _FLOAT64_EXACT_MAX_ORDER = 24
 
 
@@ -87,12 +94,12 @@ class ViewTooLargeError(Exception):
 
 
 class ViewNotFloat64ExactError(Exception):
-    """Raised when a view's fabricated NESTED ids exceed the float64-exact range.
+    """Raised when a view's NESTED decode would exceed the float64-exact range.
 
-    The browser holds cell ids as float64 Numbers, so an AREA store above
-    ``_FLOAT64_EXACT_MAX_ORDER`` (order 24) would render silently wrong — reject
-    at open rather than serve it. POINT-kind words clip to order 24 in
-    fabrication and are fine (see :func:`_served_refinement_level`).
+    The browser holds decoded cell ids as float64 Numbers, so an AREA store
+    above ``_FLOAT64_EXACT_MAX_ORDER`` (order 24) cannot render — reject at
+    open rather than serve it. POINT-kind words clip to order 24 in the
+    browser's decode and are fine (see :func:`_check_float64_exact`).
     """
 
     def __init__(self, order: int):
@@ -154,97 +161,25 @@ class HiveViewCache:
             self._views.popitem(last=False)
 
 
-#: The zarr-conventions envelope entry for the dggs convention, added only when
-#: a store somehow lacks one (gridlook's detector keys on the envelope's presence).
-_DGGS_CONVENTION_ENTRY = {
-    "schema_url": "https://raw.githubusercontent.com/zarr-conventions/dggs/refs/tags/v1/schema.json",
-    "spec_url": "https://github.com/zarr-conventions/dggs/blob/v1/README.md",
-    "uuid": "7b255807-140c-42ca-97f6-7a1cfecdbc38",
-    "name": "dggs",
-    "description": "Discrete Global Grid Systems convention for zarr",
-}
+def _check_float64_exact(morton_words, cell_order: int) -> None:
+    """Reject a view whose NESTED decode the browser cannot hold as float64.
 
-
-def _served_refinement_level(cell_ids, morton_words, cell_order: int) -> int:
-    """The HEALPix order the *served* NESTED ids actually sit at.
-
-    ``cell_order`` (the manifest's) is the order of the stored WORDS, not
-    always the order of the fabricated ids: ``fabricate_cell_ids`` clips
-    POINT-kind words (spec §1/§4) to :data:`_FLOAT64_EXACT_MAX_ORDER`, so a
-    point store's served ids sit at 24 even though its manifest declares order
-    29. Deriving ``refinement_level`` from the served ids (not the manifest)
-    makes point stores render at the right scale instead of at a mismatched
-    ``nside = 2**29``. AREA words never clip — an area store above order 24
-    would serve ids the browser cannot hold as float64 (``2**53``), so we
-    reject it (:class:`ViewNotFloat64ExactError`) rather than render it wrong.
+    The browser decodes the served words itself (mortie spec §4 viewer cast):
+    POINT-kind words clip to :data:`_FLOAT64_EXACT_MAX_ORDER`, so a pure point
+    store renders at order 24 whatever its manifest declares; AREA words never
+    clip, so an area store above order 24 — or a mixed store whose real
+    order-29 areas would ride past the point clip — cannot be rendered.
+    Rejecting here keeps that a clean 422 at open instead of a browser-side
+    decode error at render time.
     """
     import numpy as np
     from moczarr.convention import is_point_word
 
     words = np.asarray(morton_words, dtype=np.uint64).ravel()
-    is_point = bool(np.asarray(is_point_word(words)).any()) if words.size else False
-    order = _FLOAT64_EXACT_MAX_ORDER if is_point else int(cell_order)
-    ids = np.asarray(cell_ids, dtype=np.uint64).ravel()
-    max_id = int(ids.max()) if ids.size else 0
-    # Honest float64 guard on the served bytes: an area store above order 24, or
-    # a mixed store whose real order-29 areas ride past the point clip, trips this.
-    if order > _FLOAT64_EXACT_MAX_ORDER or max_id >= 12 * 4**_FLOAT64_EXACT_MAX_ORDER:
+    all_point = bool(np.asarray(is_point_word(words)).all()) if words.size else False
+    order = _FLOAT64_EXACT_MAX_ORDER if all_point else int(cell_order)
+    if order > _FLOAT64_EXACT_MAX_ORDER:
         raise ViewNotFloat64ExactError(int(cell_order))
-    return order
-
-
-def _shim_dggs_attrs(ds, refinement_level: int) -> None:
-    """Rewrite the served ``dggs`` attrs to the healpix-shaped block gridlook reads TODAY.
-
-    PRE-6C COMPATIBILITY SHIM. A morton-only hive's stored convention block is
-    ``{name: "morton", coordinate: "morton"}`` (mortie spec §5); gridlook's
-    ``gridTypeDetector.ts`` currently rejects any ``dggs.name != "healpix"``,
-    and ``Healpix.vue`` reads ``refinement_level`` (→ nside) plus
-    ``coordinate`` (→ the cell-id coordinate). The fabricated NESTED
-    ``cell_ids`` ARE plain HEALPix NESTED indices at ``refinement_level``, so
-    advertising ``{name: "healpix", coordinate: "cell_ids"}`` feeds the
-    existing sparse limited-area HEALPix path bit-for-bit what it already
-    consumes — no frontend change needed. ``refinement_level`` is the order the
-    served ids actually sit at (:func:`_served_refinement_level`), NOT the raw
-    manifest ``cell_order`` (which is the point-store trap). Phase 6c teaches
-    the detector the morton convention entry natively; when it lands, this shim
-    can serve the stored block unmodified.
-    """
-    from moczarr.convention import MORTON_CONVENTION_UUID
-
-    source_dggs = ds.attrs.get("dggs")
-    dggs = dict(source_dggs or {})
-    dggs.update(
-        {"name": "healpix", "refinement_level": int(refinement_level), "coordinate": "cell_ids"}
-    )
-    dggs.setdefault("spatial_dimension", "cells")
-    ds.attrs["dggs"] = dggs
-    # Serve ONE coherent envelope: the block above now says healpix, so the
-    # stored morton-dggs convention entry (which claims a packed-morton
-    # coordinate) contradicts it — drop it, keeping the generic dggs registry
-    # entry the detector reads. The store's own block is preserved verbatim
-    # under a private attr for provenance (nothing is lost, just re-flavored).
-    if source_dggs is not None:
-        ds.attrs["_gridlook_source_dggs"] = source_dggs
-    conventions = ds.attrs.get("zarr_conventions")
-    kept = (
-        [
-            e
-            for e in conventions
-            if not (
-                isinstance(e, dict)
-                and (
-                    e.get("name") in ("morton-dggs", "morton")
-                    or e.get("uuid") == MORTON_CONVENTION_UUID
-                )
-            )
-        ]
-        if isinstance(conventions, list)
-        else []
-    )
-    if not any(isinstance(e, dict) and e.get("name") == "dggs" for e in kept):
-        kept.append(_DGGS_CONVENTION_ENTRY)
-    ds.attrs["zarr_conventions"] = kept
 
 
 def build_view(
@@ -268,24 +203,16 @@ def build_view(
         root,
         aoi=list(aoi) if aoi else None,
         window=window,
-        # Load-bearing: post-zagg#314 stores carry only the packed-u64 morton
-        # coordinate; "auto" fabricates the exact NESTED cell_ids view the
-        # browser-side HEALPix path consumes (and keeps stored bytes on any
-        # remaining dual-written store).
-        fabricate_cell_ids="auto",
+        # Native serve (issue #8): the browser decodes the packed-u64 morton
+        # coordinate itself — no fabricated NESTED cell_ids view.
+        fabricate_cell_ids=False,
     )
     dim = ds["morton"].dims[0] if "morton" in ds.coords else "cells"
     cells = int(ds.sizes.get(dim, 0))
     if cells > max_cells:
         raise ViewTooLargeError(cells)
     cell_order = int(ds.attrs["morton_hive"]["cell_order"])
-    # Derive from the SERVED ids (point words clip to order 24), and reject
-    # area stores whose ids the browser can't hold as float64 — the warning
-    # moczarr emits for those is swallowed on the executor thread.
-    refinement_level = _served_refinement_level(
-        ds["cell_ids"].values, ds["morton"].values, cell_order
-    )
-    _shim_dggs_attrs(ds, refinement_level)
+    _check_float64_exact(ds["morton"].values, cell_order)
     mem = zarr.storage.MemoryStore()
     # No compression: objects are served whole over hub-local HTTP, views are
     # session-scoped, and codec-free chunks keep the served bytes trivially
@@ -427,7 +354,7 @@ class HiveOpenHandler(PlainTextErrorMixin, JupyterHandler):
                 raise web.HTTPError(
                     422,
                     f"hive store cell_order {e.order} exceeds order "
-                    f"{_FLOAT64_EXACT_MAX_ORDER}: its NESTED cell_ids are above the "
+                    f"{_FLOAT64_EXACT_MAX_ORDER}: its NESTED decode is above the "
                     f"float64-exact integer range (2**53) that the browser holds cell "
                     f"ids in, so it cannot be rendered (point-kind stores clip to order "
                     f"{_FLOAT64_EXACT_MAX_ORDER} and are fine; area stores do not)",
