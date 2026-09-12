@@ -270,7 +270,8 @@ async function getMortonCoordinateName(): Promise<string | null> {
  * NESTED cells with the BigInt codec (mortie spec section 4 viewer cast),
  * and derive the grid level from the decoded words themselves -- the words
  * are self-describing, and point stores clip to order 24 where any attrs
- * would still claim 29. The latitude convention is the hardcoded
+ * would still claim 29 -- which is exactly why a POINT coordinate is refused
+ * here instead of rendered (see below). The latitude convention is the hardcoded
  * authalic-WGS84 pin: the published stores hash geodetic->authalic on
  * ingress (espg/mortie#186) and carry no latitude attr to sniff (issue #8
  * ruling, 2026-09-11).
@@ -291,6 +292,20 @@ async function gridFromMortonConvention(): Promise<healpixGeo.Grid | null> {
     );
   }
   const decoded = decodeMortonCells(words);
+  if (decoded.hasPointWords) {
+    // A POINT word decodes to order 24 (nside 2**24, ~0.4 m cells): the
+    // sparse face texture is sized to the bounding box of the in-face cells,
+    // so a degree-wide point selection would ask for ~1e11 texels, and the
+    // order-29 -> 24 clip can collapse distinct observations onto one cell.
+    // Refuse it here rather than build a grid that cannot rasterize -- the
+    // hive endpoint refuses the same view with a 422 (jupyter/.../hive.py).
+    throw new Error(
+      `morton coordinate "${coordinate}" holds POINT-kind words: point ` +
+        "observations clip to order-24 cells (~0.4 m), which the healpix " +
+        "render path cannot rasterize. Render point data through an " +
+        "aggregated (AREA) hive product instead"
+    );
+  }
   mortonCells = decoded.cells;
   return new healpixGeo.Grid({
     scheme: "nested",

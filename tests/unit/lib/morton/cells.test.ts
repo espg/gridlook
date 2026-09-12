@@ -21,12 +21,22 @@ it("decodes a uniform coordinate to its golden NESTED ids", () => {
 });
 
 it("clips point words to order 24 (mortie spec section 4 viewer cast)", () => {
+  // Decode is kind-agnostic: the clip is what a point word means to a viewer,
+  // and this is the parity the shim's fabricate_cell_ids produced. What the
+  // caller does with it is a separate decision -- see the flag test below.
   const decoded = decodeMortonCells([POINT_NORTH_WORD, POINT_SOUTH_WORD]);
   expect(decoded.order).toBe(24);
   for (const cell of decoded.cells) {
     expect(Number.isSafeInteger(cell)).toBe(true);
     expect(cell).toBeLessThan(12 * 4 ** 24);
   }
+});
+
+it("reports point-kind words so the render path can refuse them", () => {
+  // An order-24 grid is nside 2**24: decodable, not rasterizable. The flag is
+  // what Healpix.vue throws on (and the hive endpoint 422s on server-side).
+  expect(decodeMortonCells([POINT_NORTH_WORD]).hasPointWords).toBe(true);
+  expect(decodeMortonCells([areaWord(9)]).hasPointWords).toBe(false);
 });
 
 it("rejects an empty coordinate", () => {
@@ -56,5 +66,9 @@ it("rejects Number-valued input (bits above 2**53 already lost)", () => {
 it("accepts a BigUint64Array (the raw uint64 zarr read)", () => {
   const cell = golden.cells.find((entry) => entry.label === "midlat_o9")!;
   const decoded = decodeMortonCells(new BigUint64Array([BigInt(cell.word)]));
-  expect(decoded).toEqual({ order: 9, cells: [Number(cell.nested)] });
+  expect(decoded).toEqual({
+    cells: [Number(cell.nested)],
+    hasPointWords: false,
+    order: 9,
+  });
 });
