@@ -860,13 +860,26 @@ async function fetchAndRenderData(
 }
 
 onBeforeMount(async () => {
-  const grid = await getHealpixGridParameters();
-  if (disposed) {
-    return;
+  // Grid setup rejects on every store gridlook cannot render (a non-uint64
+  // morton coordinate, point words, mixed orders, area words past order 24,
+  // no recognized convention at all). Those are exactly the diagnostics the
+  // user needs, and datasourceUpdate() -- which is what eventually reaches
+  // store.stopLoading() -- never runs after one, so catch here: otherwise the
+  // rejection is unhandled and the loader spins forever on a blank globe.
+  try {
+    const grid = await getHealpixGridParameters();
+    if (disposed) {
+      return;
+    }
+    healpixGrid.value = grid;
+    await datasourceUpdate();
+    gridPrepared.value = true;
+  } catch (error) {
+    if (!disposed) {
+      store.stopLoading();
+      logError(error, "Could not set up the HEALPix grid");
+    }
   }
-  healpixGrid.value = grid;
-  await datasourceUpdate();
-  gridPrepared.value = true;
 });
 
 onBeforeUnmount(() => {
