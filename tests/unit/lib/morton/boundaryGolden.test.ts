@@ -115,6 +115,15 @@ it("the fixture records the toolchain it was validated against", () => {
   expect(golden.healpix_geo_version).toBe(healpixGeoPackage.version);
 });
 
+it("the fixture is complete", () => {
+  // `it.each(golden.cells)` emits ZERO tests on an empty array, and the series
+  // loops below pass with zero iterations -- a truncated or half-written
+  // fixture would be a silent green without this.
+  expect(golden.cells).toHaveLength(7);
+  expect(golden.authalic_pairs_deg).toHaveLength(51);
+  expect(golden.geodetic_pairs_deg).toHaveLength(51);
+});
+
 it("the pinned ellipsoid is the one the fixture was generated under", () => {
   // The corner tolerance cannot do this job (see TOLERANCE_DEG): any
   // WGS84-adjacent ellipsoid clears it. The specific flattening is only
@@ -221,10 +230,17 @@ it("negative control: plain-sphere-raw-geodetic mode fails the golden", async ()
 });
 
 it("healpix-geo's authalic series matches mortie's reference vectors", async () => {
-  // Parity of the geodetic->authalic conversion itself (mortie spec
-  // section 9 vectors): the ellipsoidal grid fed geodetic latitudes must
-  // land every point in the same level-29 cell as the sphere grid fed the
-  // pre-converted authalic latitudes.
+  // Parity of the geodetic->authalic conversion itself, against mortie's
+  // committed reference vectors (mortie/tests/data/authalic_reference.json,
+  // "mpmath 60 dps" -- not a spec section): the ellipsoidal grid fed geodetic
+  // latitudes must land every point in the same level-29 cell as the sphere
+  // grid fed the pre-converted authalic latitudes.
+  //
+  // Not all 51 rows discriminate. 7 of them -- 0, +/-1e-7, +/-90 and the
+  // +/-89.9999999 pair -- land in the same level-29 cell either way, because
+  // geodetic and authalic differ there by less than one cell (~1.09e-7 deg);
+  // they would pass even if the ellipsoid argument were ignored entirely. The
+  // mid-latitude rows are what carry the signal.
   const { Grid } = await import("healpix-geo");
   using authalic = new Grid({
     scheme: "nested",
