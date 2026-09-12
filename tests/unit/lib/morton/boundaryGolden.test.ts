@@ -93,7 +93,10 @@ it("negative control: plain-sphere-raw-geodetic mode fails the golden", async ()
   // The superseded convention is not a small perturbation: ~0.1283 deg
   // (~14.26 km) at 45 deg latitude, six orders of magnitude over tolerance.
   expect(deviation).toBeGreaterThan(control.min_sphere_deviation_deg);
-  expect(deviation).toBeCloseTo(control.expected_sphere_deviation_deg, 3);
+  // The magnitude is derived by the generator (max |geodetic - authalic| over
+  // this cell's corners), not remembered, so it is held to 6 decimals -- not
+  // tighter: the spherical vertex kernel residual is ~4.2e-9 deg.
+  expect(deviation).toBeCloseTo(control.expected_sphere_deviation_deg, 6);
 });
 
 it("healpix-geo's authalic series matches mortie's reference vectors", async () => {

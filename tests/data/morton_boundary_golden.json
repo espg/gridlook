@@ -154,7 +154,7 @@
  "negative_control": {
   "cell": "midlat_o9",
   "min_sphere_deviation_deg": 0.1,
-  "expected_sphere_deviation_deg": 0.1283
+  "expected_sphere_deviation_deg": 0.12829728252564365
  },
  "authalic_pairs_deg": [
   [
