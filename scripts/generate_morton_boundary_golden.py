@@ -29,6 +29,15 @@ import numpy as np
 
 OUT = os.path.join(os.path.dirname(__file__), "..", "tests", "data", "morton_boundary_golden.json")
 
+#: The browser-side healpix-geo the corners below were validated against. A
+#: literal, not sniffed from node_modules: the test asserts the installed
+#: version against it, so bumping the npm dependency has to be a conscious
+#: re-validation here rather than something a regeneration carries along
+#: silently. The 1e-7 corner tolerance is sized by a healpix-geo-internal
+#: spherical-kernel residual (~4.2e-9 deg), so this pin is what tells a future
+#: red test "we upgraded the wasm" from "the convention pin broke".
+HEALPIX_GEO_VERSION = "0.3.3"
+
 #: (label, lat, lon, order) — orders 0/9/14/24 cover a base cell in each
 #: hemisphere, the shipped o9 store order at the ~45 deg latitude where the
 #: sphere-vs-authalic error is maximal, a deeper cell, and the deepest
@@ -136,6 +145,8 @@ def main() -> None:
             "(espg/mortie#186, englacial/zagg#549)."
         ),
         "convention": "authalic-wgs84",
+        "mortie_version": mortie.__version__,
+        "healpix_geo_version": HEALPIX_GEO_VERSION,
         # Derived from mortie's own reference block, so a mortie ellipsoid change
         # cannot leave the fixture asserting a stale body.
         "wgs84": {
