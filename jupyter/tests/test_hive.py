@@ -154,6 +154,25 @@ class TestFloat64ExactGuard:
         with pytest.raises(ViewNotFloat64ExactError):
             _check_float64_exact(words, cell_order=29)
 
+    def test_empty_view_is_not_this_guards_business(self):
+        from gridlook_jupyter.hive import _check_float64_exact
+
+        # No words, nothing to decode: emptiness is ViewEmptyError's call in
+        # build_view, and it must not depend on the manifest's cell_order.
+        for cell_order in (8, 29):
+            _check_float64_exact(np.array([], dtype=np.uint64), cell_order=cell_order)
+
+
+async def test_empty_selection_422(jp_fetch):
+    # An AOI naming coverage the store does not have: moczarr warns and hands
+    # back a schema-correct 0-cell dataset. Nothing can render that — the
+    # browser's decode rejects an empty morton coordinate — so the open is a
+    # 422 naming the selection to widen, on both sides of the wire.
+    with pytest.raises(HTTPClientError) as e:
+        await jp_fetch("gridlook", "hive", "open", params={"store": str(SERC), "aoi": "1"})
+    assert e.value.code == 422
+    assert "0 cells" in str(e.value.response.body)
+
 
 class TestViewIdCanonicalization:
     """Selections naming the same data hash to one view id (no LRU thrash)."""

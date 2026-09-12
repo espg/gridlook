@@ -93,6 +93,22 @@ class ViewTooLargeError(Exception):
         self.cells = cells
 
 
+class ViewEmptyError(Exception):
+    """Raised when a selection covers no cells at all.
+
+    moczarr answers an AOI that intersects nothing with a schema-correct
+    0-cell dataset (a warning, not an exception), but a 0-cell view has
+    nothing to render: the browser's word decode rejects an empty morton
+    coordinate outright (``morton coordinate is empty``, ``src/lib/morton/
+    cells.ts``). Both sides refuse it; refusing here first turns a blank globe
+    into a 422 that names the selection to widen.
+    """
+
+    def __init__(self, aoi: tuple[str, ...] | None, window: str | None):
+        self.aoi = aoi
+        self.window = window
+
+
 class ViewNotFloat64ExactError(Exception):
     """Raised when a view's NESTED decode would exceed the float64-exact range.
 
@@ -176,7 +192,14 @@ def _check_float64_exact(morton_words, cell_order: int) -> None:
     from moczarr.convention import is_point_word
 
     words = np.asarray(morton_words, dtype=np.uint64).ravel()
-    all_point = bool(np.asarray(is_point_word(words)).all()) if words.size else False
+    if not words.size:
+        # Nothing to decode; emptiness is :class:`ViewEmptyError`'s business
+        # (raised in build_view), not this guard's. numpy's ``all()`` is
+        # vacuously True on an empty array, and forcing it to False here used
+        # to 422 an empty selection over an order-29 store while the same
+        # empty selection over an order-8 store served a 200.
+        return
+    all_point = bool(np.asarray(is_point_word(words)).all())
     order = _FLOAT64_EXACT_MAX_ORDER if all_point else int(cell_order)
     if order > _FLOAT64_EXACT_MAX_ORDER:
         raise ViewNotFloat64ExactError(int(cell_order))
@@ -209,6 +232,10 @@ def build_view(
     )
     dim = ds["morton"].dims[0] if "morton" in ds.coords else "cells"
     cells = int(ds.sizes.get(dim, 0))
+    if cells == 0:
+        # An AOI/window that intersects no coverage: moczarr warns and returns
+        # a schema-correct empty dataset, but nothing downstream can render it.
+        raise ViewEmptyError(aoi, window)
     if cells > max_cells:
         raise ViewTooLargeError(cells)
     cell_order = int(ds.attrs["morton_hive"]["cell_order"])
@@ -349,6 +376,17 @@ class HiveOpenHandler(PlainTextErrorMixin, JupyterHandler):
                     f"hive view would materialize {e.cells} cells, over the "
                     f"{proxy.hive_max_cells}-cell limit — narrow the aoi= or window= "
                     f"selection (or raise GridlookProxy.hive_max_cells)",
+                ) from e
+            except ViewEmptyError as e:
+                parts = [f"aoi={','.join(e.aoi)}"] if e.aoi else []
+                if e.window:
+                    parts.append(f"window={e.window}")
+                selection = ", ".join(parts) or "the whole store"
+                raise web.HTTPError(
+                    422,
+                    f"hive selection covers 0 cells ({selection}): there is nothing "
+                    f"to render, and the browser rejects an empty morton coordinate "
+                    f"— widen or drop the aoi=/window= selection",
                 ) from e
             except ViewNotFloat64ExactError as e:
                 raise web.HTTPError(
