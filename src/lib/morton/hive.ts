@@ -28,7 +28,7 @@ const PATH_ID_RE = /^(-?[1-6])([1-4]*)$/;
 const PRODUCT_NAME_RE = /^[a-z0-9_-]{1,192}$/;
 
 /** Whether `name` is a {sign+base}-shaped hive root child. */
-export function isBaseComponent(name: string): boolean {
+function isBaseComponent(name: string): boolean {
   return /^-?[1-6]$/.test(name);
 }
 
@@ -38,7 +38,7 @@ export function isProductName(name: string): boolean {
 }
 
 /** Validate a window label against the frozen charset; returns it. */
-export function validateLabel(label: string): string {
+function validateLabel(label: string): string {
   if (!LABEL_RE.test(label)) {
     throw new Error(
       `window label ${JSON.stringify(label)} does not match the frozen ` +
@@ -82,7 +82,7 @@ export function hiveComponents(
  * window alone (`{window}.zarr`, the reserved `all` for schedule none); /1
  * and /2 carry the full id (`{full_id}.zarr` / `{full_id}_{window}.zarr`).
  */
-export function leafName(
+function leafName(
   manifest: HiveManifest,
   shardId: string,
   window?: string | null

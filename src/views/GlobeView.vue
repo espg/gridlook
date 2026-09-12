@@ -9,12 +9,22 @@ import type {
   TSources,
 } from "../lib/types/GlobeTypes.ts";
 
+import { getCameraDistanceForVerticalSpan } from "@/lib/camera/cameraSettings.ts";
 import {
   getGridType,
   GRID_TYPES,
   type T_GRID_TYPES,
 } from "@/lib/data/gridTypeDetector.ts";
-import { indexFromIndex, indexFromZarr } from "@/lib/data/sourceIndexing.ts";
+import {
+  fetchCurrentTimestep,
+  liveStoreBaseUrl,
+} from "@/lib/data/liveTimestep.ts";
+import { getLocalNetCDF, isLocalNetCDFSource } from "@/lib/data/localNetCDF.ts";
+import {
+  indexFromIndex,
+  indexFromNetCDF,
+  indexFromZarr,
+} from "@/lib/data/sourceIndexing.ts";
 import { ZarrDataManager } from "@/lib/data/ZarrDataManager.ts";
 import { isSupportedTextureLayerFile } from "@/lib/layers/textureLayerFormats.ts";
 import { saveTexture } from "@/lib/layers/textureStore.ts";
@@ -27,6 +37,7 @@ import {
 import { PresenterRole } from "@/lib/types/presenterSync.ts";
 import { useUrlParameterStore } from "@/store/paramStore.ts";
 import { useGlobeControlStore } from "@/store/store.ts";
+import { useLiveTimestep } from "@/store/useLiveTimestep.ts";
 import {
   usePresenterSync,
   isDisplayMode,
@@ -82,12 +93,9 @@ if (urlParams.get("mode") === PresenterRole.DISPLAY) {
   ) {
     store.projectionMode = proj as typeof store.projectionMode;
   }
-  if (
-    urlParameterStore.paramProjectionCenterLat ||
-    urlParameterStore.paramProjectionCenterLon
-  ) {
-    const lat = parseFloat(urlParameterStore.paramProjectionCenterLat ?? "0");
-    const lon = parseFloat(urlParameterStore.paramProjectionCenterLon ?? "0");
+  if (urlParameterStore.paramLat || urlParameterStore.paramLon) {
+    const lat = parseFloat(urlParameterStore.paramLat ?? "0");
+    const lon = parseFloat(urlParameterStore.paramLon ?? "0");
     store.projectionCenter = {
       lat: clamp(lat, -90, 90),
       lon: clamp(lon, -180, 180),
@@ -98,8 +106,16 @@ if (urlParams.get("mode") === PresenterRole.DISPLAY) {
 const { varnameSelector, loading, colormap, invertColormap } =
   storeToRefs(store);
 
-const { paramVarname, paramGridType, paramDistractionFree, paramVectorLayers } =
-  storeToRefs(urlParameterStore);
+const {
+  paramVarname,
+  paramGridType,
+  paramDistractionFree,
+  paramVectorLayers,
+  paramLive,
+  paramStreamlines,
+  paramStreamlineU,
+  paramStreamlineV,
+} = storeToRefs(urlParameterStore);
 
 type TGlobeHandle = {
   makeSnapshot: (options: TSnapshotOptions) => void;
@@ -112,7 +128,8 @@ type TControlsHandle = {
 };
 
 const HYPERGLOBE_CAMERA_PRESET: TCameraState = {
-  position: [0, 0, 33],
+  // Preserve the preset's established framing for the app's default vertical FOV.
+  position: [0, 0, getCameraDistanceForVerticalSpan(4.33)],
   quaternion: [0, 0, 0, 1],
 };
 
@@ -127,6 +144,9 @@ const sourceValid = ref(false);
 const datasources: Ref<TSources | undefined> = ref(undefined);
 const detectedGridType: Ref<T_GRID_TYPES | undefined> = ref(undefined);
 const infoPanelOpen = ref(false);
+
+// Auto-follow the newest timestep of a live dataset (see useLiveTimestep).
+useLiveTimestep(datasources);
 
 const distractionFreeFromUrl = paramDistractionFree.value === "true";
 
@@ -290,6 +310,19 @@ async function initControlsFromSource() {
   controls.value?.initForDataset();
 }
 
+function initStreamlinesFromParams() {
+  store.setStreamlineLayerEnabled(paramStreamlines.value === "true");
+  if (paramStreamlineU.value || paramStreamlineV.value) {
+    store.setStreamlineSelection({
+      automatic: false,
+      u: paramStreamlineU.value || undefined,
+      v: paramStreamlineV.value || undefined,
+    });
+  } else {
+    store.resetStreamlineSelection();
+  }
+}
+
 async function loadCurrentSource(resetStore = true) {
   const updateId = ++sourceUpdateId;
   resetForSourceChange(resetStore);
@@ -297,6 +330,7 @@ async function loadCurrentSource(resetStore = true) {
   if (updateId !== sourceUpdateId) {
     return;
   }
+  initStreamlinesFromParams();
   await initControlsFromSource();
   isInitialized.value = true;
   await setGridType(true);
@@ -307,11 +341,23 @@ async function updateSrc(updateId: number) {
   ZarrDataManager.invalidateCache();
   sourceValid.value = false;
   store.isInitializingVariable = true;
-  // FIXME: Trying zarr and json-index in parallel and picking the first that
-  // works. If both fail, we log the last error which is from the json-index.
-  // This leads to confusing error messages if the zarr source is supposed to
-  // work but fails for some reason.
-  const indexPromises = [indexFromZarr(src), indexFromIndex(src)];
+  let indexPromises: Promise<TSources>[];
+  if (isLocalNetCDFSource(src)) {
+    const file = getLocalNetCDF(src);
+    indexPromises = file
+      ? [indexFromNetCDF(file, src)]
+      : [
+          Promise.reject(
+            new Error("Please select the local NetCDF file again.")
+          ),
+        ];
+  } else {
+    // FIXME: Trying zarr and json-index in parallel and picking the first that
+    // works. If both fail, we log the last error which is from the json-index.
+    // This leads to confusing error messages if the zarr source is supposed to
+    // work but fails for some reason.
+    indexPromises = [indexFromZarr(src), indexFromIndex(src)];
+  }
   const indices = await Promise.allSettled(indexPromises);
   let lastError = null;
   if (updateId !== sourceUpdateId || src !== props.src) {
@@ -326,9 +372,45 @@ async function updateSrc(updateId: number) {
       lastError = index.reason;
     }
   }
+  store.setLive(paramLive.value === "true");
+  if (store.live && sourceValid.value && datasources.value) {
+    await seedLiveTimestep(datasources.value, updateId);
+  }
   store.signifyDatasetChange();
   if (!sourceValid.value && lastError) {
     logError(lastError, "Failed to fetch data");
+  }
+}
+
+/**
+ * Fetch the currently-available timestep of a live dataset and use it as the
+ * initial time index, so the first render requests a chunk that actually
+ * exists. Best-effort: on failure the live controller will still recover by
+ * retrying once it starts. Bounded by a timeout so a stuck endpoint cannot
+ * block the whole dataset from loading.
+ */
+async function seedLiveTimestep(sources: TSources, updateId: number) {
+  const baseUrl = liveStoreBaseUrl(sources);
+  if (!baseUrl) {
+    return;
+  }
+  const abortController = new AbortController();
+  const timeout = setTimeout(() => abortController.abort(), 10000);
+  try {
+    const current = await fetchCurrentTimestep(baseUrl, abortController.signal);
+    if (updateId !== sourceUpdateId) {
+      return;
+    }
+    urlParameterStore.paramDimIndices["time"] = String(current);
+    store.setLiveTimestep(current);
+  } catch (error) {
+    logError(
+      error,
+      `Live dataset: could not reach ${baseUrl}/current-timestep ` +
+        `(check the endpoint is served next to the store and CORS-enabled)`
+    );
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
