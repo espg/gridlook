@@ -82,12 +82,12 @@ browser.
 ## Morton-hive virtual store (`/gridlook/hive/`)
 
 Phase 6d of the viewer plan: a zagg **morton-hive** store is many leaf zarrs, but gridlook
-expects one zarr source — and post-englacial/zagg#314 stores are **morton-only**, so gridlook's
-existing HEALPix path (which consumes NESTED `cell_ids`) cannot read a leaf directly. The hive
-endpoint closes both gaps hub-side with [moczarr](https://github.com/espg/moczarr):
-`open_hive()` selects a product/AOI/window, **fabricates the exact NESTED `cell_ids`
-coordinate**, and the extension serves the result as **one flat zarr v3 store** the browser's
-unmodified zarrita reads.
+expects one zarr source. The hive endpoint closes that gap hub-side with
+[moczarr](https://github.com/espg/moczarr): `open_hive()` selects a product/AOI/window, and the
+extension serves the result as **one flat zarr v3 store** the browser's unmodified zarrita
+reads. Selection plus materialization is the endpoint's whole job — the packed-u64 `morton`
+coordinate and the store's own `dggs` block are served **unmodified**, and the browser decodes
+the words to NESTED cells itself (issue #8).
 
 ```
 GET /gridlook/hive/open?store=<url>[&product=<name>][&aoi=<decimal,csv>][&window=<label>]
@@ -110,16 +110,22 @@ view; evicted view URLs 404 until re-opened. Materialize-on-open keeps the serve
 zarr chunk/codec arithmetic; a streaming/virtual encoding is the future optimization if views
 outgrow memory.
 
-The served attrs carry a **pre-6c compatibility shim**: gridlook's grid detector currently
-accepts only `dggs.name == "healpix"`, so the view advertises the healpix-shaped block with
-`coordinate: "cell_ids"` + `refinement_level` — the fabricated NESTED ids are plain HEALPix
-NESTED indices, exactly what the existing sparse-HEALPix render path consumes. When phase 6c
-teaches the detector the morton convention entry, the shim goes away.
+A view is **opened only if the browser can render it**, so failures are a 422 at open with a
+message rather than a blank globe (each mirrors a refusal `src/lib/morton/cells.ts` and
+`src/ui/grids/Healpix.vue` make on the same words):
+
+- **0 cells** — an AOI/window intersecting no coverage: nothing to render, widen the selection.
+- **POINT-kind words** — they clip to order 24 (nside `2**24`, ~0.4 m cells) in the viewer cast,
+  which the HEALPix render path cannot rasterize; open an aggregated (AREA) product instead.
+- **mixed orders** — one healpix grid draws one nside.
+- **area words past order 24** — their NESTED ids exceed `2**53`, the float64-exact range the
+  browser holds cell ids in. The order is read off the served **words**, not off the manifest's
+  `cell_order`, so an under-declaring store is caught too.
 
 ### CryoCloud MVP recipe: render a hive store
 
 ```bash
-# 1. install the extension wheel plus the hive extra (moczarr; git source until PyPI)
+# 1. install the extension wheel plus the hive extra (moczarr, from PyPI)
 pip install gridlook_jupyter-<version>-py3-none-any.whl "gridlook-jupyter[hive]"
 # 2. allowlist the bucket holding the store (or use env GRIDLOOK_ALLOWED_BUCKETS)
 #    e.g. in jupyter_server_config.py: c.GridlookProxy.allowed_buckets = ["my-zagg-outputs"]
