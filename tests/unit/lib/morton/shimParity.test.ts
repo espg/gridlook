@@ -49,20 +49,28 @@ it("native word decode reproduces the shim's point-store clip", () => {
 });
 
 it("both cell paths build the identical face data texture", () => {
+  // Each side derives its OWN nside the way its own pipeline does: the shim's
+  // from the level it served in the dggs block, the native path's from the
+  // decoded order. That is the difference between the two pipelines -- it is
+  // what would catch a decode that agreed on ids but disagreed on order (the
+  // point-store case above) -- so passing the same nside to both would make
+  // this a pure function called twice with identical arguments.
   const decoded = decodeMortonCells(words);
-  const nside = 2 ** parity.shim_dggs.refinement_level;
-  const data = Float32Array.from(parity.count, (value) => value ?? NaN);
-  const faceIndex = Math.floor(parity.shim_cell_ids[0] / nside ** 2);
+  // The frozen count array holds no nulls (the generator writes null only for
+  // non-finite values, and this shard has none), so it maps straight across.
+  const data = Float32Array.from(parity.count);
+  const shimNside = 2 ** parity.shim_dggs.refinement_level;
+  const nativeNside = 2 ** decoded.order;
   const shimTexture = buildHealpixTexture(
     data,
-    faceIndex,
-    nside,
+    Math.floor(parity.shim_cell_ids[0] / shimNside ** 2),
+    shimNside,
     parity.shim_cell_ids
   );
   const nativeTexture = buildHealpixTexture(
     data,
-    faceIndex,
-    nside,
+    Math.floor(decoded.cells[0] / nativeNside ** 2),
+    nativeNside,
     decoded.cells
   );
   expect(nativeTexture.width).toBe(shimTexture.width);
