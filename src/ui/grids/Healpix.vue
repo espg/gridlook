@@ -241,6 +241,12 @@ async function gridFromEasygemsConvention(): Promise<healpixGeo.Grid | null> {
  * convention (a moczarr-served hive view), or the writer's own
  * morton_hive_commit attrs on a raw hive leaf zarr (which carries no dggs
  * block at all).
+ *
+ * The dggs block wins whenever there is one: a hive-derived product can carry
+ * the writer's commit attrs while declaring its own healpix/ring convention,
+ * and the commit attrs must not override the indexing_scheme and ellipsoid
+ * that store declares. Same precedence as the detector's
+ * (gridTypeDetector.ts runs the zarr convention before the commit attrs).
  */
 async function getMortonCoordinateName(): Promise<string | null> {
   const metadata = await ZarrDataManager.getDggsMetadata(
@@ -249,6 +255,10 @@ async function getMortonCoordinateName(): Promise<string | null> {
   );
   if (metadata?.name === "morton") {
     return metadata.coordinate || "morton";
+  }
+  if (metadata !== null) {
+    // A declared, non-morton dggs store owns its own convention.
+    return null;
   }
   try {
     const group = await ZarrDataManager.getParentGroup(
@@ -281,10 +291,19 @@ async function gridFromMortonConvention(): Promise<healpixGeo.Grid | null> {
   if (coordinate === null) {
     return null;
   }
-  const words = await fetchHealpixVariableData(
-    [],
-    ZarrDataManager.resolveVariablePath(varnameSelector.value, coordinate)
-  );
+  let words;
+  try {
+    words = await fetchHealpixVariableData(
+      [],
+      ZarrDataManager.resolveVariablePath(varnameSelector.value, coordinate)
+    );
+  } catch {
+    // The marker promised a coordinate that is not readable here (e.g. commit
+    // attrs inherited by a product that is not a hive leaf): not a morton
+    // store after all, so let the other conventions have their turn. A
+    // coordinate that READS but decodes wrong still throws below.
+    return null;
+  }
   if (!(words instanceof BigUint64Array)) {
     throw new Error(
       `morton coordinate "${coordinate}" is not uint64: packed words must ` +
