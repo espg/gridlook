@@ -11,12 +11,24 @@ inputs the shim did. The render path is a pure function of
 ``(cells, nside, data)`` and the served data bytes are untouched by either
 path, so id/order equality plus a data-texture spot check IS render parity.
 
-Run against the hive module WITH the shim still present (this script is the
-frozen record of its output). Requires the jupyter test env
-(``gridlook-jupyter[hive]`` + moczarr's SERC fixture next to a moczarr
-checkout, or GRIDLOOK_MOCZARR_TESTDATA):
+FROZEN RECORD — THIS SCRIPT CANNOT RUN AT HEAD, BY DESIGN. It is the
+provenance of ``tests/data/shim_parity_serc.json``, and the shim it captures
+was deleted in 57a7ca3: ``build_view`` now passes ``fabricate_cell_ids=False``
+and serves no ``cell_ids`` coordinate, so the read below has nothing to read.
+To regenerate or audit the fixture, restore the pre-retirement hive module
+first — the last revision that still had the shim is 08d09a0, which is also
+where this script was run:
 
+    git checkout 08d09a0 -- jupyter/gridlook_jupyter/hive.py
     jupyter/.venv/bin/python scripts/generate_shim_parity_fixture.py
+    git checkout HEAD -- jupyter/gridlook_jupyter/hive.py
+
+It also needs the jupyter test env (``gridlook-jupyter[hive]`` + moczarr's
+SERC fixture next to a moczarr checkout, or GRIDLOOK_MOCZARR_TESTDATA).
+
+The POINT-store half of the parity evidence is a separate, hand-added fixture
+(``tests/data/shim_parity_points.json``) with its own provenance note: no
+point hive store exists to run this against.
 """
 
 import json
@@ -48,6 +60,12 @@ def main() -> None:
         max_cells=10_000,
     )
     group = zarr.open(view.store, mode="r")
+    if "cell_ids" not in group:
+        raise SystemExit(
+            "the built view serves no cell_ids: the shim this script records was "
+            "retired in 57a7ca3. See this module's docstring — check out the "
+            "pre-retirement hive.py (git rev 08d09a0) to regenerate."
+        )
     attrs = dict(group.attrs)
     dggs = attrs["dggs"]
     words = np.asarray(group["morton"][:], dtype=np.uint64)
