@@ -60,8 +60,9 @@ _AOI_TOKEN_RE = re.compile(r"-?\d+")
 #: Highest HEALPix order whose NESTED ids stay below ``2**53`` and so survive
 #: as float64-exact JS Numbers in the browser (mirrors the frontend codec's
 #: ``FLOAT64_EXACT_MAX_ORDER``, mortie spec §4 viewer cast). The browser's
-#: word decode throws on deeper AREA stores; rejecting at open keeps that a
-#: clean 422 instead of a mid-render error.
+#: word decode throws on deeper AREA stores; rejecting at open (see
+#: :func:`_check_renderable`) keeps that a clean 422 instead of a mid-render
+#: error.
 _FLOAT64_EXACT_MAX_ORDER = 24
 
 
@@ -112,14 +113,45 @@ class ViewEmptyError(Exception):
 class ViewNotFloat64ExactError(Exception):
     """Raised when a view's NESTED decode would exceed the float64-exact range.
 
-    The browser holds decoded cell ids as float64 Numbers, so an AREA store
-    above ``_FLOAT64_EXACT_MAX_ORDER`` (order 24) cannot render — reject at
-    open rather than serve it. POINT-kind words clip to order 24 in the
-    browser's decode and are fine (see :func:`_check_float64_exact`).
+    The browser holds decoded cell ids as float64 Numbers, so an AREA view
+    whose words decode above ``_FLOAT64_EXACT_MAX_ORDER`` (order 24) cannot
+    render — reject at open rather than serve it. The order is read off the
+    served WORDS (:func:`_word_orders`), not off the manifest, so a store that
+    under-declares ``cell_order`` is caught too.
     """
 
-    def __init__(self, order: int):
+    def __init__(self, order: int, declared: int):
         self.order = order
+        self.declared = declared
+
+
+class ViewPointKindError(Exception):
+    """Raised when a view carries POINT-kind words (spec §4 suffix band 48..63).
+
+    A point word clips to order 24 in the browser's viewer cast, i.e. nside
+    ``2**24`` and ~0.4 m cells: the sparse healpix texture is sized to the
+    bounding box of the in-face cells, so a degree-wide point selection asks
+    for ~1e11 texels, and the 29 → 24 clip can collapse distinct observations
+    onto one cell. ``Healpix.vue`` refuses such a coordinate for exactly these
+    reasons; this is the same refusal one hop earlier.
+    """
+
+    def __init__(self, points: int, cells: int):
+        self.points = points
+        self.cells = cells
+
+
+class ViewMixedOrderError(Exception):
+    """Raised when a view's AREA words do not all decode to one HEALPix order.
+
+    A healpix grid renders a single nside, so the browser's ``decodeMortonCells``
+    rejects a mixed-order coordinate outright (``mixed morton orders in one
+    coordinate``). Same verdict here, one hop earlier.
+    """
+
+    def __init__(self, low: int, high: int):
+        self.low = low
+        self.high = high
 
 
 @dataclass
@@ -177,32 +209,61 @@ class HiveViewCache:
             self._views.popitem(last=False)
 
 
-def _check_float64_exact(morton_words, cell_order: int) -> None:
-    """Reject a view whose NESTED decode the browser cannot hold as float64.
+def _word_orders(words):
+    """Per-word HEALPix order from the 6-bit suffix (mortie spec §1 table).
 
-    The browser decodes the served words itself (mortie spec §4 viewer cast):
-    POINT-kind words clip to :data:`_FLOAT64_EXACT_MAX_ORDER`, so a pure point
-    store renders at order 24 whatever its manifest declares; AREA words never
-    clip, so an area store above order 24 — or a mixed store whose real
-    order-29 areas would ride past the point clip — cannot be rendered.
-    Rejecting here keeps that a clean 422 at open instead of a browser-side
-    decode error at render time.
+    Suffix ``0..=27`` is the order itself; ``28..=47`` is the order-28/29 area
+    preorder (``(suffix - 28) % 5 == 0`` is the order-28 parent, its four
+    children are order 29); ``48..=63`` is the order-29 point band. Pure bit
+    arithmetic, mirroring ``orderOf`` in ``src/lib/morton/word.ts`` — the two
+    sides must read the suffix table identically, and a test cross-checks this
+    against ``mortie.orders_of`` over all 64 suffix values.
+    """
+    import numpy as np
+
+    suffix = (np.asarray(words, dtype=np.uint64) & np.uint64(0x3F)).astype(np.int64)
+    tail = np.where((suffix - 28) % 5 == 0, 28, 29)
+    return np.where(suffix <= 27, suffix, np.where(suffix < 48, tail, 29))
+
+
+def _check_renderable(morton_words, cell_order: int) -> None:
+    """Reject a view the browser's word decode and render path cannot handle.
+
+    Everything here is read off the served WORDS, never off the manifest — a
+    store that under-declares ``cell_order`` must not sail through. Three
+    refusals, each mirroring one the browser makes (and each its own 422, since
+    they tell the caller different things):
+
+    * POINT-kind words (spec §4) — :class:`ViewPointKindError`; they clip to
+      order 24, i.e. nside ``2**24``, which no healpix texture can rasterize.
+      This also covers a mixed point/area view at ANY order, which decodes to
+      two orders browser-side.
+    * AREA words at more than one order — :class:`ViewMixedOrderError`; a
+      healpix grid renders a single nside.
+    * AREA words above :data:`_FLOAT64_EXACT_MAX_ORDER` —
+      :class:`ViewNotFloat64ExactError`; their NESTED ids exceed ``2**53``.
+
+    Emptiness is not this guard's business (see :class:`ViewEmptyError`).
     """
     import numpy as np
     from moczarr.convention import is_point_word
 
     words = np.asarray(morton_words, dtype=np.uint64).ravel()
     if not words.size:
-        # Nothing to decode; emptiness is :class:`ViewEmptyError`'s business
-        # (raised in build_view), not this guard's. numpy's ``all()`` is
-        # vacuously True on an empty array, and forcing it to False here used
-        # to 422 an empty selection over an order-29 store while the same
-        # empty selection over an order-8 store served a 200.
+        # Nothing to decode. numpy's ``all()`` is vacuously True on an empty
+        # array, and forcing it to False here used to 422 an empty selection
+        # over an order-29 store while the same empty selection over an
+        # order-8 store served a 200.
         return
-    all_point = bool(np.asarray(is_point_word(words)).all())
-    order = _FLOAT64_EXACT_MAX_ORDER if all_point else int(cell_order)
-    if order > _FLOAT64_EXACT_MAX_ORDER:
-        raise ViewNotFloat64ExactError(int(cell_order))
+    points = np.asarray(is_point_word(words))
+    if points.any():
+        raise ViewPointKindError(int(points.sum()), int(words.size))
+    orders = _word_orders(words)
+    low, high = int(orders.min()), int(orders.max())
+    if low != high:
+        raise ViewMixedOrderError(low, high)
+    if high > _FLOAT64_EXACT_MAX_ORDER:
+        raise ViewNotFloat64ExactError(high, int(cell_order))
 
 
 def build_view(
@@ -239,7 +300,7 @@ def build_view(
     if cells > max_cells:
         raise ViewTooLargeError(cells)
     cell_order = int(ds.attrs["morton_hive"]["cell_order"])
-    _check_float64_exact(ds["morton"].values, cell_order)
+    _check_renderable(ds["morton"].values, cell_order)
     mem = zarr.storage.MemoryStore()
     # No compression: objects are served whole over hub-local HTTP, views are
     # session-scoped, and codec-free chunks keep the served bytes trivially
@@ -388,14 +449,30 @@ class HiveOpenHandler(PlainTextErrorMixin, JupyterHandler):
                     f"to render, and the browser rejects an empty morton coordinate "
                     f"— widen or drop the aoi=/window= selection",
                 ) from e
+            except ViewPointKindError as e:
+                raise web.HTTPError(
+                    422,
+                    f"hive view holds {e.points} POINT-kind words (of {e.cells} cells): "
+                    f"point observations clip to order {_FLOAT64_EXACT_MAX_ORDER} "
+                    f"(~0.4 m cells) in the browser's decode, which the healpix render "
+                    f"path cannot rasterize — open an aggregated (AREA) product or "
+                    f"pyramid level instead",
+                ) from e
+            except ViewMixedOrderError as e:
+                raise web.HTTPError(
+                    422,
+                    f"hive view mixes morton orders ({e.low} and {e.high}): a healpix "
+                    f"grid renders a single order/nside, so the browser's decode rejects "
+                    f"it — narrow the aoi= to one order, or open one pyramid level",
+                ) from e
             except ViewNotFloat64ExactError as e:
                 raise web.HTTPError(
                     422,
-                    f"hive store cell_order {e.order} exceeds order "
-                    f"{_FLOAT64_EXACT_MAX_ORDER}: its NESTED decode is above the "
-                    f"float64-exact integer range (2**53) that the browser holds cell "
-                    f"ids in, so it cannot be rendered (point-kind stores clip to order "
-                    f"{_FLOAT64_EXACT_MAX_ORDER} and are fine; area stores do not)",
+                    f"hive view's words decode to order {e.order} (manifest cell_order "
+                    f"{e.declared}), above order {_FLOAT64_EXACT_MAX_ORDER}: those NESTED "
+                    f"ids are past the float64-exact integer range (2**53) the browser "
+                    f"holds cell ids in, so the view cannot be rendered — open a coarser "
+                    f"pyramid level",
                 ) from e
             except FileNotFoundError as e:
                 raise web.HTTPError(404, f"no hive store at {store_url!r}: {e}") from e

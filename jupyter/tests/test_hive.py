@@ -117,50 +117,93 @@ POINT_NORTH_WORD = 4733760060091642301  # suffix 61
 POINT_SOUTH_WORD = 13712984013617909360  # suffix 48
 
 
-class TestFloat64ExactGuard:
-    """Views the browser's word decode cannot hold as float64 are rejected at open."""
+class TestRenderableGuard:
+    """Views the browser's word decode or render path refuses are 422'd at open.
+
+    Every verdict is read off the served WORDS, so the three refusals match the
+    browser's one-for-one: POINT kind (Healpix.vue refuses an nside-2**24
+    grid), mixed orders (decodeMortonCells throws), and area words past the
+    float64-exact ceiling (viewNestedId throws).
+    """
 
     def test_area_store_within_ceiling_passes(self):
-        from gridlook_jupyter.hive import _check_float64_exact
+        from gridlook_jupyter.hive import _check_renderable
 
-        # Non-point words (low suffix bands) at order 8: decode sits at 8.
-        words = np.array([8, 4108, 12], dtype=np.uint64)
-        _check_float64_exact(words, cell_order=8)
+        # Non-point AREA words that all carry suffix 8, i.e. really decode to
+        # order 8 (the old fixture — [8, 4108, 12] — was suffixes 8/12/12, so
+        # it only passed while the guard trusted cell_order).
+        words = np.array([(1 << 60) | 8, (2 << 60) | (3 << 6) | 8], dtype=np.uint64)
+        _check_renderable(words, cell_order=8)
 
-    def test_point_store_clips_to_float64_ceiling(self):
+    def test_point_store_rejected(self):
         from moczarr.convention import is_point_word
 
-        from gridlook_jupyter.hive import _check_float64_exact
+        from gridlook_jupyter.hive import ViewPointKindError, _check_renderable
 
         words = np.array([POINT_NORTH_WORD, POINT_SOUTH_WORD], dtype=np.uint64)
         assert bool(np.asarray(is_point_word(words)).all())
-        # Manifest says order 29 (points are order-29 encoded), but the
-        # browser decode clips every point word to order 24: renderable.
-        _check_float64_exact(words, cell_order=29)
+        # The decode clips these to order 24 — nside 2**24, ~0.4 m cells —
+        # which the sparse healpix texture cannot rasterize, so the browser
+        # refuses the coordinate and so does the open.
+        with pytest.raises(ViewPointKindError):
+            _check_renderable(words, cell_order=29)
 
     def test_area_above_float64_ceiling_rejected(self):
-        from gridlook_jupyter.hive import ViewNotFloat64ExactError, _check_float64_exact
+        from gridlook_jupyter.hive import ViewNotFloat64ExactError, _check_renderable
 
         words = np.array([25], dtype=np.uint64)  # non-point (suffix 25)
         with pytest.raises(ViewNotFloat64ExactError):
-            _check_float64_exact(words, cell_order=25)
+            _check_renderable(words, cell_order=25)
 
-    def test_mixed_store_above_ceiling_rejected(self):
-        from gridlook_jupyter.hive import ViewNotFloat64ExactError, _check_float64_exact
+    def test_under_declaring_manifest_rejected(self):
+        from gridlook_jupyter.hive import ViewNotFloat64ExactError, _check_renderable
 
-        # A point word plus a deep AREA word: the areas do not clip, so the
-        # point clip cannot rescue a cell_order-29 store.
-        words = np.array([POINT_NORTH_WORD, 29], dtype=np.uint64)
-        with pytest.raises(ViewNotFloat64ExactError):
-            _check_float64_exact(words, cell_order=29)
+        # The manifest claims the ceiling; the words are order-29 areas
+        # (suffix 29, tail band). The words win — cell_order is not evidence.
+        words = np.array([(1 << 60) | 29], dtype=np.uint64)
+        with pytest.raises(ViewNotFloat64ExactError) as e:
+            _check_renderable(words, cell_order=24)
+        assert (e.value.order, e.value.declared) == (29, 24)
+
+    def test_mixed_kind_store_rejected_at_any_order(self):
+        from gridlook_jupyter.hive import ViewPointKindError, _check_renderable
+
+        # Above the ceiling AND below it: a point word alongside area words
+        # decodes to two orders browser-side whatever the manifest says.
+        for words, cell_order in (
+            (np.array([POINT_NORTH_WORD, 29], dtype=np.uint64), 29),
+            (np.array([POINT_NORTH_WORD, 8, 4108], dtype=np.uint64), 8),
+        ):
+            with pytest.raises(ViewPointKindError):
+                _check_renderable(words, cell_order=cell_order)
+
+    def test_mixed_area_orders_rejected(self):
+        from gridlook_jupyter.hive import ViewMixedOrderError, _check_renderable
+
+        # Two AREA orders in one coordinate: one nside cannot draw both.
+        words = np.array([(1 << 60) | 8, (1 << 60) | 9], dtype=np.uint64)
+        with pytest.raises(ViewMixedOrderError) as e:
+            _check_renderable(words, cell_order=9)
+        assert (e.value.low, e.value.high) == (8, 9)
 
     def test_empty_view_is_not_this_guards_business(self):
-        from gridlook_jupyter.hive import _check_float64_exact
+        from gridlook_jupyter.hive import _check_renderable
 
         # No words, nothing to decode: emptiness is ViewEmptyError's call in
         # build_view, and it must not depend on the manifest's cell_order.
         for cell_order in (8, 29):
-            _check_float64_exact(np.array([], dtype=np.uint64), cell_order=cell_order)
+            _check_renderable(np.array([], dtype=np.uint64), cell_order=cell_order)
+
+    def test_word_orders_match_mortie_over_every_suffix(self):
+        import mortie
+
+        from gridlook_jupyter.hive import _word_orders
+
+        # The server's suffix-table read (spec §1) against the reference
+        # implementation, all 64 bands — this is what makes reading the order
+        # off the words, rather than off the manifest, trustworthy.
+        words = np.array([(1 << 60) | suffix for suffix in range(64)], dtype=np.uint64)
+        assert np.array_equal(_word_orders(words), np.asarray(mortie.orders_of(words)))
 
 
 async def test_empty_selection_422(jp_fetch):
