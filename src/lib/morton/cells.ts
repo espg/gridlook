@@ -6,15 +6,29 @@
  * hive virtual store, never as lossy Numbers). The store's cells must all
  * decode to ONE order -- the healpix grid renders a single nside -- so a
  * mixed-order coordinate is a loud error, not a silent misplacement.
+ *
+ * Decoding itself stays kind-agnostic -- the clip is what a POINT word MEANS
+ * to a viewer (spec section 4), so point words decode here exactly as the
+ * spec says. Whether the result can be RENDERED is a separate question,
+ * answered by the reported `hasPointWords`: a point coordinate decodes to
+ * order 24, i.e. nside 2**24 and ~0.4 m cells, which the sparse healpix
+ * texture cannot rasterize, so the render path refuses point coordinates
+ * instead of building that grid (issue #8).
  */
 
-import { viewNestedId } from "@/lib/morton/word.ts";
+import { isPointWord, viewNestedId } from "@/lib/morton/word.ts";
 
 export interface DecodedMortonCells {
   /** HEALPix order shared by every decoded cell (the grid's level). */
   order: number;
   /** NESTED cell ids, float64-exact by construction (order <= 24). */
   cells: number[];
+  /**
+   * Whether any word was POINT-kind (suffix band 48..63, clipped to order 24
+   * by the viewer cast). Point coordinates decode cleanly but do not render
+   * as healpix cells -- see the module docstring.
+   */
+  hasPointWords: boolean;
 }
 
 /**
@@ -30,6 +44,7 @@ export function decodeMortonCells(
   }
   const cells = new Array<number>(words.length);
   let order = -1;
+  let hasPointWords = false;
   for (let index = 0; index < words.length; index++) {
     const word = words[index];
     if (typeof word !== "bigint") {
@@ -39,6 +54,7 @@ export function decodeMortonCells(
           "are not exact as Numbers"
       );
     }
+    hasPointWords = hasPointWords || isPointWord(word);
     const decoded = viewNestedId(word);
     if (index === 0) {
       order = decoded.order;
@@ -51,5 +67,5 @@ export function decodeMortonCells(
     }
     cells[index] = decoded.cellId;
   }
-  return { order, cells };
+  return { order, cells, hasPointWords };
 }
