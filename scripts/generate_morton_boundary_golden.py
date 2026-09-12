@@ -105,8 +105,24 @@ def authalic_pairs(payload: dict) -> list[list[float]]:
     return [[float(g), float(a)] for g, a in payload["forward_deg"]]
 
 
+def sphere_deviation_deg(cell: dict) -> float:
+    """Corner mis-placement, in degrees, if the cell is rendered on a plain sphere.
+
+    Sphere mode hands back the raw spherical (= authalic) vertex latitudes, while
+    mortie's egress converts them to geodetic, so the gap at each corner is just
+    geodetic - authalic at that latitude. Derived per control cell, not a
+    remembered constant: it is ~0.1283 deg at order 9 but ~0.1275 deg at order 0,
+    because the corner latitudes differ.
+    """
+    lats = np.array([corner[0] for corner in cell["corners_lat_lon"]], dtype=np.float64)
+    return float(np.max(np.abs(lats - mortie.geodetic_to_authalic(lats))))
+
+
 def main() -> None:
     payload = load_authalic_reference()
+    cells = [cell_entry(*spec) for spec in CELLS]
+    control_label = "midlat_o9"
+    control = next(cell for cell in cells if cell["label"] == control_label)
     fixture = {
         "comment": (
             "Golden boundary vectors for the morton->healpix-geo path (espg/gridlook#8). "
@@ -116,12 +132,17 @@ def main() -> None:
             "(espg/mortie#186, englacial/zagg#549)."
         ),
         "convention": "authalic-wgs84",
-        "wgs84": {"semi_major_axis": 6378137.0, "inverse_flattening": 298.257223563},
-        "cells": [cell_entry(*spec) for spec in CELLS],
+        # Derived from mortie's own reference block, so a mortie ellipsoid change
+        # cannot leave the fixture asserting a stale body.
+        "wgs84": {
+            "semi_major_axis": float(payload["wgs84"]["a"]),
+            "inverse_flattening": float(payload["wgs84"]["inv_f"]),
+        },
+        "cells": cells,
         "negative_control": {
-            "cell": "midlat_o9",
+            "cell": control_label,
             "min_sphere_deviation_deg": 0.1,
-            "expected_sphere_deviation_deg": 0.1283,
+            "expected_sphere_deviation_deg": sphere_deviation_deg(control),
         },
         "authalic_pairs_deg": authalic_pairs(payload),
     }
