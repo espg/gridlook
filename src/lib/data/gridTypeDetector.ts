@@ -183,7 +183,10 @@ async function determineGridTypeFromCRS(
 function determineGridTypeFromDGGSZarrConvention(
   metadata: TZarrDggsMetadata
 ): T_GRID_TYPES | null {
-  if (metadata["name"] !== "healpix") {
+  // "morton" is mortie's packed-u64 HEALPix convention (issue #8): the
+  // coordinate carries packed words that the morton codec decodes to NESTED
+  // ids, so the healpix path renders it natively.
+  if (metadata["name"] !== "healpix" && metadata["name"] !== "morton") {
     // unsupported DGGS, for now
     return GRID_TYPES.ERROR;
   }
@@ -213,6 +216,29 @@ async function determineGridTypeFromZarrConvention(
     );
   }
 
+  return null;
+}
+
+// A raw morton-hive leaf zarr (opened directly, not through a hive-aware
+// server) carries no dggs block or zarr_conventions envelope -- its marker is
+// the writer's own commit attrs (mortie spec section 6): a group with
+// "morton_hive_commit" is a morton store, rendered by the healpix path.
+async function determineGridTypeFromMortonHiveCommit(
+  datasources: TSources,
+  varnameSelector: string
+): Promise<T_GRID_TYPES | null> {
+  try {
+    const group = await ZarrDataManager.getParentGroup(
+      datasources,
+      varnameSelector,
+      datasources?.zarr_format
+    );
+    if ("morton_hive_commit" in group.attrs) {
+      return GRID_TYPES.HEALPIX;
+    }
+  } catch {
+    // no readable group metadata; fall through to the other checks
+  }
   return null;
 }
 
@@ -284,6 +310,8 @@ export async function getGridType(
     determineGridTypeFromCRS,
     // zarr convention metadata
     determineGridTypeFromZarrConvention,
+    // raw morton-hive leaf attrs (no convention envelope)
+    determineGridTypeFromMortonHiveCommit,
     checkRegularGridFromDimensions,
     determineGridTypeFromData,
   ];

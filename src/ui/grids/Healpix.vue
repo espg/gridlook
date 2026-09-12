@@ -40,6 +40,8 @@ import {
   terminateHealpixWorker,
 } from "@/lib/grids/healpixWorkerClient.ts";
 import type { THealpixBatch } from "@/lib/grids/healpixWorkerProtocol.ts";
+import { decodeMortonCells } from "@/lib/morton/cells.ts";
+import { MORTON_STORE_ELLIPSOID } from "@/lib/morton/convention.ts";
 import {
   createTriangleWrapProjectionGeometry,
   createWrappedProjectionMesh,
@@ -128,6 +130,14 @@ type TStreamlineContext = {
 
 let lastStreamlineContext: TStreamlineContext | undefined;
 let streamlineRequestRevision = 0;
+
+/**
+ * NESTED cells decoded from a native morton coordinate (issue #8), cached at
+ * grid setup so getCells does not re-fetch and re-decode per render. The
+ * whole group shares one morton coordinate, so the cache holds across
+ * variable switches within this component instance.
+ */
+let mortonCells: number[] | undefined;
 
 let disposed = false;
 
@@ -225,6 +235,70 @@ async function gridFromEasygemsConvention(): Promise<healpixGeo.Grid | null> {
   return null;
 }
 
+/**
+ * The packed-word coordinate name of a native morton store, or null when the
+ * store is not morton. Two markers (issue #8): a dggs block naming the morton
+ * convention (a moczarr-served hive view), or the writer's own
+ * morton_hive_commit attrs on a raw hive leaf zarr (which carries no dggs
+ * block at all).
+ */
+async function getMortonCoordinateName(): Promise<string | null> {
+  const metadata = await ZarrDataManager.getDggsMetadata(
+    props.datasources!,
+    varnameSelector.value
+  );
+  if (metadata?.name === "morton") {
+    return metadata.coordinate || "morton";
+  }
+  try {
+    const group = await ZarrDataManager.getParentGroup(
+      props.datasources!,
+      varnameSelector.value,
+      props.datasources?.zarr_format
+    );
+    if ("morton_hive_commit" in group.attrs) {
+      return "morton";
+    }
+  } catch {
+    // no readable group metadata; not a morton store
+  }
+  return null;
+}
+
+/**
+ * Native morton-hive stores: fetch the packed-u64 coordinate, decode it to
+ * NESTED cells with the BigInt codec (mortie spec section 4 viewer cast),
+ * and derive the grid level from the decoded words themselves -- the words
+ * are self-describing, and point stores clip to order 24 where any attrs
+ * would still claim 29. The latitude convention is the hardcoded
+ * authalic-WGS84 pin: the published stores hash geodetic->authalic on
+ * ingress (espg/mortie#186) and carry no latitude attr to sniff (issue #8
+ * ruling, 2026-09-11).
+ */
+async function gridFromMortonConvention(): Promise<healpixGeo.Grid | null> {
+  const coordinate = await getMortonCoordinateName();
+  if (coordinate === null) {
+    return null;
+  }
+  const words = await fetchHealpixVariableData(
+    [],
+    ZarrDataManager.resolveVariablePath(varnameSelector.value, coordinate)
+  );
+  if (!(words instanceof BigUint64Array)) {
+    throw new Error(
+      `morton coordinate "${coordinate}" is not uint64: packed words must ` +
+        "decode as BigInts (Numbers lose bits above 2**53)"
+    );
+  }
+  const decoded = decodeMortonCells(words);
+  mortonCells = decoded.cells;
+  return new healpixGeo.Grid({
+    scheme: "nested",
+    level: decoded.order,
+    ellipsoid: MORTON_STORE_ELLIPSOID,
+  });
+}
+
 async function gridFromDggsConvention(): Promise<healpixGeo.Grid | null> {
   const metadata = await ZarrDataManager.getDggsMetadata(
     props.datasources!,
@@ -269,6 +343,14 @@ function inferGridFromCellCount(
 }
 
 async function getHealpixGridParameters(): Promise<healpixGeo.Grid> {
+  // Morton first: a native morton store also carries refinement_level in its
+  // dggs block, but its cells are packed words, not NESTED ids -- it must
+  // never fall through to the conventions that assume a NESTED coordinate.
+  const fromMorton = await gridFromMortonConvention();
+  if (fromMorton !== null) {
+    return fromMorton;
+  }
+
   const fromEasygems = await gridFromEasygemsConvention();
   if (fromEasygems !== null) {
     return fromEasygems;
@@ -305,6 +387,9 @@ function unpackGrid(): healpixGeo.Grid {
 }
 
 async function getCells() {
+  if (mortonCells) {
+    return mortonCells;
+  }
   let cellCoord = "cell";
   const dggsMetadata = await ZarrDataManager.getDggsMetadata(
     props.datasources!,
