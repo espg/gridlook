@@ -221,8 +221,12 @@ async function determineGridTypeFromZarrConvention(
 
 // A raw morton-hive leaf zarr (opened directly, not through a hive-aware
 // server) carries no dggs block or zarr_conventions envelope -- its marker is
-// the writer's own commit attrs (mortie spec section 6): a group with
-// "morton_hive_commit" is a morton store, rendered by the healpix path.
+// the writer's own commit attrs (mortie spec section 6): a group whose
+// "morton_hive_commit" declares a versioned "morton-hive/<n>" spec is a morton
+// store, rendered by the healpix path. The spec value is what is keyed on, not
+// the bare key: an unrelated writer reusing the name, or a version whose
+// coordinate this viewer cannot read, must not be routed here (the morton
+// grid path's decode is the loudest failure in the chain).
 async function determineGridTypeFromMortonHiveCommit(
   datasources: TSources,
   varnameSelector: string
@@ -233,7 +237,13 @@ async function determineGridTypeFromMortonHiveCommit(
       varnameSelector,
       datasources?.zarr_format
     );
-    if ("morton_hive_commit" in group.attrs) {
+    const commit = group.attrs["morton_hive_commit"] as
+      | { spec?: unknown }
+      | undefined;
+    if (
+      typeof commit?.spec === "string" &&
+      commit.spec.startsWith("morton-hive/")
+    ) {
       return GRID_TYPES.HEALPIX;
     }
   } catch {

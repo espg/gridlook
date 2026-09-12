@@ -254,8 +254,9 @@ it("returns error for an unsupported DGGS name", async () => {
 
 it("returns healpix from raw morton-hive leaf commit attrs (issue 8)", async () => {
   // A raw hive leaf carries neither a zarr_conventions envelope nor a dggs
-  // block -- only the writer's morton_hive_commit attrs.
-  const sources = createSources(["time", "lat", "lon"]);
+  // block -- only the writer's morton_hive_commit attrs -- and its spatial
+  // dimension is "cells" (a packed uint64 morton coordinate), never lat/lon.
+  const sources = createSources(["time", "cells"]);
   vi.mocked(ZarrDataManager.getParentGroup).mockResolvedValue(
     createGroup({
       // eslint-disable-next-line camelcase -- zarr attrs use snake_case keys
@@ -264,6 +265,20 @@ it("returns healpix from raw morton-hive leaf commit attrs (issue 8)", async () 
   );
 
   await expect(detectGridType(sources)).resolves.toBe(GRID_TYPES.HEALPIX);
+});
+
+it("ignores commit attrs that do not declare a morton-hive spec (issue 8)", async () => {
+  // The prong keys on the versioned spec value, not on the attribute name:
+  // an unrelated writer reusing the key must fall through to the other checks.
+  const sources = createSources(["time", "lat", "lon"]);
+  vi.mocked(ZarrDataManager.getParentGroup).mockResolvedValue(
+    createGroup({
+      // eslint-disable-next-line camelcase -- zarr attrs use snake_case keys
+      morton_hive_commit: { note: "not a hive commit block" },
+    })
+  );
+
+  await expect(detectGridType(sources)).resolves.toBe(GRID_TYPES.REGULAR);
 });
 
 it.each([[["time", "lat", "lon"]], [["time", "lat"]]])(
