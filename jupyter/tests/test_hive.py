@@ -56,12 +56,21 @@ async def _open(jp_fetch, **params):
     return json.loads(resp.body)
 
 
-async def _fetch_array(jp_fetch, view, name, dtype=None):
+async def _fetch_array(jp_fetch, view, name, data_type=None):
+    """Read one served array, decoding it as the SERVED metadata says.
+
+    The wire type is never assumed: pass *data_type* to pin what the metadata
+    must say (e.g. ``"uint64"`` for the morton words, which the browser reads
+    as a ``BigUint64Array`` and rejects outright if it is anything else).
+    """
     meta = json.loads((await jp_fetch("gridlook", "hive", view, f"{name}/zarr.json")).body)
-    # Uncompressed by design: the raw chunk bytes ARE the array.
+    # Uncompressed by design: the raw chunk bytes ARE the array, so the
+    # endianness the bytes codec declares is the endianness on the wire.
     assert [c["name"] for c in meta["codecs"]] == ["bytes"]
-    if dtype is None:
-        dtype = np.dtype(meta["data_type"]).newbyteorder("<")
+    assert meta["codecs"][0]["configuration"]["endian"] == "little"
+    if data_type is not None:
+        assert meta["data_type"] == data_type
+    dtype = np.dtype(meta["data_type"]).newbyteorder("<")
     chunk = await jp_fetch("gridlook", "hive", view, f"{name}/c/0")
     assert chunk.headers["Content-Type"] == "application/octet-stream"
     return np.frombuffer(chunk.body, dtype=dtype)
@@ -254,7 +263,9 @@ async def test_served_words_decode_to_fabrication_golden(jp_fetch):
     from moczarr.fabricate import fabricate_cell_ids
 
     out = await _open(jp_fetch)
-    words = await _fetch_array(jp_fetch, out["view"], "morton", "<u8")
+    # "uint64" is a wire contract, not a convenience: the browser reads the
+    # words as a BigUint64Array and throws if the read lands as anything else.
+    words = await _fetch_array(jp_fetch, out["view"], "morton", data_type="uint64")
     # The words the view serves decode to exactly the NESTED ids the last
     # dual-written store carried (and the retired shim used to fabricate):
     # native serving loses nothing.
@@ -280,7 +291,9 @@ async def test_aoi_subsets_to_one_shard(jp_fetch):
 
     out = await _open(jp_fetch, aoi=SERC_SHARD)
     assert out["cells"] == 16  # 4^(cell_order 8 - shard_order 6)
-    words = await _fetch_array(jp_fetch, out["view"], "morton", "<u8")
+    # "uint64" is a wire contract, not a convenience: the browser reads the
+    # words as a BigUint64Array and throws if the read lands as anything else.
+    words = await _fetch_array(jp_fetch, out["view"], "morton", data_type="uint64")
     ids = fabricate_cell_ids(words.astype(np.uint64))
     golden = set(np.load(GOLDEN).astype(np.uint64).tolist())
     assert set(ids.tolist()) < golden
