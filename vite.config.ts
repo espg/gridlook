@@ -30,6 +30,11 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["tests/**/*.test.ts"],
+    server: {
+      // Process healpix-geo through the vite pipeline in tests so
+      // vite-plugin-wasm resolves its .wasm import (node cannot natively).
+      deps: { inline: ["healpix-geo"] },
+    },
   },
   base: "./",
 });
