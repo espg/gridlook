@@ -399,18 +399,26 @@ class TestLruEviction:
     def hive_config(self):
         return {"local_hive_store_roots": [str(TESTDATA)], "hive_max_views": 2}
 
-    async def test_third_view_evicts_least_recent(self, jp_fetch):
+    async def test_third_view_evicts_least_recent(self, jp_fetch, jp_serverapp):
+        cache = jp_serverapp.web_app.settings["gridlook_hive_views"]
         a = await _open(jp_fetch, aoi="4331421")
         b = await _open(jp_fetch, aoi="4331422")
         await _open(jp_fetch, aoi="4331421")  # refresh a: b is now LRU
         c = await _open(jp_fetch, aoi="4331424")
-        with pytest.raises(HTTPClientError) as e:
-            await jp_fetch("gridlook", "hive", b["view"], "zarr.json")
-        assert e.value.code == 404
-        assert b"evicted" in e.value.response.body
+        assert cache.get(b["view"]) is None  # materialization gone
+        assert cache.spec(b["view"]) is not None  # recipe kept
         for alive in (a, c):
             resp = await jp_fetch("gridlook", "hive", alive["view"], "zarr.json")
             assert resp.code == 200
+        # An evicted view's URL keeps working: the object request rebuilds it
+        # (and that build evicts the new least-recent, a).
+        resp = await jp_fetch("gridlook", "hive", b["view"], "zarr.json")
+        assert resp.code == 200
+        assert cache.get(b["view"]) is not None
+        assert cache.get(a["view"]) is None
+        again = await _open(jp_fetch, aoi="4331421")
+        assert again["view"] == a["view"]
+        assert again["cached"] is False
 
 
 class TestOversizeView:
@@ -669,3 +677,119 @@ class TestStorePostureDefaults:
         # moczarr keeps its own credential resolution when nothing is configured.
         assert "region" not in seen
         assert "anonymous" not in seen
+
+
+class TestEnsureCancellation:
+    """Coalesced waiters are independent: one's cancellation is not everyone's.
+
+    Driven against the cache directly — tornado does not cancel handler
+    coroutines on client disconnect today, so the HTTP surface cannot reach
+    this path, but server shutdown and any future timeout wrapper can.
+    """
+
+    @staticmethod
+    def _reserved(monkeypatch, materialize):
+        from gridlook_jupyter import hive
+        from gridlook_jupyter.config import GridlookProxy
+
+        cache = hive.HiveViewCache(GridlookProxy())
+        view_id = cache.reserve(
+            hive.ViewSpec(
+                root="/store", store_url="/store", product=None, window=None, aoi=None, level=None
+            )
+        )
+        monkeypatch.setattr(hive, "_materialize", materialize)
+        return cache, view_id
+
+    async def test_cancelled_waiter_leaves_the_build_intact(self, monkeypatch):
+        import asyncio
+
+        built = object()
+
+        async def slow(proxy, spec):
+            await asyncio.sleep(0.05)
+            return built
+
+        cache, view_id = self._reserved(monkeypatch, slow)
+        builder = asyncio.ensure_future(cache.ensure(view_id))
+        await asyncio.sleep(0)  # the builder registers _building before the waiters arrive
+        doomed = asyncio.ensure_future(cache.ensure(view_id))
+        survivor = asyncio.ensure_future(cache.ensure(view_id))
+        await asyncio.sleep(0)
+        doomed.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await doomed
+        assert (await builder)[0] is built  # not InvalidStateError
+        assert (await survivor)[0] is built  # not CancelledError
+        assert cache.get(view_id) is built
+
+    async def test_cancelled_builder_hands_waiters_a_503(self, monkeypatch):
+        import asyncio
+
+        async def never(proxy, spec):
+            await asyncio.sleep(3600)
+
+        cache, view_id = self._reserved(monkeypatch, never)
+        builder = asyncio.ensure_future(cache.ensure(view_id))
+        await asyncio.sleep(0)
+        waiter = asyncio.ensure_future(cache.ensure(view_id))
+        await asyncio.sleep(0)
+        builder.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await builder
+        from tornado import web
+
+        with pytest.raises(web.HTTPError) as e:
+            await waiter
+        assert e.value.status_code == 503
+        assert cache._building == {}  # clean for the retry
+
+
+class TestRecipeTableLru:
+    """``_specs`` ages on USE, not on reserve: a served view stays rebuildable."""
+
+    @staticmethod
+    def _cache(monkeypatch, bound):
+        from gridlook_jupyter import hive
+        from gridlook_jupyter.config import GridlookProxy
+
+        monkeypatch.setattr(hive, "_MAX_SPECS", bound)
+
+        async def build(proxy, spec):
+            return f"view-{spec.level}"
+
+        monkeypatch.setattr(hive, "_materialize", build)
+        cache = hive.HiveViewCache(GridlookProxy())
+
+        def reserve(level):
+            return cache.reserve(
+                hive.ViewSpec(
+                    root="/store",
+                    store_url="/store",
+                    product=None,
+                    window=None,
+                    aoi=None,
+                    level=level,
+                )
+            )
+
+        return cache, reserve
+
+    async def test_serving_a_view_refreshes_its_recipe(self, monkeypatch):
+        cache, reserve = self._cache(monkeypatch, bound=2)
+        a, b = reserve(0), reserve(1)
+        await cache.ensure(a)  # a is now the most recently USED recipe, not the oldest
+        c = reserve(2)  # over the bound: the least recently used (b) is the one dropped
+        assert cache.spec(b) is None
+        assert cache.spec(a) is not None
+        assert cache.spec(c) is not None
+
+    async def test_cache_hit_refreshes_the_recipe_too(self, monkeypatch):
+        cache, reserve = self._cache(monkeypatch, bound=2)
+        a, b = reserve(0), reserve(1)
+        await cache.ensure(a)
+        reserve(1)  # b back on top; a's recipe survives only if get() bumps it
+        assert cache.get(a) == "view-0"
+        reserve(2)
+        assert cache.spec(b) is None
+        assert cache.spec(a) is not None
