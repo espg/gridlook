@@ -299,11 +299,16 @@ def build_view(
         )
         if ds is None:
             raise ValueError(f"level {level} has no stamped artifact in this store")
-        # An overview view renders scalar fields; the ragged t-digest / vlen
-        # variables are bytes the browser never reads and, at CA scale, the
-        # bulk of the level (they turned a whole-store open into a GB-scale
-        # crawl). Keep the numeric data variables only.
-        ds = ds[[v for v in ds.data_vars if ds[v].dtype.kind in "iuf"]]
+    # The SPA renders a variable by casting it to Float32 (castDataVarToFloat32),
+    # so a view serves only what that can hold: numeric data variables of at
+    # most 32 bits. Ragged t-digests are bytes the browser never reads (and at
+    # CA scale the bulk of a level — they turned a whole-store open into a
+    # GB-scale crawl); the packed composition word and any int64 are BigInt in
+    # zarrita and throw at the cast. Coordinates (cell_ids, morton) are kept —
+    # the HEALPix path converts those itself.
+    ds = ds[[v for v in ds.data_vars if ds[v].dtype.kind in "iuf" and ds[v].dtype.itemsize <= 4]]
+    if not ds.data_vars:
+        raise ValueError("no renderable (numeric, <=32-bit) variable in this selection")
     dim = ds["morton"].dims[0] if "morton" in ds.coords else "cells"
     cells = int(ds.sizes.get(dim, 0))
     if cells > max_cells:
