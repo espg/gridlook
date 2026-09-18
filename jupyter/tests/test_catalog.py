@@ -117,7 +117,7 @@ async def test_entry_view_builds_on_first_object_request(jp_fetch, jp_serverapp)
     assert cache.get(view) is not None
     assert meta["attributes"]["zagg_level"]["cell_order"] == 4
     assert meta["attributes"]["dggs"]["refinement_level"] == 4
-    ids = await _fetch_array(jp_fetch, view, "cell_ids", "<u8")
+    ids = await _fetch_array(jp_fetch, view, "morton", data_type="uint64")
     assert len(ids) == 16
     # The open route names the same view for the same level, now cached.
     out = await _open(jp_fetch, store=OVERVIEW, cell_order="4")
@@ -127,7 +127,7 @@ async def test_entry_view_builds_on_first_object_request(jp_fetch, jp_serverapp)
 
 
 #: Objects a freshly listed entry is asked for all at once by one page load.
-BURST_KEYS = ["zarr.json", "count/zarr.json", "cell_ids/zarr.json", "count/c/0"]
+BURST_KEYS = ["zarr.json", "count/zarr.json", "morton/zarr.json", "count/c/0"]
 
 
 def _held_build(monkeypatch, *, fail=False, hold=0.3):
@@ -192,7 +192,7 @@ async def test_failing_build_surfaces_to_every_waiter(jp_fetch, jp_serverapp, mo
 async def test_aoi_scopes_every_entry(jp_fetch):
     doc = await _catalog(jp_fetch, aoi=SERC_SHARD)
     view = _view_id(doc["datasets"][0])
-    ids = await _fetch_array(jp_fetch, view, "cell_ids", "<u8")
+    ids = await _fetch_array(jp_fetch, view, "morton", data_type="uint64")
     assert len(ids) == 16  # 4^(8-6), the one shard
 
 

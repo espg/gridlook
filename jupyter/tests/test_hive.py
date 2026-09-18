@@ -1,11 +1,13 @@
 """``/gridlook/hive/`` virtual-store views against moczarr's committed SERC fixture.
 
 The fixture (``tests/data/serc_hive`` in the moczarr repo) is zagg-written and
-morton-only (post englacial/zagg#314), so every ``cell_ids`` assertion here
-exercises moczarr's NESTED fabrication — the load-bearing 6d piece. The suite
-needs moczarr importable from a repo checkout (e.g. ``uv pip install -e
-/path/to/moczarr``) so the fixture is reachable next to the package; a
-plain-``[test]`` environment skips it wholesale.
+morton-only (post englacial/zagg#314). Views are served NATIVE (issue #8):
+the packed-u64 ``morton`` coordinate and the store's own morton ``dggs``
+block pass through unmodified, and the browser decodes the words itself — the
+assertions here pin that nothing rewrites them. The suite needs the SERC
+fixture reachable next to a moczarr repo checkout, or via
+``GRIDLOOK_MOCZARR_TESTDATA=<moczarr>/tests/data``; a plain-``[test]``
+environment skips it wholesale.
 """
 
 import json
@@ -65,12 +67,21 @@ async def _root_meta(jp_fetch, view):
     return json.loads(resp.body)
 
 
-async def _fetch_array(jp_fetch, view, name, dtype=None):
+async def _fetch_array(jp_fetch, view, name, data_type=None):
+    """Read one served array, decoding it as the SERVED metadata says.
+
+    The wire type is never assumed: pass *data_type* to pin what the metadata
+    must say (e.g. ``"uint64"`` for the morton words, which the browser reads
+    as a ``BigUint64Array`` and rejects outright if it is anything else).
+    """
     meta = json.loads((await jp_fetch("gridlook", "hive", view, f"{name}/zarr.json")).body)
-    # Uncompressed by design: the raw chunk bytes ARE the array.
+    # Uncompressed by design: the raw chunk bytes ARE the array, so the
+    # endianness the bytes codec declares is the endianness on the wire.
     assert [c["name"] for c in meta["codecs"]] == ["bytes"]
-    if dtype is None:
-        dtype = np.dtype(meta["data_type"]).newbyteorder("<")
+    assert meta["codecs"][0]["configuration"]["endian"] == "little"
+    if data_type is not None:
+        assert meta["data_type"] == data_type
+    dtype = np.dtype(meta["data_type"]).newbyteorder("<")
     chunk = await jp_fetch("gridlook", "hive", view, f"{name}/c/0")
     assert chunk.headers["Content-Type"] == "application/octet-stream"
     return np.frombuffer(chunk.body, dtype=dtype)
@@ -92,37 +103,32 @@ async def test_reopen_same_selection_reuses_view(jp_fetch):
     assert again["cached"] is True
 
 
-async def test_zarr_json_carries_healpix_shim_attrs(jp_fetch):
+async def test_zarr_json_serves_native_morton_attrs(jp_fetch):
     out = await _open(jp_fetch)
     resp = await jp_fetch("gridlook", "hive", out["view"], "zarr.json")
     assert resp.code == 200
     assert resp.headers["Content-Type"] == "application/json"
     attrs = json.loads(resp.body)["attributes"]
-    # Pre-6c compatibility shim: gridlook's detector accepts only
-    # dggs.name == "healpix" today; the served block points its existing
-    # sparse-HEALPix path at the fabricated NESTED cell_ids.
-    assert "zarr_conventions" in attrs
+    # Native serve (issue #8): the store's own morton convention block passes
+    # through unmodified — gridlook's detector and Healpix path read it
+    # directly and decode the packed words browser-side.
     dggs = attrs["dggs"]
-    assert dggs["name"] == "healpix"
-    assert dggs["coordinate"] == "cell_ids"
-    assert dggs["refinement_level"] == 8
+    assert dggs["name"] == "morton"
+    assert dggs["coordinate"] == "morton"
     assert attrs["morton_hive"]["cell_order"] == 8
+    # The retired shim's artifacts must not reappear.
+    assert "_gridlook_source_dggs" not in attrs
 
 
-async def test_zarr_conventions_single_coherent_block(jp_fetch):
+async def test_zarr_conventions_envelope_preserved(jp_fetch):
     out = await _open(jp_fetch)
     resp = await jp_fetch("gridlook", "hive", out["view"], "zarr.json")
     attrs = json.loads(resp.body)["attributes"]
-    conventions = attrs["zarr_conventions"]
-    names = [e.get("name") for e in conventions]
-    # The served envelope no longer claims the morton-dggs convention (it would
-    # contradict the healpix-flavored dggs block); exactly the generic dggs
-    # registry entry remains.
-    assert "morton-dggs" not in names
+    names = [e.get("name") for e in attrs["zarr_conventions"]]
+    # Both the generic dggs registry entry and the morton-dggs convention
+    # entry survive: the served envelope is the stored one.
     assert names.count("dggs") == 1
-    # Provenance: the store's own morton block is preserved verbatim.
-    assert attrs["_gridlook_source_dggs"]["name"] == "morton"
-    assert attrs["_gridlook_source_dggs"]["coordinate"] == "morton"
+    assert names.count("morton-dggs") == 1
 
 
 #: Golden point/area order-29 packed words (moczarr test_convention, suffix bands
@@ -131,47 +137,104 @@ POINT_NORTH_WORD = 4733760060091642301  # suffix 61
 POINT_SOUTH_WORD = 13712984013617909360  # suffix 48
 
 
-class TestServedRefinementLevel:
-    """refinement_level comes from the SERVED ids' order, not the manifest cell_order."""
+class TestRenderableGuard:
+    """Views the browser's word decode or render path refuses are 422'd at open.
 
-    def test_area_store_uses_manifest_order(self):
-        from gridlook_jupyter.hive import _served_refinement_level
+    Every verdict is read off the served WORDS, so the three refusals match the
+    browser's one-for-one: POINT kind (Healpix.vue refuses an nside-2**24
+    grid), mixed orders (decodeMortonCells throws), and area words past the
+    float64-exact ceiling (viewNestedId throws).
+    """
 
-        # Non-point words (low suffix bands) at order 8: served ids sit at 8.
-        words = np.array([8, 4108, 12], dtype=np.uint64)
-        ids = np.array([0, 1, 100], dtype=np.uint64)
-        assert _served_refinement_level(ids, words, cell_order=8) == 8
+    def test_area_store_within_ceiling_passes(self):
+        from gridlook_jupyter.hive import _check_renderable
 
-    def test_point_store_clips_to_float64_ceiling(self):
+        # Non-point AREA words that all carry suffix 8, i.e. really decode to
+        # order 8 (the old fixture — [8, 4108, 12] — was suffixes 8/12/12, so
+        # it only passed while the guard trusted cell_order).
+        words = np.array([(1 << 60) | 8, (2 << 60) | (3 << 6) | 8], dtype=np.uint64)
+        _check_renderable(words, cell_order=8)
+
+    def test_point_store_rejected(self):
         from moczarr.convention import is_point_word
-        from moczarr.fabricate import fabricate_cell_ids
 
-        from gridlook_jupyter.hive import _served_refinement_level
+        from gridlook_jupyter.hive import ViewPointKindError, _check_renderable
 
         words = np.array([POINT_NORTH_WORD, POINT_SOUTH_WORD], dtype=np.uint64)
         assert bool(np.asarray(is_point_word(words)).all())
-        ids = fabricate_cell_ids(words)  # point words clip to order 24
-        # Manifest says order 29 (points are order-29 encoded); the served ids
-        # are at order 24, and THAT is what the shim must declare.
-        assert _served_refinement_level(ids, words, cell_order=29) == 24
+        # The decode clips these to order 24 — nside 2**24, ~0.4 m cells —
+        # which the sparse healpix texture cannot rasterize, so the browser
+        # refuses the coordinate and so does the open.
+        with pytest.raises(ViewPointKindError):
+            _check_renderable(words, cell_order=29)
 
     def test_area_above_float64_ceiling_rejected(self):
-        from gridlook_jupyter.hive import ViewNotFloat64ExactError, _served_refinement_level
+        from gridlook_jupyter.hive import ViewNotFloat64ExactError, _check_renderable
 
         words = np.array([25], dtype=np.uint64)  # non-point (suffix 25)
-        ids = np.array([0, 1], dtype=np.uint64)
         with pytest.raises(ViewNotFloat64ExactError):
-            _served_refinement_level(ids, words, cell_order=25)
+            _check_renderable(words, cell_order=25)
 
-    def test_ids_beyond_float64_range_rejected(self):
-        from gridlook_jupyter.hive import ViewNotFloat64ExactError, _served_refinement_level
+    def test_under_declaring_manifest_rejected(self):
+        from gridlook_jupyter.hive import ViewNotFloat64ExactError, _check_renderable
 
-        # Non-point words at a declared order 24, but an id past 12*4**24 (a
-        # mixed store whose real order-29 areas ride past the point clip).
-        words = np.array([24], dtype=np.uint64)
-        ids = np.array([0, 12 * 4**24], dtype=np.uint64)
-        with pytest.raises(ViewNotFloat64ExactError):
-            _served_refinement_level(ids, words, cell_order=24)
+        # The manifest claims the ceiling; the words are order-29 areas
+        # (suffix 29, tail band). The words win — cell_order is not evidence.
+        words = np.array([(1 << 60) | 29], dtype=np.uint64)
+        with pytest.raises(ViewNotFloat64ExactError) as e:
+            _check_renderable(words, cell_order=24)
+        assert (e.value.order, e.value.declared) == (29, 24)
+
+    def test_mixed_kind_store_rejected_at_any_order(self):
+        from gridlook_jupyter.hive import ViewPointKindError, _check_renderable
+
+        # Above the ceiling AND below it: a point word alongside area words
+        # decodes to two orders browser-side whatever the manifest says.
+        for words, cell_order in (
+            (np.array([POINT_NORTH_WORD, 29], dtype=np.uint64), 29),
+            (np.array([POINT_NORTH_WORD, 8, 4108], dtype=np.uint64), 8),
+        ):
+            with pytest.raises(ViewPointKindError):
+                _check_renderable(words, cell_order=cell_order)
+
+    def test_mixed_area_orders_rejected(self):
+        from gridlook_jupyter.hive import ViewMixedOrderError, _check_renderable
+
+        # Two AREA orders in one coordinate: one nside cannot draw both.
+        words = np.array([(1 << 60) | 8, (1 << 60) | 9], dtype=np.uint64)
+        with pytest.raises(ViewMixedOrderError) as e:
+            _check_renderable(words, cell_order=9)
+        assert (e.value.low, e.value.high) == (8, 9)
+
+    def test_empty_view_is_not_this_guards_business(self):
+        from gridlook_jupyter.hive import _check_renderable
+
+        # No words, nothing to decode: emptiness is ViewEmptyError's call in
+        # build_view, and it must not depend on the manifest's cell_order.
+        for cell_order in (8, 29):
+            _check_renderable(np.array([], dtype=np.uint64), cell_order=cell_order)
+
+    def test_word_orders_match_mortie_over_every_suffix(self):
+        import mortie
+
+        from gridlook_jupyter.hive import _word_orders
+
+        # The server's suffix-table read (spec §1) against the reference
+        # implementation, all 64 bands — this is what makes reading the order
+        # off the words, rather than off the manifest, trustworthy.
+        words = np.array([(1 << 60) | suffix for suffix in range(64)], dtype=np.uint64)
+        assert np.array_equal(_word_orders(words), np.asarray(mortie.orders_of(words)))
+
+
+async def test_empty_selection_422(jp_fetch):
+    # An AOI naming coverage the store does not have: moczarr warns and hands
+    # back a schema-correct 0-cell dataset. Nothing can render that — the
+    # browser's decode rejects an empty morton coordinate — so the open is a
+    # 422 naming the selection to widen, on both sides of the wire.
+    with pytest.raises(HTTPClientError) as e:
+        await jp_fetch("gridlook", "hive", "open", params={"store": str(SERC), "aoi": "1"})
+    assert e.value.code == 422
+    assert "0 cells" in str(e.value.response.body)
 
 
 class TestViewIdCanonicalization:
@@ -207,12 +270,25 @@ class TestViewIdCanonicalization:
         assert a != b
 
 
-async def test_cell_ids_match_moczarr_fabrication_golden(jp_fetch):
+async def test_served_words_decode_to_fabrication_golden(jp_fetch):
+    from moczarr.fabricate import fabricate_cell_ids
+
     out = await _open(jp_fetch)
-    ids = await _fetch_array(jp_fetch, out["view"], "cell_ids", "<u8")
-    # NESTED values byte-equal the golden (the last dual-written store's
-    # stored cell_ids): fabricate-at-serve loses nothing.
+    # "uint64" is a wire contract, not a convenience: the browser reads the
+    # words as a BigUint64Array and throws if the read lands as anything else.
+    words = await _fetch_array(jp_fetch, out["view"], "morton", data_type="uint64")
+    # The words the view serves decode to exactly the NESTED ids the last
+    # dual-written store carried (and the retired shim used to fabricate):
+    # native serving loses nothing.
+    ids = fabricate_cell_ids(words.astype(np.uint64))
     assert np.array_equal(ids, np.load(GOLDEN).astype(np.uint64))
+
+
+async def test_no_fabricated_cell_ids_served(jp_fetch):
+    out = await _open(jp_fetch)
+    with pytest.raises(HTTPClientError) as e:
+        await jp_fetch("gridlook", "hive", out["view"], "cell_ids/zarr.json")
+    assert e.value.code == 404
 
 
 async def test_data_variable_chunk_served(jp_fetch):
@@ -222,13 +298,14 @@ async def test_data_variable_chunk_served(jp_fetch):
 
 
 async def test_aoi_subsets_to_one_shard(jp_fetch):
-    out = await _open(jp_fetch, aoi=SERC_SHARD)
-    assert out["cells"] == 16  # 4^(cell_order 8 - shard_order 6)
-    words = await _fetch_array(jp_fetch, out["view"], "morton", "<u8")
-    ids = await _fetch_array(jp_fetch, out["view"], "cell_ids", "<u8")
     from moczarr.fabricate import fabricate_cell_ids
 
-    assert np.array_equal(ids, fabricate_cell_ids(words.astype(np.uint64)))
+    out = await _open(jp_fetch, aoi=SERC_SHARD)
+    assert out["cells"] == 16  # 4^(cell_order 8 - shard_order 6)
+    # "uint64" is a wire contract, not a convenience: the browser reads the
+    # words as a BigUint64Array and throws if the read lands as anything else.
+    words = await _fetch_array(jp_fetch, out["view"], "morton", data_type="uint64")
+    ids = fabricate_cell_ids(words.astype(np.uint64))
     golden = set(np.load(GOLDEN).astype(np.uint64).tolist())
     assert set(ids.tolist()) < golden
 
@@ -408,11 +485,16 @@ class TestPyramidLevel:
             "overview",
         )
         assert level["spec"] == "zagg-pyramid/1"
-        # The shim declares the LEVEL's order, so the SPA sizes nside for it.
+        # The level's own (native) dggs block declares ITS order, so the SPA
+        # sizes nside for the level, not for the store's leaf cells.
+        assert attrs["dggs"]["name"] == "morton"
         assert attrs["dggs"]["refinement_level"] == cell_order
-        ids = await _fetch_array(jp_fetch, out["view"], "cell_ids", "<u8")
-        assert np.array_equal(ids, ds["cell_ids"].values.astype(np.uint64))
-        assert set(ids.tolist()) < set(range(12 * 4**cell_order))
+        words = await _fetch_array(jp_fetch, out["view"], "morton", data_type="uint64")
+        assert np.array_equal(words, ds["morton"].values.astype(np.uint64))
+        from gridlook_jupyter.hive import _word_orders
+
+        # Every served word decodes at the level's order (one nside browser-side).
+        assert set(_word_orders(words).tolist()) == {cell_order}
 
     async def test_levels_of_one_store_are_distinct_views(self, jp_fetch):
         views = {
@@ -420,7 +502,7 @@ class TestPyramidLevel:
         }
         assert len(views) == 3
 
-    @pytest.mark.parametrize("bad", ["abc", "-1", "30", "8.0", ""])
+    @pytest.mark.parametrize("bad", ["abc", "-1", "30", "8.0", "²", "٣", ""])
     async def test_malformed_cell_order_400(self, jp_fetch, bad):
         if bad == "":
             # An empty parameter is "absent": the leaf view opens.
@@ -448,7 +530,6 @@ class TestConsolidatedMetadata:
         meta = await _root_meta(jp_fetch, out["view"])
         listed = meta["consolidated_metadata"]["metadata"]
         assert set(listed) == {
-            "cell_ids",
             "morton",
             "count",
             "h_max",
@@ -471,7 +552,7 @@ class TestConsolidatedMetadata:
 
 
 class TestRenderableVariables:
-    """Only numeric <=32-bit data variables are served; coordinates always are."""
+    """Only float / <=32-bit integer data variables are served; the coordinate always is."""
 
     def test_filter_keeps_castable_dtypes_only(self):
         xr = pytest.importorskip("xarray")
@@ -489,12 +570,16 @@ class TestRenderableVariables:
                 "wide": ("cells", np.zeros(n, np.int64)),
                 "h_mean64": ("cells", np.zeros(n, np.float64)),
                 "label": ("cells", np.array(["a"] * n)),
+                "seen": ("cells", np.zeros(n, bool)),
+                "t": ("cells", np.zeros(n, "datetime64[ns]")),
             },
             coords={"morton": ("cells", np.zeros(n, np.uint64))},
         )
-        assert renderable_variables(ds) == ["count", "h_mean", "flag"]
+        # float64 is castable (``Float32Array.from`` widens it); only the
+        # BigInt-backed int64/uint64 throw at the cast.
+        assert renderable_variables(ds) == ["count", "h_mean", "flag", "h_mean64"]
 
-    async def test_view_drops_digests_and_composition_keeps_coords(self, jp_fetch, monkeypatch):
+    async def test_view_drops_digests_and_composition_keeps_morton(self, jp_fetch, monkeypatch):
         import moczarr
 
         real = moczarr.open_hive
@@ -506,6 +591,7 @@ class TestRenderableVariables:
             ds["h_tdigest_signal_locations"] = ("cells", np.array([b"\x00"] * n, dtype=object))
             ds["composition"] = ("cells", np.zeros(n, np.uint64))
             ds["wide"] = ("cells", np.zeros(n, np.int64))
+            ds["h_mean64"] = ("cells", np.zeros(n, np.float64))
             return ds
 
         monkeypatch.setattr(moczarr, "open_hive", mixed)
@@ -514,11 +600,11 @@ class TestRenderableVariables:
         assert not any(name.startswith("h_tdigest") for name in listed)
         assert "composition" not in listed
         assert "wide" not in listed
-        assert {"cell_ids", "morton", "count", "h_mean"} <= listed
-        # The coordinates are served as uint64 words/ids, not squeezed to 32 bits.
-        for coord in ("cell_ids", "morton"):
-            resp = await jp_fetch("gridlook", "hive", out["view"], f"{coord}/zarr.json")
-            assert json.loads(resp.body)["data_type"] == "uint64"
+        # float64 stays: the SPA's Float32Array.from() widens it without throwing.
+        assert {"morton", "count", "h_mean", "h_mean64"} <= listed
+        # The coordinate is served as uint64 words, not squeezed to 32 bits.
+        resp = await jp_fetch("gridlook", "hive", out["view"], "morton/zarr.json")
+        assert json.loads(resp.body)["data_type"] == "uint64"
 
     async def test_nothing_renderable_4xx(self, jp_fetch):
         with pytest.raises(HTTPClientError) as e:
@@ -572,6 +658,12 @@ class TestStorePosture:
 class TestStorePostureDefaults:
     async def test_unset_traits_are_not_forwarded(self, jp_fetch, monkeypatch):
         import moczarr
+
+        # "Unset" means unset in the trait AND in the environment: both traits
+        # have an env fallback (config.py), so an exported GRIDLOOK_S3_REGION /
+        # GRIDLOOK_ANONYMOUS would otherwise redden this test.
+        monkeypatch.delenv("GRIDLOOK_S3_REGION", raising=False)
+        monkeypatch.delenv("GRIDLOOK_ANONYMOUS", raising=False)
 
         seen = {}
         real = moczarr.open_hive

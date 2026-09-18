@@ -1,19 +1,17 @@
 <script lang="ts" setup>
 import { useDebounceFn } from "@vueuse/core";
 import { storeToRefs } from "pinia";
-import { computed, ref, watch } from "vue";
+import { computed, onUnmounted, reactive, ref, watch } from "vue";
 
 import DatetimePicker from "./DatetimePicker.vue";
-import { useTimeAnimation } from "./useTimeAnimation.ts";
+import { stopAnimation, useDimensionAnimation } from "./useTimeAnimation.ts";
 
 import { decodeTime, isTimeUnits } from "@/lib/data/timeHandling.ts";
 import { useGlobeControlStore } from "@/store/store.ts";
 
 const store = useGlobeControlStore();
-const { varinfo, dimSlidersValues } = storeToRefs(store);
-
-const { isPlaying, canAnimate, toggle, cycleSpeed, speedLabel } =
-  useTimeAnimation();
+const { varinfo, dimSlidersValues, live, livePaused, liveConnected } =
+  storeToRefs(store);
 
 // Local copies for debounced updates (excluding time dimension)
 const localSliders = ref<(number | null)[]>([]);
@@ -29,6 +27,29 @@ function getTimeUnits(index: number): string | undefined {
 function isTimeDimension(index: number): boolean {
   return getTimeUnits(index) !== undefined;
 }
+
+function isSingleTimeStep(index: number): boolean {
+  const range = varinfo.value?.dimRanges[index];
+  return isTimeDimension(index) && !!range && range.maxBound <= range.minBound;
+}
+
+// One playback controller per dimension, rebuilt whenever the dimension
+// layout changes (only one dimension can play back at a time; the time
+// dimension is additionally paused while live-following).
+const dimensionAnimations = computed(() =>
+  (varinfo.value?.dimRanges ?? []).map((_, index) =>
+    reactive(
+      useDimensionAnimation(
+        computed(() => index),
+        { excludeWhileLive: isTimeDimension(index) }
+      )
+    )
+  )
+);
+
+onUnmounted(() => {
+  stopAnimation();
+});
 
 const hasValidDimensions = computed(() => {
   return (
@@ -97,16 +118,22 @@ function formatCurrentValue(index: number) {
     return dimInfo.current;
   }
   if (typeof dimInfo.current === "object") {
-    return dimInfo.current.format();
+    return dimInfo.current.format("DD MMM YYYY • HH:mm:ss");
   }
   const current = Number(dimInfo.current);
   return Number.isFinite(current)
-    ? decodeTime(current, dimInfo.attrs).format()
+    ? decodeTime(current, dimInfo.attrs).format("DD MMM YYYY • HH:mm:ss")
     : "-";
 }
 
 function capitalize(str: string): string {
   return String(str[0]).toUpperCase() + String(str).slice(1);
+}
+
+// While live-following, the time dimension is driven by polling and must not be
+// scrubbed manually (only the current timestep is available).
+function isLiveTime(index: number): boolean {
+  return live.value && isTimeDimension(index);
 }
 </script>
 
@@ -133,7 +160,11 @@ function capitalize(str: string): string {
           <div class="is-flex is-align-items-center" style="gap: 0.5rem">
             {{ capitalize(range.name) }}:
             <DatetimePicker
-              v-if="isTimeDimension(index)"
+              v-if="
+                isTimeDimension(index) &&
+                !isLiveTime(index) &&
+                !isSingleTimeStep(index)
+              "
               :time-values="varinfo.dimInfo[index]?.values ?? []"
               :time-attrs="varinfo.dimInfo[index]?.attrs ?? {}"
               :current-index="localSliders[index] ?? 0"
@@ -142,55 +173,29 @@ function capitalize(str: string): string {
               @update:index="onDatetimeIndexUpdate(index, $event)"
             />
           </div>
-          <div class="is-flex">
-            <input
-              v-model.number="localSliders[index]"
-              class="input"
-              type="number"
-              :min="range.minBound"
-              :max="range.maxBound"
-              style="width: 8em"
-            />
-            <div class="my-2 ml-2">/ {{ range.maxBound }}</div>
+          <div class="is-flex is-align-items-center">
+            <span
+              v-if="isSingleTimeStep(index)"
+              class="is-size-7 has-text-grey"
+            >
+              Only one time step available
+            </span>
+            <template v-else>
+              <input
+                v-model.number="localSliders[index]"
+                class="input dim-input index-size"
+                type="number"
+                :min="range.minBound"
+                :max="range.maxBound"
+                :disabled="isLiveTime(index)"
+                style="width: 8em"
+              />
+              <div class="my-2 ml-2 index-size is-family-monospace">
+                / {{ range.maxBound }}
+              </div>
+            </template>
           </div>
         </div>
-
-        <input
-          v-model.number="localSliders[index]"
-          class="w-100"
-          type="range"
-          :min="range.minBound"
-          :max="range.maxBound"
-        />
-
-        <div
-          v-if="isTimeDimension(index) && canAnimate"
-          class="is-flex is-align-items-center mt-2"
-          style="gap: 0.5rem"
-        >
-          <button
-            class="button is-small"
-            :class="{ 'is-info': isPlaying }"
-            type="button"
-            :title="
-              isPlaying ? 'Pause animation (Space)' : 'Play animation (Space)'
-            "
-            @click="toggle"
-          >
-            <span class="icon">
-              <i :class="isPlaying ? 'fas fa-pause' : 'fas fa-play'"></i>
-            </span>
-          </button>
-          <button
-            class="button is-small"
-            type="button"
-            title="Playback speed"
-            @click="cycleSpeed"
-          >
-            {{ speedLabel }}
-          </button>
-        </div>
-
         <div class="w-100 is-flex is-justify-content-space-between">
           <div>Current value</div>
           <div class="has-text-right">
@@ -198,17 +203,112 @@ function capitalize(str: string): string {
             <br />
           </div>
         </div>
+
+        <input
+          v-if="!isSingleTimeStep(index)"
+          v-model.number="localSliders[index]"
+          class="w-100"
+          type="range"
+          :min="range.minBound"
+          :max="range.maxBound"
+          :disabled="isLiveTime(index)"
+        />
+
+        <!-- Live-follow controls (replace playback controls for live datasets) -->
         <div
-          v-if="
-            varinfo.dimInfo[index]?.longName || varinfo.dimInfo[index]?.units
-          "
-          class="has-text-right"
+          v-if="isLiveTime(index)"
+          class="is-flex is-align-items-center mt-2"
+          style="gap: 0.5rem"
         >
-          {{ varinfo.dimInfo[index]?.longName ?? "-" }} /
-          {{ varinfo.dimInfo[index]?.units ?? "-" }}
+          <span class="tag is-danger">
+            <span class="icon is-small">
+              <i class="fas fa-circle"></i>
+            </span>
+            <span>LIVE</span>
+          </span>
+          <button
+            class="button is-small"
+            :class="{ 'is-info': livePaused }"
+            type="button"
+            :title="livePaused ? 'Resume live updates' : 'Pause live updates'"
+            @click="store.toggleLivePaused()"
+          >
+            <span class="icon">
+              <i :class="livePaused ? 'fas fa-play' : 'fas fa-pause'"></i>
+            </span>
+          </button>
+          <span v-if="livePaused" class="is-size-7 has-text-grey">Paused</span>
+          <span v-else-if="!liveConnected" class="is-size-7 has-text-grey">
+            Reconnecting…
+          </span>
+        </div>
+
+        <div
+          v-if="dimensionAnimations[index]?.canAnimate"
+          class="is-flex is-justify-content-space-between is-align-items-center mt-2"
+        >
+          <span class="is-flex is-align-items-center" style="gap: 0.5rem">
+            <button
+              class="button is-small"
+              :class="{ 'is-info': dimensionAnimations[index].isPlaying }"
+              type="button"
+              :title="
+                (dimensionAnimations[index].isPlaying
+                  ? 'Pause animation'
+                  : 'Play animation') +
+                (isTimeDimension(index) ? ' (Space)' : '')
+              "
+              @click="dimensionAnimations[index].toggle"
+            >
+              <span class="icon">
+                <i
+                  :class="
+                    dimensionAnimations[index].isPlaying
+                      ? 'fas fa-pause'
+                      : 'fas fa-play'
+                  "
+                ></i>
+              </span>
+            </button>
+            <button
+              class="button is-small"
+              type="button"
+              title="Playback speed"
+              @click="dimensionAnimations[index].cycleSpeed"
+            >
+              {{ dimensionAnimations[index].speedLabel }}
+            </button>
+          </span>
+          <div
+            v-if="
+              varinfo.dimInfo[index]?.longName || varinfo.dimInfo[index]?.units
+            "
+            class="has-text-right"
+          >
+            {{ varinfo.dimInfo[index]?.longName ?? "-" }} /
+            {{ varinfo.dimInfo[index]?.units ?? "-" }}
+          </div>
         </div>
       </div>
     </template>
   </div>
   <div v-else></div>
 </template>
+
+<style lang="scss" scoped>
+.index-size {
+  font-size: 0.72rem;
+}
+.dim-input {
+  width: 100%;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, "SF Mono", monospace;
+  padding: 2px 4px;
+  line-height: 1.4;
+  color: inherit;
+  outline: none;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+</style>

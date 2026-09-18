@@ -1,0 +1,124 @@
+import { expect, it } from "vitest";
+
+import {
+  buildHealpixTexture,
+  getHealpixFaceRange,
+  getHealpixTextureIndex,
+} from "@/lib/grids/healpixCalculations.ts";
+import { buildHistogramSummary } from "@/utils/histogram.ts";
+
+it("splits a level-13 grid into contiguous 256 MiB float32 faces", () => {
+  const nside = 8192;
+  for (let face = 0; face < 12; face++) {
+    const range = getHealpixFaceRange(face, nside);
+    expect(range.start).toBe(face * nside ** 2);
+    expect(range.end).toBe((face + 1) * nside ** 2);
+    expect((range.end - range.start) * 4).toBe(256 * 1024 ** 2);
+  }
+});
+
+it("reads shuffled sparse cells from the correct face and skips empty faces", () => {
+  const cells = [191, 4, 0];
+  expect(getHealpixFaceRange(0, 4, cells)).toEqual({
+    start: 1,
+    end: 3,
+    cells: [4, 0],
+  });
+  expect(getHealpixFaceRange(1, 4, cells)).toEqual({
+    start: 0,
+    end: 0,
+    cells: [],
+  });
+  expect(getHealpixFaceRange(11, 4, cells)).toEqual({
+    start: 0,
+    end: 1,
+    cells: [191],
+  });
+});
+
+it("uses texture storage for exact nested-pixel hover values", () => {
+  const values = Float32Array.from({ length: 16 }, (_, pixel) => pixel);
+  const texture = buildHealpixTexture(values, 11, 4).dataValues;
+  expect([...texture]).toEqual([
+    0, 1, 4, 5, 2, 3, 6, 7, 8, 9, 12, 13, 10, 11, 14, 15,
+  ]);
+  for (let pixel = 0; pixel < 16; pixel++) {
+    expect(texture[getHealpixTextureIndex(pixel, 4)]).toBe(pixel);
+  }
+  expect(getHealpixTextureIndex(2 ** 24, 8192)).toBe(4096);
+  expect(getHealpixTextureIndex(8192 ** 2 - 1, 8192)).toBe(8192 ** 2 - 1);
+});
+
+// The dense build path interleaves through its own `spread` recurrence and
+// never calls getHealpixTextureIndex, so the two implementations of the
+// nested-pixel interleave are only cross-checked above at nside = 4 — two
+// bits per axis, too shallow to catch a drift in the recurrence. Pin them
+// together over a full face at a realistic depth (65,536 texels, sub-ms).
+it("places every dense texel where the pixel-index decoder says", () => {
+  const nside = 256;
+  const values = Float32Array.from({ length: nside ** 2 }, (_, pixel) => pixel);
+  const texture = buildHealpixTexture(values, 0, nside).dataValues;
+  const misplaced: number[] = [];
+  for (let pixel = 0; pixel < nside ** 2; pixel++) {
+    if (texture[getHealpixTextureIndex(pixel, nside)] !== pixel) {
+      misplaced.push(pixel);
+    }
+  }
+  expect(misplaced).toEqual([]);
+});
+
+it("builds histograms without copying values and preserves invalid-value handling", () => {
+  const values = new Float32Array([NaN, Infinity, -999, -888, -1, 0, 1, 2, 3]);
+  expect([...buildHistogramSummary(values, 0, 2, 2, -999, -888).bins]).toEqual([
+    2, 3,
+  ]);
+  expect([...buildHistogramSummary([5, NaN, 5], 5, 5, 2).bins]).toEqual([2, 0]);
+  expect([...buildHistogramSummary([NaN], NaN, NaN, 2).bins]).toEqual([0, 0]);
+  expect(values[0]).toBeNaN();
+  expect(values[2]).toBe(-999);
+});
+
+// Regression for the pre-webworker Float32Array unshuffle table
+// (getUnshuffleIndex, <= v1.5.0): pixel indices above 2^24 lost integer
+// precision, so neighboring pixels collapsed onto the same texture slot.
+// Pin the current mapping to an independent BigInt reference above that
+// threshold, up to the top of a level-13 (nside 8192) face.
+it("keeps texture indices exact above the historic 2^24 Float32 threshold", () => {
+  function referenceTextureIndex(pixel: bigint, nside: bigint) {
+    let x = 0n;
+    let y = 0n;
+    let bit = 1n;
+    for (let p = pixel; p > 0n; p >>= 2n) {
+      x += (p & 1n) * bit;
+      y += ((p >> 1n) & 1n) * bit;
+      bit <<= 1n;
+    }
+    return Number(y * nside + x);
+  }
+  const nside = 8192; // level 13: nside^2 = 2^26 cells per face
+  const pixels = [
+    2 ** 24 - 1,
+    2 ** 24,
+    2 ** 24 + 1,
+    2 ** 25 + 12345,
+    2 ** 26 - 2,
+    2 ** 26 - 1,
+  ];
+  const seen = new Set<number>();
+  for (const pixel of pixels) {
+    const index = getHealpixTextureIndex(pixel, nside);
+    expect(index).toBe(referenceTextureIndex(BigInt(pixel), BigInt(nside)));
+    seen.add(index);
+  }
+  // Float32 narrowing rounded neighbors together; exact indices are distinct.
+  expect(seen.size).toBe(pixels.length);
+});
+
+it("refuses dense textures whose unshuffle table would overflow", () => {
+  expect(() => buildHealpixTexture(new Float32Array(0), 0, 2 ** 17)).toThrow(
+    RangeError
+  );
+  expect(() => buildHealpixTexture(new Float32Array(0), 0, 2 ** 17)).toThrow(
+    /unshuffle table/
+  );
+});

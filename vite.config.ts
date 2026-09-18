@@ -1,12 +1,17 @@
 import { fileURLToPath, URL } from "url";
 
 import vue from "@vitejs/plugin-vue";
+import { defineConfig } from "vite";
 import glsl from "vite-plugin-glsl";
-import { defineConfig } from "vitest/config";
+import wasm from "vite-plugin-wasm";
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [vue(), glsl()],
+  plugins: [vue(), glsl(), wasm()],
+  worker: {
+    format: "es",
+    plugins: () => [wasm()],
+  },
   build: {
     sourcemap: true,
   },
@@ -25,6 +30,11 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["tests/**/*.test.ts"],
+    server: {
+      // Process healpix-geo through the vite pipeline in tests so
+      // vite-plugin-wasm resolves its .wasm import (node cannot natively).
+      deps: { inline: ["healpix-geo"] },
+    },
   },
   base: "./",
 });

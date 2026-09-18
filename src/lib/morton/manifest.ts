@@ -14,7 +14,7 @@ export const MANIFEST_NAME = "morton_hive.json";
 
 const HIVE_SPECS = ["morton-hive/1", "morton-hive/2", "morton-hive/3"] as const;
 
-export type HiveSpec = (typeof HIVE_SPECS)[number];
+type HiveSpec = (typeof HIVE_SPECS)[number];
 
 export interface HiveManifest {
   spec: HiveSpec;
