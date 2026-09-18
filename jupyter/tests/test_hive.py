@@ -571,6 +571,12 @@ class TestStorePostureDefaults:
     async def test_unset_traits_are_not_forwarded(self, jp_fetch, monkeypatch):
         import moczarr
 
+        # "Unset" means unset in the trait AND in the environment: both traits
+        # have an env fallback (config.py), so an exported GRIDLOOK_S3_REGION /
+        # GRIDLOOK_ANONYMOUS would otherwise redden this test.
+        monkeypatch.delenv("GRIDLOOK_S3_REGION", raising=False)
+        monkeypatch.delenv("GRIDLOOK_ANONYMOUS", raising=False)
+
         seen = {}
         real = moczarr.open_hive
 
