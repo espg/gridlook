@@ -52,7 +52,9 @@ async function setLocationHash() {
   const filenameToCheck = next.endsWith("/") ? next.slice(0, -1) : next;
   // Catalogs are expected to be JSON files, so if the input ends with .json, we
   // can try to fetch it as a catalog before setting the location hash
-  const isMaybeCatalog = filenameToCheck.endsWith(".json");
+  // (ignoring a query string: gridlook-jupyter's per-order catalog is
+  // /gridlook/hive/catalog.json?store=…)
+  const isMaybeCatalog = filenameToCheck.split(/[?#]/)[0].endsWith(".json");
 
   if (isMaybeCatalog) {
     checking.value = true;
@@ -82,6 +84,10 @@ async function setLocationHash() {
 }
 
 function onCatalogSelect(entry: TCatalogEntry) {
+  if (entry.cell_order !== undefined) {
+    // A manual pick of a ladder rung overrides the camera until re-enabled.
+    store.orderAuto = false;
+  }
   const catUrl = store.catalogUrl;
   location.hash =
     "#" + entry.url + (catUrl ? "::catalog=" + encodeURIComponent(catUrl) : "");
@@ -132,6 +138,7 @@ onMounted(async () => {
 
     <CatalogPanel
       v-if="store.catalogData"
+      v-model:order-auto="store.orderAuto"
       :title="store.catalogData.title"
       :datasets="store.catalogData.datasets"
       @select="onCatalogSelect"

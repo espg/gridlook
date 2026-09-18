@@ -268,6 +268,7 @@ function resetForSourceChange(resetStore: boolean) {
         "projectionCenter",
         "catalogData",
         "catalogUrl",
+        "orderAuto",
         "controlPanelVisible",
         "layerStack",
       ]);
@@ -275,6 +276,7 @@ function resetForSourceChange(resetStore: boolean) {
       store.resetExcept([
         "catalogData",
         "catalogUrl",
+        "orderAuto",
         "controlPanelVisible",
         "layerStack",
       ]);

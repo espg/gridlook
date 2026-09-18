@@ -211,6 +211,10 @@ export const useGlobeControlStore = defineStore("globeControl", {
       hoveredVectorFeature: undefined as THoveredVectorFeature | undefined,
       catalogUrl: undefined as string | undefined,
       catalogData: undefined as TCatalog | undefined,
+      // zoom-driven order selection on a catalog that is an order ladder
+      // (entries with cell_order): the camera picks the rung; a manual pick
+      // from the catalog turns it off until re-enabled
+      orderAuto: true,
       // layer panel stack, ordered top → bottom; order determines render order
       layerStack: builtinLayerStack() as TLayerEntry[],
       // incremented to request a GeoTIFF image-layer export of the current grid

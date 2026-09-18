@@ -10,6 +10,7 @@ import {
   type TGridHoverLookupResult,
 } from "./composables/gridHoverUtils.ts";
 import { useGridDataLoader } from "./composables/useGridDataLoader.ts";
+import { useOrderLadder } from "./composables/useOrderLadder.ts";
 import { useSharedGridLogic } from "./composables/useSharedGridLogic.ts";
 
 import { buildDimensionRangesAndIndices } from "@/lib/data/dimensionHandling.ts";
@@ -82,12 +83,14 @@ const { paramDimIndices, paramDimMinBounds, paramDimMaxBounds } =
 
 const {
   getScene,
+  getCamera,
   redraw,
   makeSnapshot,
   toggleRotate,
   applyCameraPreset,
   getDataVar,
   fetchDimensionDetails,
+  registerUpdateLOD,
   updateLandSeaMask,
   updateColormap,
   updateHistogram,
@@ -128,6 +131,18 @@ function updateMeshProjectionUniforms() {
     isSceneInMotion: isSceneInMotion.value,
   });
 }
+
+// Zoom-driven order selection: when the loaded catalog is an order ladder
+// and this source is one of its rungs, the camera picks the rung (per-render
+// hook; the swap itself waits for the scene to rest).
+const { updateOrderLOD, cancelOrderSwap } = useOrderLadder({
+  getCamera: () => getCamera(),
+  getViewportHeightPx: () => canvas.value?.clientHeight || window.innerHeight,
+  getSource: () => props.datasources?.levels[0]?.grid.store,
+  isSceneInMotion: () => isSceneInMotion.value,
+  isFlatProjection: () => projectionHelper.value.isFlat,
+});
+registerUpdateLOD(updateOrderLOD);
 
 const { datasourceUpdate } = useGridDataLoader({
   getDatasources: () => props.datasources,
@@ -788,6 +803,7 @@ onBeforeMount(async () => {
 });
 
 onBeforeUnmount(() => {
+  cancelOrderSwap();
   for (let ipix = 0; ipix < HEALPIX_NUMCHUNKS; ++ipix) {
     const mesh = mainMeshes[ipix];
     if (!mesh) {
