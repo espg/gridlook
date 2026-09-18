@@ -61,9 +61,16 @@ const GLOBE_URL_SYNC_MAP: TUrlSyncEntry[] = [
 
 const URL_PARAM_SYNC_MAP: TUrlSyncEntry[] = [
   {
-    key: "paramCameraState",
-    param: URL_PARAMETERS.CAMERA_STATE,
-    skip: (v) => !v,
+    key: "paramCameraPx",
+    param: URL_PARAMETERS.CAMERA_PX,
+  },
+  {
+    key: "paramCameraPy",
+    param: URL_PARAMETERS.CAMERA_PY,
+  },
+  {
+    key: "paramCameraAlt",
+    param: URL_PARAMETERS.CAMERA_ALT,
   },
   {
     key: "paramGridType",
@@ -81,7 +88,9 @@ export function useUrlSync() {
   const urlParameterStore = useUrlParameterStore();
 
   function changeURLHash(
-    entries: Partial<Record<TURLParameterValues | string, string | number>>
+    entries: Partial<
+      Record<TURLParameterValues | string, string | number | undefined>
+    >
   ) {
     const [resource, ...paramArray] = location.hash.substring(1).split("::");
     const paramString = paramArray.join("&");
@@ -136,6 +145,34 @@ export function useUrlSync() {
     );
   }
 
+  watch(
+    () => store.isStreamlineLayerEnabled(),
+    (enabled) => {
+      changeURLHash({
+        [URL_PARAMETERS.STREAMLINES]: enabled ? "true" : "",
+      });
+    }
+  );
+
+  watch(
+    () => [
+      store.streamlineSelection.automatic,
+      store.streamlineSelection.u,
+      store.streamlineSelection.v,
+    ],
+    () => {
+      const selection = store.streamlineSelection;
+      changeURLHash({
+        [URL_PARAMETERS.STREAMLINE_U]: selection.automatic
+          ? ""
+          : (selection.u ?? ""),
+        [URL_PARAMETERS.STREAMLINE_V]: selection.automatic
+          ? ""
+          : (selection.v ?? ""),
+      });
+    }
+  );
+
   // Debounced: user bounds
   watchDebounced(
     () => [userBoundsLow.value, userBoundsHigh.value],
@@ -162,8 +199,8 @@ export function useUrlSync() {
         return;
       }
       changeURLHash({
-        [URL_PARAMETERS.PROJECTION_CENTER_LAT]: center.lat,
-        [URL_PARAMETERS.PROJECTION_CENTER_LON]: center.lon,
+        [URL_PARAMETERS.LAT]: center.lat,
+        [URL_PARAMETERS.LON]: center.lon,
       });
     },
     { debounce: 200 }
@@ -193,6 +230,11 @@ export function useUrlSync() {
       const dimensionValues = {} as Record<string, string | number>;
       for (let i = 0; i < dimension.length; i++) {
         if (dimension[i] === null) {
+          continue;
+        }
+        // In live mode the time index is driven by polling and re-seeded from
+        // the server on load, so keep it out of the shareable URL.
+        if (store.live && dimension[i]?.name === "time") {
           continue;
         }
         const val = store.dimSlidersDisplay[i];

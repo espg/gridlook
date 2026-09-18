@@ -31,9 +31,7 @@ import { leafPath } from "@/lib/morton/hive.ts";
 import type { HiveManifest } from "@/lib/morton/manifest.ts";
 
 /** Convention version of coverage envelopes. */
-export const COVERAGE_SPEC = "morton-moc/1";
-/** Root coverage object name at a store/product root. */
-export const ROOT_COVERAGE_NAME = "coverage.moc";
+const COVERAGE_SPEC = "morton-moc/1";
 
 export interface RootCoverage {
   spec: string;

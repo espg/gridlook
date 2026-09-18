@@ -224,6 +224,63 @@ it("returns healpix from DGGS zarr convention metadata", async () => {
   await expect(detectGridType(sources)).resolves.toBe(GRID_TYPES.HEALPIX);
 });
 
+it("returns healpix from the morton DGGS zarr convention (issue 8)", async () => {
+  const sources = createSources();
+  vi.mocked(ZarrDataManager.getParentGroup).mockResolvedValue(
+    createGroup({
+      [ZarrMetadataAttributeName.ZARR_CONVENTIONS]: ["dggs", "morton-dggs"],
+      [ZarrMetadataAttributeName.DGGS]: {
+        name: "morton",
+        [ZarrMetadataAttributeName.REFINEMENT_LEVEL]: 8,
+        coordinate: "morton",
+      },
+    })
+  );
+
+  await expect(detectGridType(sources)).resolves.toBe(GRID_TYPES.HEALPIX);
+});
+
+it("returns error for an unsupported DGGS name", async () => {
+  const sources = createSources();
+  vi.mocked(ZarrDataManager.getParentGroup).mockResolvedValue(
+    createGroup({
+      [ZarrMetadataAttributeName.ZARR_CONVENTIONS]: ["dggs"],
+      [ZarrMetadataAttributeName.DGGS]: { name: "h3", coordinate: null },
+    })
+  );
+
+  await expect(detectGridType(sources)).resolves.toBe(GRID_TYPES.ERROR);
+});
+
+it("returns healpix from raw morton-hive leaf commit attrs (issue 8)", async () => {
+  // A raw hive leaf carries neither a zarr_conventions envelope nor a dggs
+  // block -- only the writer's morton_hive_commit attrs -- and its spatial
+  // dimension is "cells" (a packed uint64 morton coordinate), never lat/lon.
+  const sources = createSources(["time", "cells"]);
+  vi.mocked(ZarrDataManager.getParentGroup).mockResolvedValue(
+    createGroup({
+      // eslint-disable-next-line camelcase -- zarr attrs use snake_case keys
+      morton_hive_commit: { spec: "morton-hive/1", complete: true },
+    })
+  );
+
+  await expect(detectGridType(sources)).resolves.toBe(GRID_TYPES.HEALPIX);
+});
+
+it("ignores commit attrs that do not declare a morton-hive spec (issue 8)", async () => {
+  // The prong keys on the versioned spec value, not on the attribute name:
+  // an unrelated writer reusing the key must fall through to the other checks.
+  const sources = createSources(["time", "lat", "lon"]);
+  vi.mocked(ZarrDataManager.getParentGroup).mockResolvedValue(
+    createGroup({
+      // eslint-disable-next-line camelcase -- zarr attrs use snake_case keys
+      morton_hive_commit: { note: "not a hive commit block" },
+    })
+  );
+
+  await expect(detectGridType(sources)).resolves.toBe(GRID_TYPES.REGULAR);
+});
+
 it.each([[["time", "lat", "lon"]], [["time", "lat"]]])(
   "returns regular from dimension names %j",
   async (dimensionNames) => {

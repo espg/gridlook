@@ -44,7 +44,7 @@ def load_extension(serverapp):
         (escaped + r"/s3/([^/]+)/(.+)", S3ProxyHandler),
         # Phase 6d: the moczarr virtual store on the namespace phase 4 reserved —
         # an open_hive() product/AOI/window selection served as ONE flat zarr
-        # store (fabricated NESTED cell_ids included; see hive.py).
+        # store, native morton coordinate and all (see hive.py).
         (escaped + r"/hive/open", HiveOpenHandler),
         (escaped + r"/hive/([0-9a-f]{16})/(.+)", HiveViewHandler),
         (escaped + r"$", web.RedirectHandler, {"url": base + "/"}),

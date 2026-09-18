@@ -17,9 +17,20 @@ import {
 } from "vue";
 
 import type { THoverGeoPoint } from "./gridHoverUtils.ts";
-import type { GridCameraState, TCameraState } from "./useGridCameraState.ts";
+import {
+  altitudeToCameraDistance,
+  EARTH_RADIUS_METERS,
+  type TCameraState,
+  type TCameraUrlState,
+  type TGridCameraState,
+} from "./useGridCameraState.ts";
 import { useGridSnapshot } from "./useGridSnapshot.ts";
 
+import {
+  CAMERA_VERTICAL_FOV_DEGREES,
+  getCameraDistanceForVerticalSpan,
+  getVisibleVerticalSpan,
+} from "@/lib/camera/cameraSettings.ts";
 import { handleKeyDown } from "@/lib/camera/OrbitControlsAddOn.ts";
 import {
   isAzimuthalProjectionType,
@@ -40,10 +51,20 @@ type UseGridSceneOptions = {
   projectionHelper: ComputedRef<ProjectionHelper>;
   projectionCenter: Ref<TProjectionCenter | undefined>;
   controlPanelVisible: Ref<boolean>;
-  cameraState: GridCameraState;
+  cameraState: TGridCameraState;
   onMotionStateChange?: (isInMotion: boolean) => void;
   onReady?: () => void | Promise<void>;
 };
+
+const DEFAULT_PROJECTION_CENTER: TProjectionCenter = { lat: 0, lon: 0 };
+const PROJECTION_CENTER_PRECISION = 10_000;
+
+function roundProjectionCenter(value: number) {
+  return (
+    Math.round(value * PROJECTION_CENTER_PRECISION) /
+    PROJECTION_CENTER_PRECISION
+  );
+}
 
 /* eslint-disable-next-line max-lines-per-function */
 export function useGridScene(options: UseGridSceneOptions) {
@@ -103,9 +124,17 @@ export function useGridScene(options: UseGridSceneOptions) {
   const FLAT_CROP_Z_OFFSET = 0.06;
   const FLAT_BOUNDARY_STEP_DEGREES = 0.25;
   const TOUCH_PICK_TAP_MAX_DISTANCE_PX = 10;
+  // Overlay layers (coastlines, custom texture layers, streamline particles)
+  // render above the globe surface out to radius 1.006. The globe camera's
+  // near plane (0.1, see configureGlobeProjectionCamera) would clip through
+  // those layers once the camera gets closer than ~1.106, so the zoom floor
+  // needs headroom beyond that to keep them visible.
+  const GLOBE_MIN_CAMERA_DISTANCE = 1.12;
   let targetOffset = 0;
-  let isInitialLoad = true;
   let isInMotion = false;
+  let updatingProjectionCenterFromCamera = false;
+  let lastAnimationTime: number | undefined = undefined;
+  const animationCallbacks = new Set<(deltaSeconds: number) => void>();
 
   function setMotionState(next: boolean) {
     if (isInMotion === next) {
@@ -137,6 +166,18 @@ export function useGridScene(options: UseGridSceneOptions) {
 
   function registerUpdateLOD(func: () => void) {
     updateLOD = func;
+  }
+
+  function registerAnimationCallback(callback: (deltaSeconds: number) => void) {
+    animationCallbacks.add(callback);
+    lastAnimationTime = undefined;
+    animationLoop();
+    return () => {
+      animationCallbacks.delete(callback);
+      if (animationCallbacks.size === 0) {
+        lastAnimationTime = undefined;
+      }
+    };
   }
 
   function redraw() {
@@ -507,9 +548,11 @@ export function useGridScene(options: UseGridSceneOptions) {
 
     // Compute the tightest distance that keeps the full projection visible,
     // accounting for the camera aspect ratio.
-    const vHalfFov = THREE.MathUtils.degToRad((cam.fov ?? 45) / 2);
+    const vHalfFov = THREE.MathUtils.degToRad(
+      (cam.fov ?? CAMERA_VERTICAL_FOV_DEGREES) / 2
+    );
     const hHalfFov = Math.atan(Math.tan(vHalfFov) * cam.aspect);
-    const zForHeight = bounds.height / 2 / Math.tan(vHalfFov);
+    const zForHeight = getCameraDistanceForVerticalSpan(bounds.height, cam.fov);
     const zForWidth = bounds.width / 2 / Math.tan(hHalfFov);
     const targetDistance = Math.max(zForHeight, zForWidth);
 
@@ -546,7 +589,9 @@ export function useGridScene(options: UseGridSceneOptions) {
   ) {
     // Compute the tightest distance at which the globe (radius 1) still fits
     // fully within the viewport on both axes, with a small 5 % margin.
-    const vHalfFov = THREE.MathUtils.degToRad((cam.fov ?? 7.5) / 2);
+    const vHalfFov = THREE.MathUtils.degToRad(
+      (cam.fov ?? CAMERA_VERTICAL_FOV_DEGREES) / 2
+    );
     const hHalfFov = Math.atan(Math.tan(vHalfFov) * cam.aspect);
     const minHalfFov = Math.min(vHalfFov, hHalfFov);
     const targetDistance = 1.05 / Math.sin(minHalfFov);
@@ -564,10 +609,86 @@ export function useGridScene(options: UseGridSceneOptions) {
       MIDDLE: THREE.MOUSE.DOLLY,
       RIGHT: THREE.MOUSE.PAN,
     };
-    controls.minDistance = 1.1;
+    controls.minDistance = GLOBE_MIN_CAMERA_DISTANCE;
     controls.maxDistance = 1000;
-    cam.position.set(targetDistance, 0, 0);
+    applyProjectionCenterToGlobeCamera(cam, controls, targetDistance);
+  }
+
+  function getProjectionCenterCameraPosition(distance: number) {
+    const center = projectionCenter.value ?? DEFAULT_PROJECTION_CENTER;
+    const latRad = THREE.MathUtils.degToRad(center.lat);
+    const lonRad = THREE.MathUtils.degToRad(center.lon);
+
+    return new THREE.Vector3(
+      Math.cos(latRad) * Math.cos(lonRad),
+      Math.cos(latRad) * Math.sin(lonRad),
+      Math.sin(latRad)
+    ).multiplyScalar(distance);
+  }
+
+  function applyProjectionCenterToGlobeCamera(
+    cam: THREE.PerspectiveCamera,
+    controls: OrbitControls,
+    distance: number
+  ) {
+    cam.position.copy(
+      getProjectionCenterCameraPosition(
+        Math.max(distance, controls.minDistance)
+      )
+    );
     controls.target.set(0, 0, 0);
+    cam.lookAt(controls.target);
+    controls.update();
+  }
+
+  function syncProjectionCenterFromCamera(cam: THREE.PerspectiveCamera) {
+    const center = ProjectionHelper.cartesianToLatLon(
+      cam.position.x,
+      cam.position.y,
+      cam.position.z
+    );
+    const nextCenter = {
+      lat: roundProjectionCenter(Math.max(-90, Math.min(90, center.lat))),
+      lon: roundProjectionCenter(
+        ProjectionHelper.normalizeLongitude(center.lon)
+      ),
+    };
+    const currentCenter = projectionCenter.value ?? DEFAULT_PROJECTION_CENTER;
+    if (
+      currentCenter.lat === nextCenter.lat &&
+      currentCenter.lon === nextCenter.lon
+    ) {
+      return;
+    }
+
+    updatingProjectionCenterFromCamera = true;
+    projectionCenter.value = nextCenter;
+    queueMicrotask(() => {
+      updatingProjectionCenterFromCamera = false;
+    });
+  }
+
+  function applyUrlCameraState(
+    cam: THREE.PerspectiveCamera,
+    controls: OrbitControls,
+    state: TCameraUrlState
+  ) {
+    const distance = Math.max(
+      altitudeToCameraDistance(state.alt, projectionHelper.value.isFlat),
+      controls.minDistance
+    );
+    if (projectionHelper.value.isFlat) {
+      cam.quaternion.identity();
+      cam.rotation.set(0, 0, 0);
+      const x = state.px / EARTH_RADIUS_METERS;
+      const y = state.py / EARTH_RADIUS_METERS;
+      cam.position.set(x, y, distance);
+      controls.target.set(x, y, 0);
+      applyCameraTarget(cam, controls);
+      return;
+    }
+
+    applyProjectionCenterToGlobeCamera(cam, controls, distance);
   }
 
   function applyCameraTarget(
@@ -584,20 +705,13 @@ export function useGridScene(options: UseGridSceneOptions) {
     cam: THREE.PerspectiveCamera,
     controls: OrbitControls
   ) {
-    if (isInitialLoad) {
-      const state = cameraState.decodeCameraFromURL();
-      if (state) {
-        cameraState.applyCameraState(cam, state);
-        if (projectionHelper.value.isFlat) {
-          controls.target.set(cam.position.x, cam.position.y, 0);
-        }
-        controls.update();
-      }
-      isInitialLoad = false;
+    const state = cameraState.decodeCameraFromURL();
+    if (state) {
+      applyUrlCameraState(cam, controls, state);
       return;
     }
 
-    cameraState.encodeCameraToURL(cam);
+    cameraState.encodeCameraToURL(cam, projectionHelper.value.isFlat);
   }
 
   function configureCameraForProjection() {
@@ -644,9 +758,10 @@ export function useGridScene(options: UseGridSceneOptions) {
       controls.target.set(cam.position.x, cam.position.y, 0);
     } else {
       controls.target.set(0, 0, 0);
+      syncProjectionCenterFromCamera(cam);
     }
     controls.update();
-    cameraState.encodeCameraToURL(cam);
+    cameraState.encodeCameraToURL(cam, projectionHelper.value.isFlat);
     redraw();
   }
 
@@ -654,7 +769,7 @@ export function useGridScene(options: UseGridSceneOptions) {
     scene = new THREE.Scene();
     const center = new THREE.Vector3();
     camera = new THREE.PerspectiveCamera(
-      7.5,
+      CAMERA_VERTICAL_FOV_DEGREES,
       window.innerWidth / window.innerHeight,
       0.1,
       1000
@@ -669,7 +784,7 @@ export function useGridScene(options: UseGridSceneOptions) {
     camera.lookAt(center);
 
     orbitControls = new OrbitControls(camera, renderer.domElement);
-    orbitControls.minDistance = 1.1;
+    orbitControls.minDistance = GLOBE_MIN_CAMERA_DISTANCE;
     orbitControls.enablePan = false;
 
     updateBaseSurface();
@@ -818,32 +933,79 @@ export function useGridScene(options: UseGridSceneOptions) {
     animationLoop();
   }
 
-  function animationLoop() {
-    cancelAnimationFrame(frameId.value);
-
-    // Rotate 2D projection center longitude
-    if (store.isRotating && projectionHelper.value.isFlat) {
-      const center = projectionCenter.value ?? { lat: 0, lon: 0 };
-      const newLon = ProjectionHelper.normalizeLongitude(center.lon - 0.3);
-      projectionCenter.value = { lat: center.lat, lon: newLon };
+  function syncProjectionCenterAfterCameraChange(
+    cam: THREE.PerspectiveCamera | undefined,
+    controlsUpdated: boolean,
+    userInteractionActive: boolean
+  ) {
+    if (
+      cam &&
+      !projectionHelper.value.isFlat &&
+      (controlsUpdated || userInteractionActive || store.isRotating)
+    ) {
+      syncProjectionCenterFromCamera(cam);
     }
+  }
 
-    // Update rotation speed based on camera distance
-    if (!projectionHelper.value.isFlat && orbitControls && camera) {
-      const distance = camera.position.length();
-      const normalizedDistance = distance / 30;
-      orbitControls.rotateSpeed = Math.min(1, 0.01 + normalizedDistance ** 2);
+  function runAnimationCallbacks(timestamp: number) {
+    const deltaSeconds = Math.min(
+      Math.max((timestamp - (lastAnimationTime ?? timestamp)) / 1000, 0),
+      0.1
+    );
+    lastAnimationTime = timestamp;
+    for (const callback of animationCallbacks) {
+      callback(deltaSeconds);
     }
+  }
 
-    const controlsUpdated = render();
-    const userInteractionActive = mouseDown || wheelActive;
+  function updateRotationSpeed() {
+    if (projectionHelper.value.isFlat || !orbitControls || !camera) {
+      return;
+    }
+    // Normalize by the visible span so navigation sensitivity remains tied to
+    // apparent zoom instead of changing when the camera lens changes.
+    const normalizedDistance =
+      getVisibleVerticalSpan(camera.position.length(), camera.fov) / 4;
+    orbitControls.rotateSpeed = Math.min(1, 0.01 + normalizedDistance ** 2);
+  }
+
+  function updateFlatProjectionRotation() {
+    if (!store.isRotating || !projectionHelper.value.isFlat) {
+      return;
+    }
+    const center = projectionCenter.value ?? DEFAULT_PROJECTION_CENTER;
+    const newLon = ProjectionHelper.normalizeLongitude(center.lon - 0.3);
+    projectionCenter.value = { lat: center.lat, lon: newLon };
+  }
+
+  function syncMotionState(
+    controlsUpdated: boolean,
+    userInteractionActive: boolean
+  ) {
     setMotionState(
       userInteractionActive || store.isRotating || controlsUpdated
     );
+  }
+
+  function animationLoop(timestamp = performance.now()) {
+    cancelAnimationFrame(frameId.value);
+    runAnimationCallbacks(timestamp);
+
+    updateFlatProjectionRotation();
+    updateRotationSpeed();
+
+    const controlsUpdated = render();
+    const userInteractionActive = mouseDown || wheelActive;
+    syncMotionState(controlsUpdated, userInteractionActive);
     if (lastPointerPosition) {
       refreshHover();
     }
     const cam = getCamera();
+    syncProjectionCenterAfterCameraChange(
+      cam,
+      controlsUpdated,
+      userInteractionActive
+    );
     if (!userInteractionActive && !store.isRotating) {
       if (controlsUpdated) {
         // Controls are still moving (damping draining) – reset idle counter.
@@ -852,21 +1014,26 @@ export function useGridScene(options: UseGridSceneOptions) {
         idleFrameCount++;
       }
       if (cam && isPresenterActive.value && !store.isRotating) {
-        cameraState.encodeCameraToURL(cam);
+        cameraState.encodeCameraToURL(cam, projectionHelper.value.isFlat);
       }
       if (idleFrameCount >= IDLE_FRAMES_BEFORE_STOP) {
-        // Damping is fully drained – safe to stop the loop.
-        idleFrameCount = 0;
+        // Save the settled camera even when layer animations keep running.
         setMotionState(false);
-        if (cam) {
-          cameraState.debouncedEncodeCameraToURL(cam);
+        if (cam && idleFrameCount === IDLE_FRAMES_BEFORE_STOP) {
+          cameraState.debouncedEncodeCameraToURL(
+            cam,
+            projectionHelper.value.isFlat
+          );
         }
-        return;
+        if (animationCallbacks.size === 0) {
+          idleFrameCount = 0;
+          return;
+        }
       }
     } else {
       idleFrameCount = 0;
       if (isPresenterActive.value && cam && userInteractionActive) {
-        cameraState.encodeCameraToURL(cam);
+        cameraState.encodeCameraToURL(cam, projectionHelper.value.isFlat);
       }
     }
     frameId.value = requestAnimationFrame(animationLoop);
@@ -1107,6 +1274,7 @@ export function useGridScene(options: UseGridSceneOptions) {
       cancelAnimationFrame(frameId.value);
       frameId.value = 0;
     }
+    animationCallbacks.clear();
     orbitControls?.dispose();
     orbitControls = undefined;
     cleanupSurface(baseSurface);
@@ -1144,7 +1312,29 @@ export function useGridScene(options: UseGridSceneOptions) {
   );
 
   watch(
-    () => urlParameterStore.paramCameraState,
+    () => projectionCenter.value,
+    () => {
+      if (projectionHelper.value.isFlat || updatingProjectionCenterFromCamera) {
+        return;
+      }
+      const cam = getCamera();
+      const controls = getOrbitControls();
+      if (!cam || !controls) {
+        return;
+      }
+      applyProjectionCenterToGlobeCamera(cam, controls, cam.position.length());
+      cameraState.encodeCameraToURL(cam, projectionHelper.value.isFlat);
+      redraw();
+    },
+    { deep: true }
+  );
+
+  watch(
+    () => [
+      urlParameterStore.paramCameraPx,
+      urlParameterStore.paramCameraPy,
+      urlParameterStore.paramCameraAlt,
+    ],
     () => {
       // This watcher is only relevant in presenter display mode where camera state is synced via URL.
       // The controller display writes the URL on every camera change, and the
@@ -1161,13 +1351,7 @@ export function useGridScene(options: UseGridSceneOptions) {
       if (!state) {
         return;
       }
-      cameraState.applyCameraState(cam, state);
-      if (projectionHelper.value.isFlat) {
-        controls.target.set(cam.position.x, cam.position.y, 0);
-      } else {
-        controls.target.set(0, 0, 0);
-      }
-      controls.update();
+      applyUrlCameraState(cam, controls, state);
       redraw();
     }
   );
@@ -1211,6 +1395,7 @@ export function useGridScene(options: UseGridSceneOptions) {
     makeSnapshot,
     applyCameraPreset,
     registerUpdateLOD,
+    registerAnimationCallback,
     updateBaseSurface,
     configureCameraForProjection,
     hoveredGeoPoint,
