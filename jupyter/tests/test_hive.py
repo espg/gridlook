@@ -34,6 +34,11 @@ SERC = TESTDATA / "serc_hive"
 GOLDEN = TESTDATA / "serc_cell_ids_golden.npy"
 #: An order-6 stamped shard of the fixture (the SERC site itself).
 SERC_SHARD = "4331422"
+#: A zagg-pyramid/1 store (cell order 8, shard order 6) whose overview nodes at
+#: orders 4 and 2 are materialized — cell orders 6 and 4 in the level table.
+OVERVIEW = TESTDATA / "overview_hive" / "atl06"
+#: A store whose only data variables are ragged t-digests (nothing renderable).
+RAGGED = TESTDATA / "multiproduct_hive" / "atl06_ragged"
 
 pytestmark = pytest.mark.skipif(
     not (SERC / "morton_hive.json").exists(),
@@ -48,8 +53,14 @@ def hive_config():
     return {"local_hive_store_roots": [str(TESTDATA)]}
 
 
-async def _open(jp_fetch, **params):
-    resp = await jp_fetch("gridlook", "hive", "open", params={"store": str(SERC), **params})
+async def _open(jp_fetch, store=SERC, **params):
+    resp = await jp_fetch("gridlook", "hive", "open", params={"store": str(store), **params})
+    assert resp.code == 200
+    return json.loads(resp.body)
+
+
+async def _root_meta(jp_fetch, view):
+    resp = await jp_fetch("gridlook", "hive", view, "zarr.json")
     assert resp.code == 200
     return json.loads(resp.body)
 
@@ -355,3 +366,214 @@ class TestConcurrentBuildBound:
         assert len({o["view"] for o in outs}) == 4
         for o in outs:
             assert o["cells"] > 0
+
+
+class TestPyramidLevel:
+    """``cell_order=`` opens ONE pyramid level through ``moczarr.open_level``."""
+
+    async def test_native_order_is_a_distinct_level_view(self, jp_fetch):
+        leaf = await _open(jp_fetch)
+        level = await _open(jp_fetch, cell_order="8")
+        # Same cells (the native order IS the source level), separate view: the
+        # level rides the id so leaf and level views of one selection coexist.
+        assert level["view"] != leaf["view"]
+        assert level["cells"] == leaf["cells"]
+        assert level["cell_order"] == 8
+        attrs = (await _root_meta(jp_fetch, level["view"]))["attributes"]
+        assert attrs["zagg_level"]["cell_order"] == 8
+        assert attrs["zagg_level"]["artifact"] == "source"
+        assert "zagg_level" not in (await _root_meta(jp_fetch, leaf["view"]))["attributes"]
+
+    @pytest.mark.parametrize("cell_order,node", [(6, 4), (4, 2)])
+    async def test_overview_rung_serves_the_level(self, jp_fetch, cell_order, node):
+        from moczarr import open_level
+
+        out = await _open(jp_fetch, store=OVERVIEW, cell_order=str(cell_order))
+        ds = open_level(str(OVERVIEW), cell_order, xr_kwargs={"chunks": None})
+        assert out["cells"] == ds.sizes["cells"]
+        assert out["cell_order"] == cell_order
+        attrs = (await _root_meta(jp_fetch, out["view"]))["attributes"]
+        level = attrs["zagg_level"]
+        assert (level["cell_order"], level["order"], level["artifact"]) == (
+            cell_order,
+            node,
+            "overview",
+        )
+        assert level["spec"] == "zagg-pyramid/1"
+        # The shim declares the LEVEL's order, so the SPA sizes nside for it.
+        assert attrs["dggs"]["refinement_level"] == cell_order
+        ids = await _fetch_array(jp_fetch, out["view"], "cell_ids", "<u8")
+        assert np.array_equal(ids, ds["cell_ids"].values.astype(np.uint64))
+        assert set(ids.tolist()) < set(range(12 * 4**cell_order))
+
+    async def test_levels_of_one_store_are_distinct_views(self, jp_fetch):
+        views = {
+            (await _open(jp_fetch, store=OVERVIEW, cell_order=o))["view"] for o in ("8", "6", "4")
+        }
+        assert len(views) == 3
+
+    @pytest.mark.parametrize("bad", ["abc", "-1", "30", "8.0", ""])
+    async def test_malformed_cell_order_400(self, jp_fetch, bad):
+        if bad == "":
+            # An empty parameter is "absent": the leaf view opens.
+            assert (await _open(jp_fetch, cell_order=bad))["cell_order"] == 8
+            return
+        with pytest.raises(HTTPClientError) as e:
+            await _open(jp_fetch, cell_order=bad)
+        assert e.value.code == 400
+        assert b"not a pyramid level" in e.value.response.body
+
+    async def test_undeclared_cell_order_400(self, jp_fetch):
+        with pytest.raises(HTTPClientError) as e:
+            await _open(jp_fetch, cell_order="5")
+        assert e.value.code == 400
+        # moczarr names the store's levels in its refusal; it reaches the caller.
+        assert b"[8]" in e.value.response.body
+
+
+class TestConsolidatedMetadata:
+    """The SPA enumerates variables ONLY through consolidated metadata."""
+
+    @pytest.mark.parametrize("params", [{}, {"cell_order": "8"}])
+    async def test_root_zarr_json_lists_every_array(self, jp_fetch, params):
+        out = await _open(jp_fetch, **params)
+        meta = await _root_meta(jp_fetch, out["view"])
+        listed = meta["consolidated_metadata"]["metadata"]
+        assert set(listed) == {
+            "cell_ids",
+            "morton",
+            "count",
+            "h_max",
+            "h_mean",
+            "h_min",
+            "h_q25",
+            "h_q50",
+            "h_q75",
+            "h_sigma",
+            "h_variance",
+        }
+        for name, entry in listed.items():
+            assert entry["node_type"] == "array"
+            # The inline copy is the same document the array's own key serves.
+            own = json.loads(
+                (await jp_fetch("gridlook", "hive", out["view"], f"{name}/zarr.json")).body
+            )
+            assert own["data_type"] == entry["data_type"]
+            assert own["shape"] == entry["shape"]
+
+
+class TestRenderableVariables:
+    """Only numeric <=32-bit data variables are served; coordinates always are."""
+
+    def test_filter_keeps_castable_dtypes_only(self):
+        xr = pytest.importorskip("xarray")
+
+        from gridlook_jupyter.hive import renderable_variables
+
+        n = 4
+        ds = xr.Dataset(
+            {
+                "count": ("cells", np.zeros(n, np.int32)),
+                "h_mean": ("cells", np.zeros(n, np.float32)),
+                "flag": ("cells", np.zeros(n, np.uint8)),
+                "h_tdigest_signal": ("cells", np.array([b""] * n, dtype=object)),
+                "composition": ("cells", np.zeros(n, np.uint64)),
+                "wide": ("cells", np.zeros(n, np.int64)),
+                "h_mean64": ("cells", np.zeros(n, np.float64)),
+                "label": ("cells", np.array(["a"] * n)),
+            },
+            coords={"morton": ("cells", np.zeros(n, np.uint64))},
+        )
+        assert renderable_variables(ds) == ["count", "h_mean", "flag"]
+
+    async def test_view_drops_digests_and_composition_keeps_coords(self, jp_fetch, monkeypatch):
+        import moczarr
+
+        real = moczarr.open_hive
+
+        def mixed(root, **kwargs):
+            ds = real(root, **kwargs)
+            n = ds.sizes["cells"]
+            ds["h_tdigest_signal"] = ("cells", np.array([b"\x00"] * n, dtype=object))
+            ds["h_tdigest_signal_locations"] = ("cells", np.array([b"\x00"] * n, dtype=object))
+            ds["composition"] = ("cells", np.zeros(n, np.uint64))
+            ds["wide"] = ("cells", np.zeros(n, np.int64))
+            return ds
+
+        monkeypatch.setattr(moczarr, "open_hive", mixed)
+        out = await _open(jp_fetch, aoi=SERC_SHARD)
+        listed = set((await _root_meta(jp_fetch, out["view"]))["consolidated_metadata"]["metadata"])
+        assert not any(name.startswith("h_tdigest") for name in listed)
+        assert "composition" not in listed
+        assert "wide" not in listed
+        assert {"cell_ids", "morton", "count", "h_mean"} <= listed
+        # The coordinates are served as uint64 words/ids, not squeezed to 32 bits.
+        for coord in ("cell_ids", "morton"):
+            resp = await jp_fetch("gridlook", "hive", out["view"], f"{coord}/zarr.json")
+            assert json.loads(resp.body)["data_type"] == "uint64"
+
+    async def test_nothing_renderable_4xx(self, jp_fetch):
+        with pytest.raises(HTTPClientError) as e:
+            await _open(jp_fetch, store=RAGGED)
+        assert e.value.code == 400
+        assert b"no renderable" in e.value.response.body
+
+
+class TestStorePosture:
+    """The proxy's region/anonymous traits reach moczarr's store construction."""
+
+    @pytest.fixture
+    def hive_config(self):
+        return {
+            "local_hive_store_roots": [str(TESTDATA)],
+            "region": "us-west-2",
+            "anonymous": True,
+        }
+
+    async def test_open_hive_receives_region_and_anonymous(self, jp_fetch, monkeypatch):
+        import moczarr
+
+        seen = {}
+        real = moczarr.open_hive
+
+        def spy(root, **kwargs):
+            seen.update(kwargs)
+            return real(root, **kwargs)
+
+        monkeypatch.setattr(moczarr, "open_hive", spy)
+        await _open(jp_fetch, aoi=SERC_SHARD)
+        assert seen["region"] == "us-west-2"
+        assert seen["anonymous"] is True
+
+    async def test_open_level_receives_region_and_anonymous(self, jp_fetch, monkeypatch):
+        import moczarr
+
+        seen = {}
+        real = moczarr.open_level
+
+        def spy(root, cell_order, **kwargs):
+            seen.update(kwargs)
+            return real(root, cell_order, **kwargs)
+
+        monkeypatch.setattr(moczarr, "open_level", spy)
+        await _open(jp_fetch, cell_order="8")
+        assert seen["region"] == "us-west-2"
+        assert seen["anonymous"] is True
+
+
+class TestStorePostureDefaults:
+    async def test_unset_traits_are_not_forwarded(self, jp_fetch, monkeypatch):
+        import moczarr
+
+        seen = {}
+        real = moczarr.open_hive
+
+        def spy(root, **kwargs):
+            seen.update(kwargs)
+            return real(root, **kwargs)
+
+        monkeypatch.setattr(moczarr, "open_hive", spy)
+        await _open(jp_fetch, aoi=SERC_SHARD)
+        # moczarr keeps its own credential resolution when nothing is configured.
+        assert "region" not in seen
+        assert "anonymous" not in seen
