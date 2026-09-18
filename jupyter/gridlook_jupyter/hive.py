@@ -16,6 +16,12 @@ parity evidence (``tests/data/shim_parity_serc.json`` +
 ``tests/unit/lib/morton/shimParity.test.ts``) pins that the native decode
 reproduces exactly the render inputs the shim used to serve.
 
+With ``cell_order=`` the open runs moczarr's ``open_level()`` instead, serving
+ONE stamped pyramid level of the store (espg/gridlook#10's zoom-driven order
+selection reads a level per zoom); every view drops the variables the renderer
+cannot cast (:func:`renderable_variables`) and is written with consolidated
+metadata, which is the only way the SPA enumerates a store's variables.
+
 Materialize-on-open, deliberately: views are AOI-scale and bounded
 (``GridlookProxy.hive_max_cells``, 413 beyond), materializing keeps this module
 free of zarr chunk/codec arithmetic (xarray writes the store; we serve opaque
@@ -165,6 +171,9 @@ class HiveView:
     product: str | None
     window: str | None
     aoi: tuple[str, ...] | None = field(default=None)
+    #: Pyramid level (a manifest ``cell_orders`` entry) when the view is a ladder
+    #: rung opened via ``moczarr.open_level`` rather than the native leaf cells.
+    level: int | None = field(default=None)
 
 
 class HiveViewCache:
@@ -182,7 +191,11 @@ class HiveViewCache:
 
     @staticmethod
     def view_id(
-        store_url: str, product: str | None, window: str | None, aoi: tuple[str, ...] | None
+        store_url: str,
+        product: str | None,
+        window: str | None,
+        aoi: tuple[str, ...] | None,
+        level: int | None = None,
     ) -> str:
         # Canonicalize so selections that name the SAME data collapse to one id
         # (one materialization, one LRU slot): strip the store's trailing slash
@@ -191,7 +204,7 @@ class HiveViewCache:
         # don't change the cover).
         aoi_canon = sorted({int(t) for t in aoi}) if aoi else None
         payload = json.dumps(
-            [store_url.rstrip("/"), product or None, window or None, aoi_canon],
+            [store_url.rstrip("/"), product or None, window or None, aoi_canon, level],
             separators=(",", ":"),
         )
         return hashlib.sha256(payload.encode()).hexdigest()[:_VIEW_ID_HEX]
@@ -266,6 +279,28 @@ def _check_renderable(morton_words, cell_order: int) -> None:
         raise ViewNotFloat64ExactError(high, int(cell_order))
 
 
+def renderable_variables(ds) -> list[str]:
+    """The data variables of *ds* the SPA can render, in dataset order.
+
+    The SPA renders a variable by casting it to Float32
+    (``castDataVarToFloat32``, ``Float32Array.from(rawData)``), so a view
+    serves floats of any width plus integers of at most 32 bits.
+    ``Float32Array.from`` handles a ``Float64Array`` fine; what it throws on is
+    the BigInt-backed arrays zarrita hands back for int64/uint64 ("Cannot
+    convert a BigInt value to a number") — the packed ``composition`` word and
+    any int64. Ragged t-digests are bytes the browser never reads (and at CA
+    scale the bulk of a level — they turned a whole-store open into a GB-scale
+    crawl); bool, datetime64 and strings are dropped with them, as zarrita
+    gives those non-numeric element types. The ``morton`` coordinate is not a
+    data variable and is kept by the caller — the browser decodes it itself.
+    """
+    return [
+        v
+        for v in ds.data_vars
+        if ds[v].dtype.kind == "f" or (ds[v].dtype.kind in "iu" and ds[v].dtype.itemsize <= 4)
+    ]
+
+
 def build_view(
     root: str,
     *,
@@ -274,23 +309,55 @@ def build_view(
     aoi: tuple[str, ...] | None,
     window: str | None,
     max_cells: int,
+    level: int | None = None,
+    region: str | None = None,
+    anonymous: bool = False,
 ) -> HiveView:
     """Open a hive selection and materialize it as an in-memory zarr store.
 
     Synchronous and potentially slow (S3 GETs, concat) — the handler runs it
-    on the executor, off the event loop.
+    on the executor, off the event loop. ``region``/``anonymous`` are the
+    proxy's S3 posture, forwarded to moczarr's store construction so a public
+    bucket needs no ``AWS_*`` environment (a local path ignores both).
     """
     import zarr
     from moczarr import open_hive
 
-    ds = open_hive(
-        root,
-        aoi=list(aoi) if aoi else None,
-        window=window,
-        # Native serve (issue #8): the browser decodes the packed-u64 morton
-        # coordinate itself — no fabricated NESTED cell_ids view.
-        fabricate_cell_ids=False,
-    )
+    store_kwargs: dict[str, Any] = {}
+    if region:
+        store_kwargs["region"] = region
+    if anonymous:
+        store_kwargs["anonymous"] = True
+    if level is None:
+        ds = open_hive(
+            root,
+            aoi=list(aoi) if aoi else None,
+            window=window,
+            # Native serve (issue #8): the browser decodes the packed-u64 morton
+            # coordinate itself — no fabricated NESTED cell_ids view.
+            fabricate_cell_ids=False,
+            **store_kwargs,
+        )
+    else:
+        from moczarr import open_level
+
+        # A pyramid rung (zagg-pyramid/2 ladder or /1 overview): resolution is
+        # the reader-facing axis, moczarr dispatches the artifact kind.
+        # chunks=None keeps xarray's own lazy arrays (cubed/dask-free).
+        ds = open_level(
+            root,
+            int(level),
+            aoi=list(aoi) if aoi else None,
+            window=window,
+            fabricate_cell_ids=False,
+            xr_kwargs={"chunks": None},
+            **store_kwargs,
+        )
+        if ds is None:
+            raise ValueError(f"level {level} has no stamped artifact in this store")
+    ds = ds[renderable_variables(ds)]
+    if not ds.data_vars:
+        raise ValueError("no renderable (float, or <=32-bit integer) variable in this selection")
     dim = ds["morton"].dims[0] if "morton" in ds.coords else "cells"
     cells = int(ds.sizes.get(dim, 0))
     if cells == 0:
@@ -299,22 +366,31 @@ def build_view(
         raise ViewEmptyError(aoi, window)
     if cells > max_cells:
         raise ViewTooLargeError(cells)
-    cell_order = int(ds.attrs["morton_hive"]["cell_order"])
+    # A level carries its own order in the zagg_level record; a source open has
+    # no level record and the hive block carries it.
+    order = (ds.attrs.get("zagg_level") or {}).get("cell_order")
+    if order is None:
+        order = ds.attrs["morton_hive"]["cell_order"]
+    cell_order = int(order)
     _check_renderable(ds["morton"].values, cell_order)
     mem = zarr.storage.MemoryStore()
     # No compression: objects are served whole over hub-local HTTP, views are
     # session-scoped, and codec-free chunks keep the served bytes trivially
     # predictable (the tests compare them raw).
     encoding = {name: {"compressors": None} for name in list(ds.data_vars) + list(ds.coords)}
-    ds.to_zarr(mem, mode="w", consolidated=False, zarr_format=3, encoding=encoding)
+    # Consolidated: the SPA enumerates a store's variables ONLY through
+    # consolidated metadata (zarrita withConsolidatedMetadata, v2 .zmetadata or
+    # the v3 zarr.json block) — an unconsolidated v3 view is unlistable to it.
+    ds.to_zarr(mem, mode="w", consolidated=True, zarr_format=3, encoding=encoding)
     return HiveView(
         store=mem,
         cells=cells,
-        cell_order=int(ds.attrs["morton_hive"]["cell_order"]),
+        cell_order=cell_order,
         store_url=store_url,
         product=product,
         window=window,
         aoi=aoi,
+        level=level,
     )
 
 
@@ -386,10 +462,14 @@ def _local_path_allowed(proxy: GridlookProxy, store_url: str) -> bool:
 
 
 class HiveOpenHandler(PlainTextErrorMixin, JupyterHandler):
-    """``GET /gridlook/hive/open?store=…[&product=…][&aoi=…][&window=…]``.
+    """``GET /gridlook/hive/open?store=…[&product=…][&aoi=…][&window=…][&cell_order=…]``.
 
     Creates (or LRU-refreshes) a view and returns its id plus the entry URL to
-    paste into gridlook as a zarr dataset source.
+    paste into gridlook as a zarr dataset source. Without ``cell_order`` the
+    view is the leaf selection; with it the view is that stamped pyramid level
+    of the store (``open_level()``), whose own ``dggs`` block declares the
+    level's order. Either way the view serves only
+    ``renderable_variables(ds)`` plus the ``morton`` coordinate.
     """
 
     @web.authenticated
@@ -404,6 +484,14 @@ class HiveOpenHandler(PlainTextErrorMixin, JupyterHandler):
         product = self.get_query_argument("product", None) or None
         window = self.get_query_argument("window", None) or None
         aoi = _parse_aoi(self.get_query_argument("aoi", None) or None)
+        raw_level = self.get_query_argument("cell_order", None) or None
+        level = None
+        if raw_level is not None:
+            # ASCII-strict: isdigit() accepts "²" (int() then raises, 500) and
+            # isdecimal() accepts "٣", which int() silently aliases to 3.
+            if not re.fullmatch(r"[0-9]+", raw_level) or int(raw_level) > 29:
+                raise web.HTTPError(400, f"cell_order {raw_level!r} is not a pyramid level")
+            level = int(raw_level)
         root = _authorize_store_root(proxy, store_url, product)
         try:
             import moczarr  # noqa: F401
@@ -413,7 +501,7 @@ class HiveOpenHandler(PlainTextErrorMixin, JupyterHandler):
                 "the /gridlook/hive/ endpoints need moczarr — install gridlook-jupyter[hive]",
             ) from e
 
-        view_id = cache.view_id(store_url, product, window, aoi)
+        view_id = cache.view_id(store_url, product, window, aoi, level)
         view = cache.get(view_id)
         cached = view is not None
         if view is None:
@@ -425,6 +513,9 @@ class HiveOpenHandler(PlainTextErrorMixin, JupyterHandler):
                 aoi=aoi,
                 window=window,
                 max_cells=proxy.hive_max_cells,
+                level=level,
+                region=proxy.region or None,
+                anonymous=proxy.anonymous,
             )
             try:
                 # Cap concurrent materializations (each holds ds + store copy

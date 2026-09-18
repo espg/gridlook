@@ -3,13 +3,28 @@
 import re
 from pathlib import Path
 
-from jupyter_server.base.handlers import AuthenticatedFileHandler
+from jupyter_server.base.handlers import AuthenticatedFileHandler, JupyterHandler
 from jupyter_server.utils import url_path_join
 from tornado import web
 
 from .config import GridlookProxy
 from .handlers import HealthHandler, S3ProxyHandler
 from .hive import HiveOpenHandler, HiveViewCache, HiveViewHandler
+
+
+class SpaFileHandler(AuthenticatedFileHandler):
+    """Serve the built SPA WITHOUT jupyter's ``sandbox allow-scripts`` CSP.
+
+    ``AuthenticatedFileHandler`` appends that directive for user-authored
+    files; under it the document gets an opaque origin, so the app's own
+    same-origin fetches (the hive views, the S3 proxy) fail CORS with
+    ``Origin: null`` and IndexedDB is denied. The app is the extension's
+    code, not user content — it gets the ordinary jupyter policy.
+    """
+
+    @property
+    def content_security_policy(self):
+        return JupyterHandler.content_security_policy.fget(self)
 
 
 def load_extension(serverapp):
@@ -35,7 +50,7 @@ def load_extension(serverapp):
         (escaped + r"$", web.RedirectHandler, {"url": base + "/"}),
         (
             escaped + r"/(.*)",
-            AuthenticatedFileHandler,
+            SpaFileHandler,
             {"path": static_dir, "default_filename": "index.html"},
         ),
     ]

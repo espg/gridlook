@@ -3,7 +3,7 @@
 import os
 from pathlib import Path
 
-from traitlets import Int, List, Unicode, default
+from traitlets import Bool, Int, List, Unicode, default
 from traitlets.config import Configurable
 
 #: Bounded per-process cache of bucket -> store (buckets come from the allowlist,
@@ -36,6 +36,16 @@ class GridlookProxy(Configurable):
         help=(
             "AWS region for the S3 stores. Empty defers to the ambient AWS "
             "configuration. Env fallback: GRIDLOOK_S3_REGION."
+        ),
+    ).tag(config=True)
+
+    anonymous = Bool(
+        False,
+        help=(
+            "Read hive stores without signing requests (public buckets such as "
+            "Source Cooperative's), so no AWS credentials or AWS_* environment "
+            "is needed. Passed to moczarr as anonymous=True. Env fallback: "
+            "GRIDLOOK_ANONYMOUS (1/true/yes)."
         ),
     ).tag(config=True)
 
@@ -103,6 +113,10 @@ class GridlookProxy(Configurable):
     @default("region")
     def _default_region(self):
         return os.environ.get("GRIDLOOK_S3_REGION", "")
+
+    @default("anonymous")
+    def _default_anonymous(self):
+        return os.environ.get("GRIDLOOK_ANONYMOUS", "").strip().lower() in ("1", "true", "yes")
 
     @default("static_dir")
     def _default_static_dir(self):
