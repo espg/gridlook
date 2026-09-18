@@ -25,6 +25,16 @@ def hive_config():
     return {"local_hive_store_roots": [str(TESTDATA)]}
 
 
+@pytest.fixture(autouse=True)
+def clear_ladder_memo():
+    """The ladder memo is module-level and outlives a test server."""
+    from gridlook_jupyter.catalog import _LADDER_CACHE
+
+    _LADDER_CACHE.clear()
+    yield
+    _LADDER_CACHE.clear()
+
+
 async def _catalog(jp_fetch, store=SERC, spelling="catalog", **params):
     resp = await jp_fetch("gridlook", "hive", spelling, params={"store": str(store), **params})
     assert resp.code == 200
@@ -193,3 +203,50 @@ class TestCatalogEntries:
         assert [e["cell_order"] for e in entries] == [8, 4]
         assert entries[1]["url"] == "https://hub/user/x/gridlook/hive/id4"
         assert entries[0]["title"] == "cell order 8 (25.5 km)"
+
+
+class TestLadderProbeMemo:
+    """The probe is thousands of GETs on a real store: pay for it once."""
+
+    @staticmethod
+    def _counting(monkeypatch):
+        from gridlook_jupyter import catalog
+
+        calls = []
+        real = catalog._read_ladder
+
+        def counting(root, **kwargs):
+            calls.append((root, kwargs.get("window")))
+            return real(root, **kwargs)
+
+        monkeypatch.setattr(catalog, "_read_ladder", counting)
+        return calls
+
+    async def test_second_listing_reuses_the_probe(self, jp_fetch, monkeypatch):
+        calls = self._counting(monkeypatch)
+        first = await _catalog(jp_fetch)
+        second = await _catalog(jp_fetch)
+        assert first == second
+        assert len(calls) == 1
+
+    async def test_refresh_reprobes(self, jp_fetch, monkeypatch):
+        calls = self._counting(monkeypatch)
+        await _catalog(jp_fetch)
+        await _catalog(jp_fetch, refresh="1")
+        assert len(calls) == 2
+
+    async def test_memo_is_keyed_by_selection(self, jp_fetch, monkeypatch):
+        calls = self._counting(monkeypatch)
+        await _catalog(jp_fetch)
+        await _catalog(jp_fetch, store=OVERVIEW)
+        await _catalog(jp_fetch, store=WINDOWED, window="2019")
+        assert len(calls) == 3
+
+    async def test_expired_entry_reprobes(self, jp_fetch, monkeypatch):
+        from gridlook_jupyter import catalog
+
+        calls = self._counting(monkeypatch)
+        monkeypatch.setattr(catalog, "_LADDER_TTL", 0.0)
+        await _catalog(jp_fetch)
+        await _catalog(jp_fetch)
+        assert len(calls) == 2
