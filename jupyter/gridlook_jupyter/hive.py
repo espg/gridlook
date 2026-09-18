@@ -9,13 +9,16 @@ MATERIALIZES the result into an in-memory zarr v3 store; ``GET
 /gridlook/hive/<view-id>/<key>`` then serves that store's objects (metadata and
 whole chunks — no Range support needed) to zarrita in the browser.
 
-Materialize-on-open, deliberately: views are AOI-scale and bounded
-(``GridlookProxy.hive_max_cells``, 413 beyond), materializing keeps this module
-free of zarr chunk/codec arithmetic (xarray writes the store; we serve opaque
-objects), and every subsequent request is a cache lookup. A streaming/virtual
-encoding — computing zarr objects on demand from the open dataset — is the
-future optimization if views ever outgrow memory; the URL contract here would
-not change.
+Materialize-on-demand, deliberately: views are AOI-scale and bounded
+(``GridlookProxy.hive_max_cells``, 413 beyond) and materializing keeps this
+module free of zarr chunk/codec arithmetic (xarray writes the store; we serve
+opaque objects). A view is built on the first request that needs its bytes —
+``/hive/open`` builds eagerly, a catalog entry (:mod:`.catalog`) only reserves
+its recipe and the first object request builds it — and a view id's recipe
+outlives its materialization, so an evicted URL rebuilds transparently instead
+of dying. A streaming/virtual encoding — computing zarr objects on demand from
+the open dataset — is the future optimization if views ever outgrow memory; the
+URL contract here would not change.
 
 moczarr (and its xarray/zarr stack) is an extras-gated dependency
 (``gridlook-jupyter[hive]``); everything module-level here imports without it.
@@ -670,6 +673,9 @@ class HiveViewHandler(PlainTextErrorMixin, JupyterHandler):
             "application/json" if key.endswith(".json") else "application/octet-stream",
         )
         self.set_header("Content-Length", str(len(data)))
-        # View URLs die on eviction; keep intermediaries from pinning stale objects.
+        # A view id hashes the RECIPE, not the bytes: the same URL legitimately
+        # serves different objects once the underlying store is re-swept (or a
+        # rebuild picks up a level that has since landed), so intermediaries
+        # must not pin them. Eviction costs a re-materialization, never a 404.
         self.set_header("Cache-Control", "no-store")
         self.finish(data)

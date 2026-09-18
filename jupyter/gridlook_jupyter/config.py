@@ -75,7 +75,8 @@ class GridlookProxy(Configurable):
         help=(
             "Maximum materialized hive views held per server process; opening "
             "beyond it evicts the least-recently-used view (its /gridlook/hive/ "
-            "URLs then 404 until re-opened)."
+            "URLs keep working — the next object request re-materializes it "
+            "from the remembered recipe)."
         ),
     ).tag(config=True)
 
