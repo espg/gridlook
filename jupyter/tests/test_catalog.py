@@ -164,6 +164,19 @@ async def test_forwarded_proto_makes_https_entries(jp_fetch):
     assert doc["datasets"][0]["url"].startswith("https://")
 
 
+@pytest.mark.parametrize("forwarded", ["gopher", "", "https://evil", "ftp", "http, https"])
+async def test_junk_forwarded_proto_falls_back_to_the_socket_scheme(jp_fetch, forwarded):
+    resp = await jp_fetch(
+        "gridlook",
+        "hive",
+        "catalog",
+        params={"store": str(SERC)},
+        headers={"X-Forwarded-Proto": forwarded},
+    )
+    doc = json.loads(resp.body)
+    assert doc["datasets"][0]["url"].startswith("http://")
+
+
 async def test_missing_store_400(jp_fetch):
     with pytest.raises(HTTPClientError) as e:
         await jp_fetch("gridlook", "hive", "catalog")

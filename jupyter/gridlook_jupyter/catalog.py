@@ -110,8 +110,13 @@ def _public_origin(request) -> str:
     ``X-Forwarded-Proto`` (what JupyterHub's proxy sets) wins over the
     socket's scheme so the entries don't become mixed content. Host is taken
     as received (the proxy forwards it unchanged).
+
+    Only ``http``/``https`` are honoured: an absent, empty or exotic value
+    (``gopher``, ``ftp``) falls back to the socket's own scheme rather than
+    being pasted into every entry URL the SPA then fetches.
     """
-    proto = request.headers.get("X-Forwarded-Proto", request.protocol).split(",")[0].strip()
+    forwarded = request.headers.get("X-Forwarded-Proto", "").split(",")[0].strip().lower()
+    proto = forwarded if forwarded in ("http", "https") else request.protocol
     return f"{proto}://{request.host}"
 
 
