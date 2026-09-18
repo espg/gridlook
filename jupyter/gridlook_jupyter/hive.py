@@ -202,14 +202,20 @@ class HiveViewCache:
 
         Returns ``(view, cached)``. Raises ``KeyError`` for an id never
         reserved; build failures surface as the ``web.HTTPError`` the open
-        route would have raised, to every coalesced waiter alike.
+        route would have raised, to every coalesced waiter alike. Cancellation
+        is per-task: a cancelled waiter leaves the shared build (and the other
+        waiters) untouched, and a cancelled builder hands its waiters a 503.
         """
         view = self.get(view_id)
         if view is not None:
             return view, True
         pending = self._building.get(view_id)
         if pending is not None:
-            return await pending, False  # in flight, not yet a cache hit
+            # shield: awaiting a bare future makes the WAITER's cancellation
+            # cancel the future itself (Task.cancel cancels what it awaits),
+            # which would break the build for the builder and every other
+            # waiter. Shielded, a cancelled waiter takes only itself down.
+            return await asyncio.shield(pending), False  # in flight, not yet a cache hit
         spec = self._specs.get(view_id)
         if spec is None:
             raise KeyError(view_id)
@@ -217,16 +223,31 @@ class HiveViewCache:
         self._building[view_id] = fut
         try:
             view = await _materialize(self._proxy, spec)
+        except asyncio.CancelledError:
+            # The BUILDER was cancelled (shutdown, a timeout wrapper). Publishing
+            # CancelledError would read as each waiter's own cancellation and
+            # kill them silently; hand them a retryable 503 and let our own
+            # cancellation propagate.
+            self._publish(fut, web.HTTPError(503, "the hive view build was cancelled — retry"))
+            raise
         except BaseException as e:
-            fut.set_exception(e)
-            fut.exception()  # retrieved: no "never retrieved" noise when nobody waits
+            self._publish(fut, e)
             raise
         else:
             self.put(view_id, view)
-            fut.set_result(view)
+            if not fut.done():
+                fut.set_result(view)
             return view, False
         finally:
             self._building.pop(view_id, None)
+
+    @staticmethod
+    def _publish(fut: asyncio.Future, error: BaseException) -> None:
+        """Hand *error* to the coalesced waiters, if the future is still open."""
+        if fut.done():
+            return
+        fut.set_exception(error)
+        fut.exception()  # retrieved: no "never retrieved" noise when nobody waits
 
 
 #: The zarr-conventions envelope entry for the dggs convention, added only when

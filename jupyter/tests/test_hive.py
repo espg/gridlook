@@ -585,3 +585,69 @@ class TestStorePostureDefaults:
         # moczarr keeps its own credential resolution when nothing is configured.
         assert "region" not in seen
         assert "anonymous" not in seen
+
+
+class TestEnsureCancellation:
+    """Coalesced waiters are independent: one's cancellation is not everyone's.
+
+    Driven against the cache directly — tornado does not cancel handler
+    coroutines on client disconnect today, so the HTTP surface cannot reach
+    this path, but server shutdown and any future timeout wrapper can.
+    """
+
+    @staticmethod
+    def _reserved(monkeypatch, materialize):
+        from gridlook_jupyter import hive
+        from gridlook_jupyter.config import GridlookProxy
+
+        cache = hive.HiveViewCache(GridlookProxy())
+        view_id = cache.reserve(
+            hive.ViewSpec(
+                root="/store", store_url="/store", product=None, window=None, aoi=None, level=None
+            )
+        )
+        monkeypatch.setattr(hive, "_materialize", materialize)
+        return cache, view_id
+
+    async def test_cancelled_waiter_leaves_the_build_intact(self, monkeypatch):
+        import asyncio
+
+        built = object()
+
+        async def slow(proxy, spec):
+            await asyncio.sleep(0.05)
+            return built
+
+        cache, view_id = self._reserved(monkeypatch, slow)
+        builder = asyncio.ensure_future(cache.ensure(view_id))
+        await asyncio.sleep(0)  # the builder registers _building before the waiters arrive
+        doomed = asyncio.ensure_future(cache.ensure(view_id))
+        survivor = asyncio.ensure_future(cache.ensure(view_id))
+        await asyncio.sleep(0)
+        doomed.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await doomed
+        assert (await builder)[0] is built  # not InvalidStateError
+        assert (await survivor)[0] is built  # not CancelledError
+        assert cache.get(view_id) is built
+
+    async def test_cancelled_builder_hands_waiters_a_503(self, monkeypatch):
+        import asyncio
+
+        async def never(proxy, spec):
+            await asyncio.sleep(3600)
+
+        cache, view_id = self._reserved(monkeypatch, never)
+        builder = asyncio.ensure_future(cache.ensure(view_id))
+        await asyncio.sleep(0)
+        waiter = asyncio.ensure_future(cache.ensure(view_id))
+        await asyncio.sleep(0)
+        builder.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await builder
+        from tornado import web
+
+        with pytest.raises(web.HTTPError) as e:
+            await waiter
+        assert e.value.status_code == 503
+        assert cache._building == {}  # clean for the retry
