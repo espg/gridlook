@@ -323,7 +323,10 @@ def build_view(
     # session-scoped, and codec-free chunks keep the served bytes trivially
     # predictable (the tests compare them raw).
     encoding = {name: {"compressors": None} for name in list(ds.data_vars) + list(ds.coords)}
-    ds.to_zarr(mem, mode="w", consolidated=False, zarr_format=3, encoding=encoding)
+    # Consolidated: the SPA enumerates a store's variables ONLY through
+    # consolidated metadata (zarrita withConsolidatedMetadata, v2 .zmetadata or
+    # the v3 zarr.json block) — an unconsolidated v3 view is unlistable to it.
+    ds.to_zarr(mem, mode="w", consolidated=True, zarr_format=3, encoding=encoding)
     return HiveView(
         store=mem,
         cells=cells,
