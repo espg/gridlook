@@ -115,6 +115,22 @@ class HiveView:
     level: int | None = field(default=None)
 
 
+@dataclass(frozen=True)
+class ViewSpec:
+    """Everything ``build_view`` needs — a view id's recipe, kept after eviction."""
+
+    root: str
+    store_url: str
+    product: str | None
+    window: str | None
+    aoi: tuple[str, ...] | None
+    level: int | None
+
+
+#: Bound on remembered view recipes (a few hundred bytes each): FIFO beyond it.
+_MAX_SPECS = 1024
+
+
 class HiveViewCache:
     """LRU-bounded ``view-id -> HiveView`` map, one per server process.
 
@@ -122,11 +138,20 @@ class HiveViewCache:
     selection refreshes (LRU-bumps) the existing view instead of duplicating
     it; serving a view's objects bumps it too, so actively rendered views
     survive. Views are re-materialized only after eviction.
+
+    A view's *recipe* (:class:`ViewSpec`) is remembered separately from its
+    materialization: ``reserve`` records one without building anything, and
+    ``ensure`` materializes on first demand — how the per-order catalog lists
+    every level without opening them, and how an evicted view's URL keeps
+    working (it rebuilds on the next object request). Concurrent demands for
+    one id coalesce on a single build.
     """
 
     def __init__(self, proxy: GridlookProxy):
         self._proxy = proxy
         self._views: OrderedDict[str, HiveView] = OrderedDict()
+        self._specs: OrderedDict[str, ViewSpec] = OrderedDict()
+        self._building: dict[str, asyncio.Future] = {}
 
     @staticmethod
     def view_id(
@@ -159,6 +184,49 @@ class HiveViewCache:
         self._views.move_to_end(view_id)
         while len(self._views) > max(1, self._proxy.hive_max_views):
             self._views.popitem(last=False)
+
+    def reserve(self, spec: ViewSpec) -> str:
+        """Record *spec* under its id without materializing; return the id."""
+        view_id = self.view_id(spec.store_url, spec.product, spec.window, spec.aoi, spec.level)
+        self._specs[view_id] = spec
+        self._specs.move_to_end(view_id)
+        while len(self._specs) > _MAX_SPECS:
+            self._specs.popitem(last=False)
+        return view_id
+
+    def spec(self, view_id: str) -> ViewSpec | None:
+        return self._specs.get(view_id)
+
+    async def ensure(self, view_id: str) -> tuple[HiveView, bool]:
+        """The materialized view for a reserved id, building it on first demand.
+
+        Returns ``(view, cached)``. Raises ``KeyError`` for an id never
+        reserved; build failures surface as the ``web.HTTPError`` the open
+        route would have raised, to every coalesced waiter alike.
+        """
+        view = self.get(view_id)
+        if view is not None:
+            return view, True
+        pending = self._building.get(view_id)
+        if pending is not None:
+            return await pending, False  # in flight, not yet a cache hit
+        spec = self._specs.get(view_id)
+        if spec is None:
+            raise KeyError(view_id)
+        fut: asyncio.Future = asyncio.get_running_loop().create_future()
+        self._building[view_id] = fut
+        try:
+            view = await _materialize(self._proxy, spec)
+        except BaseException as e:
+            fut.set_exception(e)
+            fut.exception()  # retrieved: no "never retrieved" noise when nobody waits
+            raise
+        else:
+            self.put(view_id, view)
+            fut.set_result(view)
+            return view, False
+        finally:
+            self._building.pop(view_id, None)
 
 
 #: The zarr-conventions envelope entry for the dggs convention, added only when
@@ -363,6 +431,51 @@ def build_view(
     )
 
 
+async def _materialize(proxy: GridlookProxy, spec: ViewSpec) -> HiveView:
+    """Run ``build_view`` for *spec* off the loop, mapping failures to HTTP errors."""
+    build = functools.partial(
+        build_view,
+        spec.root,
+        store_url=spec.store_url,
+        product=spec.product,
+        aoi=spec.aoi,
+        window=spec.window,
+        max_cells=proxy.hive_max_cells,
+        level=spec.level,
+        region=proxy.region or None,
+        anonymous=proxy.anonymous,
+    )
+    try:
+        # Cap concurrent materializations (each holds ds + store copy
+        # transiently); over-limit opens queue on acquire.
+        async with _build_semaphore(proxy.hive_max_concurrent_builds):
+            return await IOLoop.current().run_in_executor(None, build)
+    except ViewTooLargeError as e:
+        raise web.HTTPError(
+            413,
+            f"hive view would materialize {e.cells} cells, over the "
+            f"{proxy.hive_max_cells}-cell limit — narrow the aoi= or window= "
+            f"selection (or raise GridlookProxy.hive_max_cells)",
+        ) from e
+    except ViewNotFloat64ExactError as e:
+        raise web.HTTPError(
+            422,
+            f"hive store cell_order {e.order} exceeds order "
+            f"{_FLOAT64_EXACT_MAX_ORDER}: its NESTED cell_ids are above the "
+            f"float64-exact integer range (2**53) that the browser holds cell "
+            f"ids in, so it cannot be rendered (point-kind stores clip to order "
+            f"{_FLOAT64_EXACT_MAX_ORDER} and are fine; area stores do not)",
+        ) from e
+    except FileNotFoundError as e:
+        raise web.HTTPError(404, f"no hive store at {spec.store_url!r}: {e}") from e
+    except ValueError as e:
+        # moczarr's NoCoverageError (nothing committed anywhere) is a
+        # ValueError subclass: the store exists but has nothing to
+        # serve — 404, not a bad request.
+        status = 404 if type(e).__name__ == "NoCoverageError" else 400
+        raise web.HTTPError(status, f"cannot open {spec.store_url!r}: {e}") from e
+
+
 def _parse_aoi(raw: str | None) -> tuple[str, ...] | None:
     if raw is None:
         return None
@@ -464,52 +577,17 @@ class HiveOpenHandler(PlainTextErrorMixin, JupyterHandler):
                 "the /gridlook/hive/ endpoints need moczarr — install gridlook-jupyter[hive]",
             ) from e
 
-        view_id = cache.view_id(store_url, product, window, aoi, level)
-        view = cache.get(view_id)
-        cached = view is not None
-        if view is None:
-            build = functools.partial(
-                build_view,
-                root,
+        view_id = cache.reserve(
+            ViewSpec(
+                root=root,
                 store_url=store_url,
                 product=product,
-                aoi=aoi,
                 window=window,
-                max_cells=proxy.hive_max_cells,
+                aoi=aoi,
                 level=level,
-                region=proxy.region or None,
-                anonymous=proxy.anonymous,
             )
-            try:
-                # Cap concurrent materializations (each holds ds + store copy
-                # transiently); over-limit opens queue on acquire.
-                async with _build_semaphore(proxy.hive_max_concurrent_builds):
-                    view = await IOLoop.current().run_in_executor(None, build)
-            except ViewTooLargeError as e:
-                raise web.HTTPError(
-                    413,
-                    f"hive view would materialize {e.cells} cells, over the "
-                    f"{proxy.hive_max_cells}-cell limit — narrow the aoi= or window= "
-                    f"selection (or raise GridlookProxy.hive_max_cells)",
-                ) from e
-            except ViewNotFloat64ExactError as e:
-                raise web.HTTPError(
-                    422,
-                    f"hive store cell_order {e.order} exceeds order "
-                    f"{_FLOAT64_EXACT_MAX_ORDER}: its NESTED cell_ids are above the "
-                    f"float64-exact integer range (2**53) that the browser holds cell "
-                    f"ids in, so it cannot be rendered (point-kind stores clip to order "
-                    f"{_FLOAT64_EXACT_MAX_ORDER} and are fine; area stores do not)",
-                ) from e
-            except FileNotFoundError as e:
-                raise web.HTTPError(404, f"no hive store at {store_url!r}: {e}") from e
-            except ValueError as e:
-                # moczarr's NoCoverageError (nothing committed anywhere) is a
-                # ValueError subclass: the store exists but has nothing to
-                # serve — 404, not a bad request.
-                status = 404 if type(e).__name__ == "NoCoverageError" else 400
-                raise web.HTTPError(status, f"cannot open {store_url!r}: {e}") from e
-            cache.put(view_id, view)
+        )
+        view, cached = await cache.ensure(view_id)
 
         self.set_header("Content-Type", "application/json")
         self.finish(
@@ -535,13 +613,16 @@ class HiveViewHandler(PlainTextErrorMixin, JupyterHandler):
     @web.authenticated
     async def get(self, view_id: str, key: str):
         cache: HiveViewCache = self.settings["gridlook_hive_views"]
-        view = cache.get(view_id)
-        if view is None:
+        try:
+            # Reserved-but-unbuilt (a catalog entry) or evicted: materialize
+            # on first demand; concurrent object requests share one build.
+            view, _ = await cache.ensure(view_id)
+        except KeyError:
             raise web.HTTPError(
                 404,
-                f"no hive view '{view_id}' (never opened, or evicted from the LRU "
-                f"cache) — (re)open it via /gridlook/hive/open",
-            )
+                f"no hive view '{view_id}' (never opened) — open it via "
+                f"/gridlook/hive/open or list it via /gridlook/hive/catalog",
+            ) from None
         from zarr.core.buffer import default_buffer_prototype
 
         buf = await view.store.get(key, prototype=default_buffer_prototype())

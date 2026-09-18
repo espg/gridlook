@@ -322,18 +322,26 @@ class TestLruEviction:
     def hive_config(self):
         return {"local_hive_store_roots": [str(TESTDATA)], "hive_max_views": 2}
 
-    async def test_third_view_evicts_least_recent(self, jp_fetch):
+    async def test_third_view_evicts_least_recent(self, jp_fetch, jp_serverapp):
+        cache = jp_serverapp.web_app.settings["gridlook_hive_views"]
         a = await _open(jp_fetch, aoi="4331421")
         b = await _open(jp_fetch, aoi="4331422")
         await _open(jp_fetch, aoi="4331421")  # refresh a: b is now LRU
         c = await _open(jp_fetch, aoi="4331424")
-        with pytest.raises(HTTPClientError) as e:
-            await jp_fetch("gridlook", "hive", b["view"], "zarr.json")
-        assert e.value.code == 404
-        assert b"evicted" in e.value.response.body
+        assert cache.get(b["view"]) is None  # materialization gone
+        assert cache.spec(b["view"]) is not None  # recipe kept
         for alive in (a, c):
             resp = await jp_fetch("gridlook", "hive", alive["view"], "zarr.json")
             assert resp.code == 200
+        # An evicted view's URL keeps working: the object request rebuilds it
+        # (and that build evicts the new least-recent, a).
+        resp = await jp_fetch("gridlook", "hive", b["view"], "zarr.json")
+        assert resp.code == 200
+        assert cache.get(b["view"]) is not None
+        assert cache.get(a["view"]) is None
+        again = await _open(jp_fetch, aoi="4331421")
+        assert again["view"] == a["view"]
+        assert again["cached"] is False
 
 
 class TestOversizeView:
