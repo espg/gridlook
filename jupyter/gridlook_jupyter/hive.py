@@ -127,7 +127,9 @@ class ViewSpec:
     level: int | None
 
 
-#: Bound on remembered view recipes (a few hundred bytes each): FIFO beyond it.
+#: Bound on remembered view recipes (a few hundred bytes each): least-recently-used
+#: beyond it — recipes are refreshed by *use* (``reserve``, and every ``get``/
+#: ``ensure`` hit), so a recipe never expires out from under a served view.
 _MAX_SPECS = 1024
 
 
@@ -177,7 +179,19 @@ class HiveViewCache:
         view = self._views.get(view_id)
         if view is not None:
             self._views.move_to_end(view_id)
+            self._touch_spec(view_id)
         return view
+
+    def _touch_spec(self, view_id: str) -> None:
+        """Refresh a recipe's LRU position: serving a view keeps it rebuildable.
+
+        Without this the recipe table ages on *reserve* alone, so a hot view's
+        recipe could be evicted while the view is still resident — and its URL
+        would then 404 forever the moment the view itself fell out of
+        ``_views``, which is exactly what reserve/ensure exists to prevent.
+        """
+        if view_id in self._specs:
+            self._specs.move_to_end(view_id)
 
     def put(self, view_id: str, view: HiveView) -> None:
         self._views[view_id] = view
@@ -219,6 +233,7 @@ class HiveViewCache:
         spec = self._specs.get(view_id)
         if spec is None:
             raise KeyError(view_id)
+        self._touch_spec(view_id)
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
         self._building[view_id] = fut
         try:

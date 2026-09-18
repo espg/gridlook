@@ -651,3 +651,53 @@ class TestEnsureCancellation:
             await waiter
         assert e.value.status_code == 503
         assert cache._building == {}  # clean for the retry
+
+
+class TestRecipeTableLru:
+    """``_specs`` ages on USE, not on reserve: a served view stays rebuildable."""
+
+    @staticmethod
+    def _cache(monkeypatch, bound):
+        from gridlook_jupyter import hive
+        from gridlook_jupyter.config import GridlookProxy
+
+        monkeypatch.setattr(hive, "_MAX_SPECS", bound)
+
+        async def build(proxy, spec):
+            return f"view-{spec.level}"
+
+        monkeypatch.setattr(hive, "_materialize", build)
+        cache = hive.HiveViewCache(GridlookProxy())
+
+        def reserve(level):
+            return cache.reserve(
+                hive.ViewSpec(
+                    root="/store",
+                    store_url="/store",
+                    product=None,
+                    window=None,
+                    aoi=None,
+                    level=level,
+                )
+            )
+
+        return cache, reserve
+
+    async def test_serving_a_view_refreshes_its_recipe(self, monkeypatch):
+        cache, reserve = self._cache(monkeypatch, bound=2)
+        a, b = reserve(0), reserve(1)
+        await cache.ensure(a)  # a is now the most recently USED recipe, not the oldest
+        c = reserve(2)  # over the bound: the least recently used (b) is the one dropped
+        assert cache.spec(b) is None
+        assert cache.spec(a) is not None
+        assert cache.spec(c) is not None
+
+    async def test_cache_hit_refreshes_the_recipe_too(self, monkeypatch):
+        cache, reserve = self._cache(monkeypatch, bound=2)
+        a, b = reserve(0), reserve(1)
+        await cache.ensure(a)
+        reserve(1)  # b back on top; a's recipe survives only if get() bumps it
+        assert cache.get(a) == "view-0"
+        reserve(2)
+        assert cache.spec(b) is None
+        assert cache.spec(a) is not None
