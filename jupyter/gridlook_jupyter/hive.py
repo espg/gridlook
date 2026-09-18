@@ -110,6 +110,9 @@ class HiveView:
     product: str | None
     window: str | None
     aoi: tuple[str, ...] | None = field(default=None)
+    #: Pyramid level (a manifest ``cell_orders`` entry) when the view is a ladder
+    #: rung opened via ``moczarr.open_level`` rather than the native leaf cells.
+    level: int | None = field(default=None)
 
 
 class HiveViewCache:
@@ -127,7 +130,11 @@ class HiveViewCache:
 
     @staticmethod
     def view_id(
-        store_url: str, product: str | None, window: str | None, aoi: tuple[str, ...] | None
+        store_url: str,
+        product: str | None,
+        window: str | None,
+        aoi: tuple[str, ...] | None,
+        level: int | None = None,
     ) -> str:
         # Canonicalize so selections that name the SAME data collapse to one id
         # (one materialization, one LRU slot): strip the store's trailing slash
@@ -136,7 +143,7 @@ class HiveViewCache:
         # don't change the cover).
         aoi_canon = sorted({int(t) for t in aoi}) if aoi else None
         payload = json.dumps(
-            [store_url.rstrip("/"), product or None, window or None, aoi_canon],
+            [store_url.rstrip("/"), product or None, window or None, aoi_canon, level],
             separators=(",", ":"),
         )
         return hashlib.sha256(payload.encode()).hexdigest()[:_VIEW_ID_HEX]
@@ -255,6 +262,7 @@ def build_view(
     aoi: tuple[str, ...] | None,
     window: str | None,
     max_cells: int,
+    level: int | None = None,
 ) -> HiveView:
     """Open a hive selection and materialize it as an in-memory zarr store.
 
@@ -264,21 +272,40 @@ def build_view(
     import zarr
     from moczarr import open_hive
 
-    ds = open_hive(
-        root,
-        aoi=list(aoi) if aoi else None,
-        window=window,
-        # Load-bearing: post-zagg#314 stores carry only the packed-u64 morton
-        # coordinate; "auto" fabricates the exact NESTED cell_ids view the
-        # browser-side HEALPix path consumes (and keeps stored bytes on any
-        # remaining dual-written store).
-        fabricate_cell_ids="auto",
-    )
+    if level is None:
+        ds = open_hive(
+            root,
+            aoi=list(aoi) if aoi else None,
+            window=window,
+            # Load-bearing: post-zagg#314 stores carry only the packed-u64 morton
+            # coordinate; "auto" fabricates the exact NESTED cell_ids view the
+            # browser-side HEALPix path consumes (and keeps stored bytes on any
+            # remaining dual-written store).
+            fabricate_cell_ids="auto",
+        )
+    else:
+        from moczarr import open_level
+
+        # A pyramid rung (zagg-pyramid/2 ladder or /1 overview): resolution is
+        # the reader-facing axis, moczarr dispatches the artifact kind.
+        # chunks=None keeps xarray's own lazy arrays (cubed/dask-free).
+        ds = open_level(
+            root,
+            int(level),
+            aoi=list(aoi) if aoi else None,
+            window=window,
+            fabricate_cell_ids="auto",
+            xr_kwargs={"chunks": None},
+        )
+        if ds is None:
+            raise ValueError(f"level {level} has no stamped artifact in this store")
     dim = ds["morton"].dims[0] if "morton" in ds.coords else "cells"
     cells = int(ds.sizes.get(dim, 0))
     if cells > max_cells:
         raise ViewTooLargeError(cells)
-    cell_order = int(ds.attrs["morton_hive"]["cell_order"])
+    cell_order = int(
+        (ds.attrs.get("zagg_level") or {}).get("cell_order", ds.attrs["morton_hive"]["cell_order"])
+    )
     # Derive from the SERVED ids (point words clip to order 24), and reject
     # area stores whose ids the browser can't hold as float64 — the warning
     # moczarr emits for those is swallowed on the executor thread.
@@ -295,11 +322,12 @@ def build_view(
     return HiveView(
         store=mem,
         cells=cells,
-        cell_order=int(ds.attrs["morton_hive"]["cell_order"]),
+        cell_order=cell_order,
         store_url=store_url,
         product=product,
         window=window,
         aoi=aoi,
+        level=level,
     )
 
 
@@ -389,6 +417,12 @@ class HiveOpenHandler(PlainTextErrorMixin, JupyterHandler):
         product = self.get_query_argument("product", None) or None
         window = self.get_query_argument("window", None) or None
         aoi = _parse_aoi(self.get_query_argument("aoi", None) or None)
+        raw_level = self.get_query_argument("cell_order", None) or None
+        level = None
+        if raw_level is not None:
+            if not raw_level.isdigit() or int(raw_level) > 29:
+                raise web.HTTPError(400, f"cell_order {raw_level!r} is not a pyramid level")
+            level = int(raw_level)
         root = _authorize_store_root(proxy, store_url, product)
         try:
             import moczarr  # noqa: F401
@@ -398,7 +432,7 @@ class HiveOpenHandler(PlainTextErrorMixin, JupyterHandler):
                 "the /gridlook/hive/ endpoints need moczarr — install gridlook-jupyter[hive]",
             ) from e
 
-        view_id = cache.view_id(store_url, product, window, aoi)
+        view_id = cache.view_id(store_url, product, window, aoi, level)
         view = cache.get(view_id)
         cached = view is not None
         if view is None:
@@ -410,6 +444,7 @@ class HiveOpenHandler(PlainTextErrorMixin, JupyterHandler):
                 aoi=aoi,
                 window=window,
                 max_cells=proxy.hive_max_cells,
+                level=level,
             )
             try:
                 # Cap concurrent materializations (each holds ds + store copy
