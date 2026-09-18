@@ -3,10 +3,6 @@ import { computed, ref } from "vue";
 
 import type { TCatalogEntry } from "@/utils/catalog.ts";
 
-// Zoom-driven order selection is offered when the catalog is an order
-// ladder (two or more entries carrying a cell order).
-const orderAuto = defineModel<boolean>("orderAuto", { default: true });
-
 const props = defineProps<{
   title?: string;
   datasets: TCatalogEntry[];
@@ -15,10 +11,6 @@ const props = defineProps<{
 const emit = defineEmits<{
   select: [entry: TCatalogEntry];
 }>();
-
-const isLadder = computed(
-  () => props.datasets.filter((e) => e.cell_order !== undefined).length >= 2
-);
 
 const searchQuery = ref("");
 
@@ -101,10 +93,6 @@ function select(entry: TCatalogEntry) {
       </div>
     </div>
 
-    <label v-if="isLadder" class="checkbox is-size-7 mb-2 catalog-auto-order">
-      <input v-model="orderAuto" type="checkbox" />
-      Pick the cell order from the zoom level
-    </label>
     <div class="catalog-entries">
       <p
         v-if="filteredAndSortedDatasets.length === 0"
@@ -159,10 +147,6 @@ function select(entry: TCatalogEntry) {
 .catalog-panel {
   margin-top: 1rem;
   max-height: 400px;
-}
-
-.catalog-auto-order {
-  display: block;
 }
 
 .catalog-entries {

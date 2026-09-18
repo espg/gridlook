@@ -5,12 +5,6 @@ export type TCatalogEntry = {
   title?: string;
   tag?: string;
   description?: string;
-  // Pyramid-order entries (gridlook-jupyter's /gridlook/hive/catalog): the
-  // HEALPix cell order the entry renders and its RMS cell spacing in km. A
-  // catalog with two or more such entries is an order ladder the camera can
-  // climb (src/lib/data/orderLadder.ts).
-  cell_order?: number;
-  resolution_km?: number;
 };
 
 export type TCatalog = {
