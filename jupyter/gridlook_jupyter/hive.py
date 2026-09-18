@@ -4,7 +4,10 @@ Phase 6d of the viewer plan (espg/gridlook#1): the hub-side answer to "a hive
 store is many leaves, but gridlook expects ONE zarr source". ``GET
 /gridlook/hive/open`` runs moczarr's ``open_hive()`` (product/AOI/window
 selection, fabricated NESTED ``cell_ids`` — post-englacial/zagg#314 stores are
-morton-only, so the fabrication is what makes them renderable at all) and
+morton-only, so the fabrication is what makes them renderable at all) — or,
+with ``cell_order=``, moczarr's ``open_level()`` for one stamped pyramid level
+(espg/gridlook#10's zoom-driven order selection reads a level per zoom) — drops
+the variables the renderer cannot cast (``renderable_variables``) and
 MATERIALIZES the result into an in-memory zarr v3 store; ``GET
 /gridlook/hive/<view-id>/<key>`` then serves that store's objects (metadata and
 whole chunks — no Range support needed) to zarrita in the browser.
@@ -442,10 +445,14 @@ def _local_path_allowed(proxy: GridlookProxy, store_url: str) -> bool:
 
 
 class HiveOpenHandler(PlainTextErrorMixin, JupyterHandler):
-    """``GET /gridlook/hive/open?store=…[&product=…][&aoi=…][&window=…]``.
+    """``GET /gridlook/hive/open?store=…[&product=…][&aoi=…][&window=…][&cell_order=…]``.
 
     Creates (or LRU-refreshes) a view and returns its id plus the entry URL to
-    paste into gridlook as a zarr dataset source.
+    paste into gridlook as a zarr dataset source. Without ``cell_order`` the
+    view is the leaf selection; with it the view is that stamped pyramid level
+    of the store (``open_level()``), and the level's own order is what the
+    ``dggs`` shim declares, so the SPA sizes ``nside`` for it. Either way the
+    view serves only ``renderable_variables(ds)`` plus the coordinates.
     """
 
     @web.authenticated
