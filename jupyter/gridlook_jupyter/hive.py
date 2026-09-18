@@ -254,6 +254,21 @@ def _shim_dggs_attrs(ds, refinement_level: int) -> None:
     ds.attrs["zarr_conventions"] = kept
 
 
+def renderable_variables(ds) -> list[str]:
+    """The data variables of *ds* the SPA can render, in dataset order.
+
+    The SPA renders a variable by casting it to Float32
+    (``castDataVarToFloat32``), so a view serves only what that can hold:
+    numeric data variables of at most 32 bits. Ragged t-digests are bytes the
+    browser never reads (and at CA scale the bulk of a level — they turned a
+    whole-store open into a GB-scale crawl); the packed ``composition`` word
+    and any int64 arrive as BigInt in zarrita and throw at the cast.
+    Coordinates (``cell_ids``, ``morton``) are not data variables and are
+    kept by the caller — the HEALPix path converts those itself.
+    """
+    return [v for v in ds.data_vars if ds[v].dtype.kind in "iuf" and ds[v].dtype.itemsize <= 4]
+
+
 def build_view(
     root: str,
     *,
@@ -263,15 +278,24 @@ def build_view(
     window: str | None,
     max_cells: int,
     level: int | None = None,
+    region: str | None = None,
+    anonymous: bool = False,
 ) -> HiveView:
     """Open a hive selection and materialize it as an in-memory zarr store.
 
     Synchronous and potentially slow (S3 GETs, concat) — the handler runs it
-    on the executor, off the event loop.
+    on the executor, off the event loop. ``region``/``anonymous`` are the
+    proxy's S3 posture, forwarded to moczarr's store construction so a public
+    bucket needs no ``AWS_*`` environment (a local path ignores both).
     """
     import zarr
     from moczarr import open_hive
 
+    store_kwargs: dict[str, Any] = {}
+    if region:
+        store_kwargs["region"] = region
+    if anonymous:
+        store_kwargs["anonymous"] = True
     if level is None:
         ds = open_hive(
             root,
@@ -282,6 +306,7 @@ def build_view(
             # browser-side HEALPix path consumes (and keeps stored bytes on any
             # remaining dual-written store).
             fabricate_cell_ids="auto",
+            **store_kwargs,
         )
     else:
         from moczarr import open_level
@@ -296,17 +321,11 @@ def build_view(
             window=window,
             fabricate_cell_ids="auto",
             xr_kwargs={"chunks": None},
+            **store_kwargs,
         )
         if ds is None:
             raise ValueError(f"level {level} has no stamped artifact in this store")
-    # The SPA renders a variable by casting it to Float32 (castDataVarToFloat32),
-    # so a view serves only what that can hold: numeric data variables of at
-    # most 32 bits. Ragged t-digests are bytes the browser never reads (and at
-    # CA scale the bulk of a level — they turned a whole-store open into a
-    # GB-scale crawl); the packed composition word and any int64 are BigInt in
-    # zarrita and throw at the cast. Coordinates (cell_ids, morton) are kept —
-    # the HEALPix path converts those itself.
-    ds = ds[[v for v in ds.data_vars if ds[v].dtype.kind in "iuf" and ds[v].dtype.itemsize <= 4]]
+    ds = ds[renderable_variables(ds)]
     if not ds.data_vars:
         raise ValueError("no renderable (numeric, <=32-bit) variable in this selection")
     dim = ds["morton"].dims[0] if "morton" in ds.coords else "cells"
@@ -458,6 +477,8 @@ class HiveOpenHandler(PlainTextErrorMixin, JupyterHandler):
                 window=window,
                 max_cells=proxy.hive_max_cells,
                 level=level,
+                region=proxy.region or None,
+                anonymous=proxy.anonymous,
             )
             try:
                 # Cap concurrent materializations (each holds ds + store copy
