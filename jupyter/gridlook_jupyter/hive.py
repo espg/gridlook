@@ -258,15 +258,23 @@ def renderable_variables(ds) -> list[str]:
     """The data variables of *ds* the SPA can render, in dataset order.
 
     The SPA renders a variable by casting it to Float32
-    (``castDataVarToFloat32``), so a view serves only what that can hold:
-    numeric data variables of at most 32 bits. Ragged t-digests are bytes the
-    browser never reads (and at CA scale the bulk of a level — they turned a
-    whole-store open into a GB-scale crawl); the packed ``composition`` word
-    and any int64 arrive as BigInt in zarrita and throw at the cast.
-    Coordinates (``cell_ids``, ``morton``) are not data variables and are
-    kept by the caller — the HEALPix path converts those itself.
+    (``castDataVarToFloat32``, ``Float32Array.from(rawData)``), so a view
+    serves floats of any width plus integers of at most 32 bits.
+    ``Float32Array.from`` handles a ``Float64Array`` fine; what it throws on is
+    the BigInt-backed arrays zarrita hands back for int64/uint64 ("Cannot
+    convert a BigInt value to a number") — the packed ``composition`` word and
+    any int64. Ragged t-digests are bytes the browser never reads (and at CA
+    scale the bulk of a level — they turned a whole-store open into a GB-scale
+    crawl); bool, datetime64 and strings are dropped with them, as zarrita
+    gives those non-numeric element types. Coordinates (``cell_ids``,
+    ``morton``) are not data variables and are kept by the caller — the HEALPix
+    path converts those itself.
     """
-    return [v for v in ds.data_vars if ds[v].dtype.kind in "iuf" and ds[v].dtype.itemsize <= 4]
+    return [
+        v
+        for v in ds.data_vars
+        if ds[v].dtype.kind == "f" or (ds[v].dtype.kind in "iu" and ds[v].dtype.itemsize <= 4)
+    ]
 
 
 def build_view(
@@ -327,7 +335,7 @@ def build_view(
             raise ValueError(f"level {level} has no stamped artifact in this store")
     ds = ds[renderable_variables(ds)]
     if not ds.data_vars:
-        raise ValueError("no renderable (numeric, <=32-bit) variable in this selection")
+        raise ValueError("no renderable (float, or <=32-bit integer) variable in this selection")
     dim = ds["morton"].dims[0] if "morton" in ds.coords else "cells"
     cells = int(ds.sizes.get(dim, 0))
     if cells > max_cells:

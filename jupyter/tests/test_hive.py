@@ -463,7 +463,7 @@ class TestConsolidatedMetadata:
 
 
 class TestRenderableVariables:
-    """Only numeric <=32-bit data variables are served; coordinates always are."""
+    """Only float / <=32-bit integer data variables are served; coordinates always are."""
 
     def test_filter_keeps_castable_dtypes_only(self):
         xr = pytest.importorskip("xarray")
@@ -481,10 +481,14 @@ class TestRenderableVariables:
                 "wide": ("cells", np.zeros(n, np.int64)),
                 "h_mean64": ("cells", np.zeros(n, np.float64)),
                 "label": ("cells", np.array(["a"] * n)),
+                "seen": ("cells", np.zeros(n, bool)),
+                "t": ("cells", np.zeros(n, "datetime64[ns]")),
             },
             coords={"morton": ("cells", np.zeros(n, np.uint64))},
         )
-        assert renderable_variables(ds) == ["count", "h_mean", "flag"]
+        # float64 is castable (``Float32Array.from`` widens it); only the
+        # BigInt-backed int64/uint64 throw at the cast.
+        assert renderable_variables(ds) == ["count", "h_mean", "flag", "h_mean64"]
 
     async def test_view_drops_digests_and_composition_keeps_coords(self, jp_fetch, monkeypatch):
         import moczarr
@@ -498,6 +502,7 @@ class TestRenderableVariables:
             ds["h_tdigest_signal_locations"] = ("cells", np.array([b"\x00"] * n, dtype=object))
             ds["composition"] = ("cells", np.zeros(n, np.uint64))
             ds["wide"] = ("cells", np.zeros(n, np.int64))
+            ds["h_mean64"] = ("cells", np.zeros(n, np.float64))
             return ds
 
         monkeypatch.setattr(moczarr, "open_hive", mixed)
@@ -506,7 +511,8 @@ class TestRenderableVariables:
         assert not any(name.startswith("h_tdigest") for name in listed)
         assert "composition" not in listed
         assert "wide" not in listed
-        assert {"cell_ids", "morton", "count", "h_mean"} <= listed
+        # float64 stays: the SPA's Float32Array.from() widens it without throwing.
+        assert {"cell_ids", "morton", "count", "h_mean", "h_mean64"} <= listed
         # The coordinates are served as uint64 words/ids, not squeezed to 32 bits.
         for coord in ("cell_ids", "morton"):
             resp = await jp_fetch("gridlook", "hive", out["view"], f"{coord}/zarr.json")
