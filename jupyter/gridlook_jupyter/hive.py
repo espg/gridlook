@@ -340,9 +340,12 @@ def build_view(
     cells = int(ds.sizes.get(dim, 0))
     if cells > max_cells:
         raise ViewTooLargeError(cells)
-    cell_order = int(
-        (ds.attrs.get("zagg_level") or {}).get("cell_order", ds.attrs["morton_hive"]["cell_order"])
-    )
+    # Lazily: dict.get's default is eager, so the morton_hive lookup would run
+    # (and KeyError) even on the level path, where zagg_level carries the order.
+    order = (ds.attrs.get("zagg_level") or {}).get("cell_order")
+    if order is None:  # a source open has no level record; the hive block carries it
+        order = ds.attrs["morton_hive"]["cell_order"]
+    cell_order = int(order)
     # Derive from the SERVED ids (point words clip to order 24), and reject
     # area stores whose ids the browser can't hold as float64 — the warning
     # moczarr emits for those is swallowed on the executor thread.
