@@ -452,7 +452,9 @@ class HiveOpenHandler(PlainTextErrorMixin, JupyterHandler):
         raw_level = self.get_query_argument("cell_order", None) or None
         level = None
         if raw_level is not None:
-            if not raw_level.isdigit() or int(raw_level) > 29:
+            # ASCII-strict: isdigit() accepts "²" (int() then raises, 500) and
+            # isdecimal() accepts "٣", which int() silently aliases to 3.
+            if not re.fullmatch(r"[0-9]+", raw_level) or int(raw_level) > 29:
                 raise web.HTTPError(400, f"cell_order {raw_level!r} is not a pyramid level")
             level = int(raw_level)
         root = _authorize_store_root(proxy, store_url, product)

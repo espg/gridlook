@@ -412,7 +412,7 @@ class TestPyramidLevel:
         }
         assert len(views) == 3
 
-    @pytest.mark.parametrize("bad", ["abc", "-1", "30", "8.0", ""])
+    @pytest.mark.parametrize("bad", ["abc", "-1", "30", "8.0", "²", "٣", ""])
     async def test_malformed_cell_order_400(self, jp_fetch, bad):
         if bad == "":
             # An empty parameter is "absent": the leaf view opens.
