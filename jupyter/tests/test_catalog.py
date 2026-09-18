@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import time
 
 import pytest
 from test_hive import OVERVIEW, SERC, SERC_SHARD, TESTDATA, _fetch_array, _open
@@ -125,24 +126,67 @@ async def test_entry_view_builds_on_first_object_request(jp_fetch, jp_serverapp)
     assert out["cells"] == 16
 
 
-async def test_concurrent_object_requests_share_one_build(jp_fetch, monkeypatch):
+#: Objects a freshly listed entry is asked for all at once by one page load.
+BURST_KEYS = ["zarr.json", "count/zarr.json", "cell_ids/zarr.json", "count/c/0"]
+
+
+def _held_build(monkeypatch, *, fail=False, hold=0.3):
+    """Monkeypatch ``build_view`` to hold its executor slot, and count calls.
+
+    The hold is what makes a coalescing assertion mean anything: the fixture
+    builds fast enough that ``builds == 1`` also holds for a purely serial
+    build-then-cache-hit, so the burst has to still be in flight when the
+    coalescing state is read.
+    """
     from gridlook_jupyter import hive
 
-    builds = 0
+    builds = []
     real = hive.build_view
 
     def counting(*args, **kwargs):
-        nonlocal builds
-        builds += 1
+        builds.append(1)
+        time.sleep(hold)
+        if fail:
+            raise ValueError("synthetic build failure")
         return real(*args, **kwargs)
 
     monkeypatch.setattr(hive, "build_view", counting)
+    return builds
+
+
+async def test_concurrent_object_requests_share_one_build(jp_fetch, jp_serverapp, monkeypatch):
+    builds = _held_build(monkeypatch)
+    cache = jp_serverapp.web_app.settings["gridlook_hive_views"]
     doc = await _catalog(jp_fetch)
     view = _view_id(doc["datasets"][0])
-    keys = ["zarr.json", "count/zarr.json", "cell_ids/zarr.json", "count/c/0"]
-    resps = await asyncio.gather(*(jp_fetch("gridlook", "hive", view, k) for k in keys))
-    assert [r.code for r in resps] == [200] * len(keys)
-    assert builds == 1
+    tasks = [asyncio.ensure_future(jp_fetch("gridlook", "hive", view, k)) for k in BURST_KEYS]
+    await asyncio.sleep(0.05)  # inside the held build: every request is waiting on it
+    assert not any(t.done() for t in tasks)
+    assert list(cache._building) == [view]  # one build, not four
+    resps = await asyncio.gather(*tasks)
+    assert [r.code for r in resps] == [200] * len(BURST_KEYS)
+    assert len(builds) == 1
+    assert cache._building == {}
+
+
+async def test_failing_build_surfaces_to_every_waiter(jp_fetch, jp_serverapp, monkeypatch):
+    builds = _held_build(monkeypatch, fail=True)
+    cache = jp_serverapp.web_app.settings["gridlook_hive_views"]
+    doc = await _catalog(jp_fetch)
+    view = _view_id(doc["datasets"][0])
+    tasks = [asyncio.ensure_future(jp_fetch("gridlook", "hive", view, k)) for k in BURST_KEYS]
+    await asyncio.sleep(0.05)
+    assert list(cache._building) == [view]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    # ensure()'s contract: the error the open route would have raised reaches
+    # the coalesced waiters too, not just the task that ran the build.
+    assert [getattr(r, "code", None) for r in results] == [400] * len(BURST_KEYS)
+    assert all(b"synthetic build failure" in r.response.body for r in results)
+    assert len(builds) == 1
+    assert cache._building == {}  # clean: the next request retries the build
+    monkeypatch.undo()
+    resp = await jp_fetch("gridlook", "hive", view, "zarr.json")
+    assert resp.code == 200
 
 
 async def test_aoi_scopes_every_entry(jp_fetch):
