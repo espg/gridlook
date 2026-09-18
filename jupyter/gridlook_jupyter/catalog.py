@@ -192,6 +192,19 @@ class HiveCatalogHandler(PlainTextErrorMixin, JupyterHandler):
             reserve=reserve,
         )
         selection = " ".join(f"{k}={v}" for k, v in (("product", product), ("window", window)) if v)
+        if not entries:
+            # Nothing is swept for this selection — a valid-but-never-swept
+            # window=, typically. 404 like /hive/open does for moczarr's
+            # NoCoverageError ("the store exists but has nothing to serve"):
+            # the same condition must not answer 200 {"datasets": []} here,
+            # which the SPA renders as its empty SEARCH state.
+            declared = ", ".join(f"o{o}" for o in ladder.declared) or "none"
+            raise web.HTTPError(
+                404,
+                f"no materialized level in {store_url!r} for "
+                f"{selection or 'the default selection'} — declared cell orders: "
+                f"{declared}, none of them swept for this selection",
+            )
         title = store_url.rstrip("/").rsplit("/", 1)[-1] + (f" ({selection})" if selection else "")
         self.set_header("Content-Type", "application/json")
         self.finish(json.dumps({"type": "gridlook_catalog", "title": title, "datasets": entries}))

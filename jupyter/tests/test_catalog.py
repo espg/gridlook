@@ -250,3 +250,15 @@ class TestLadderProbeMemo:
         await _catalog(jp_fetch)
         await _catalog(jp_fetch)
         assert len(calls) == 2
+
+
+async def test_valid_but_never_swept_window_404(jp_fetch):
+    # window=2031 is a well-formed label the store was never swept for: every
+    # declared level probes False. /hive/open answers 404 (NoCoverageError) for
+    # the same selection, so the catalog must not answer 200 with zero entries.
+    with pytest.raises(HTTPClientError) as e:
+        await _catalog(jp_fetch, store=WINDOWED, window="2031")
+    assert e.value.code == 404
+    body = e.value.response.body
+    assert b"window=2031" in body
+    assert b"o8" in body  # the declared orders are named
