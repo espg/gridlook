@@ -2,8 +2,11 @@
 
 The SPA (the Vite app at the repo root) is packaged as gridlook_jupyter/static/; the
 JupyterLab extension (labextension/) is built with jlpm and packaged through the wheel's
-shared-data as share/jupyter/labextensions/jupyterlab-gridlook/. Each step is skipped when
-its output is already present, and each refuses to ship a wheel without its half.
+shared-data as share/jupyter/labextensions/jupyterlab-gridlook/. The SPA step is skipped when
+its output is already present; the labextension is always rebuilt (`jlpm build:prod`) when its
+sources are here, so a dev build or a stale bundle never ships, and a prebuilt output is used
+only without sources. Source maps and build_log.json are stripped from it either way. Each step
+refuses to ship a wheel without its half.
 
 Wheel builds therefore need node/npm on PATH plus the sources (the frontend one directory
 up, labextension/ here) and jupyterlab in the build environment (build-system.requires) for
@@ -20,6 +23,10 @@ from pathlib import Path
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
 
+# Development-build outputs of `jupyter labextension build`; a wheel never needs them.
+DEV_FILES = ("*.map", "build_log.json")
+
+
 def _tool(name: str) -> str | None:
     """Find a console script on PATH, else next to the build environment's python."""
     found = shutil.which(name)
@@ -27,6 +34,12 @@ def _tool(name: str) -> str | None:
         return found
     candidate = Path(sys.executable).parent / name
     return str(candidate) if candidate.exists() else None
+
+
+def _strip_dev_files(out: Path) -> None:
+    for pattern in DEV_FILES:
+        for path in out.rglob(pattern):
+            path.unlink()
 
 
 class FrontendBuildHook(BuildHookInterface):
@@ -80,19 +93,20 @@ class FrontendBuildHook(BuildHookInterface):
     def _build_labextension(self, pkg_root: Path) -> None:
         src = pkg_root / "labextension"
         out = pkg_root / "gridlook_jupyter" / "labextension"
-        if (out / "package.json").exists() and (out / "static").is_dir():
+        built = (out / "package.json").exists() and (out / "static").is_dir()
+        if not (src / "package.json").exists():
+            if not built:
+                raise RuntimeError(
+                    f"gridlook-jupyter: {out} is empty and labextension/ sources are absent. "
+                    "Refusing to ship a wheel without the JupyterLab extension."
+                )
+            _strip_dev_files(out)
             self.app.display_info(f"gridlook-jupyter: packaging pre-built labextension from {out}")
             return
-
-        if not (src / "package.json").exists():
-            raise RuntimeError(
-                f"gridlook-jupyter: {out} is empty and labextension/ sources are absent. "
-                "Refusing to ship a wheel without the JupyterLab extension."
-            )
         jlpm = _tool("jlpm")
         if jlpm is None:
             raise RuntimeError(
-                f"gridlook-jupyter: {out} is empty and jlpm is not available. jlpm ships "
+                "gridlook-jupyter: jlpm is not available to build labextension/. jlpm ships "
                 "with jupyterlab, which is in build-system.requires; build with an "
                 "isolated build (pip wheel / uv build) or install jupyterlab >= 4 into "
                 "the build environment. Refusing to ship a wheel without the JupyterLab "
@@ -111,4 +125,5 @@ class FrontendBuildHook(BuildHookInterface):
             raise RuntimeError(
                 f"gridlook-jupyter: jlpm build:prod produced no {out}/package.json + static/"
             )
+        _strip_dev_files(out)
         self.app.display_info(f"gridlook-jupyter: packaged labextension -> {out}")

@@ -62,6 +62,23 @@ jobs:
       - name: Install the wheel with jupyterlab and test deps
         run: uv pip install "$(ls jupyter/dist-py/*.whl)[test]" "jupyterlab>=4" ruff
 
+      - name: Assert a development labextension build never ships
+        # The README's dev loop (`jlpm build`) leaves source maps and build_log.json
+        # in the labextension output. With sources present the hook rebuilds; with
+        # sources absent (the prebuilt path) it strips them. Exercise both.
+        run: |
+          (cd jupyter/labextension && jlpm build)
+          ls jupyter/gridlook_jupyter/labextension/build_log.json
+          rsync -a --exclude node_modules jupyter/ "$RUNNER_TEMP/prebuilt/"
+          rm "$RUNNER_TEMP/prebuilt/labextension/package.json"
+          uv build --wheel jupyter -o "$RUNNER_TEMP/rebuilt"
+          uv build --wheel "$RUNNER_TEMP/prebuilt" -o "$RUNNER_TEMP/prebuilt-dist"
+          for whl in "$RUNNER_TEMP"/rebuilt/*.whl "$RUNNER_TEMP"/prebuilt-dist/*.whl; do
+            listing=$(unzip -l "$whl")
+            echo "$listing" | grep -q "jupyterlab-gridlook/static/remoteEntry\."
+            ! echo "$listing" | grep -qE '\.map$|build_log\.json$'
+          done
+
       - name: Assert both halves are enabled on install
         run: |
           jupyter server extension list 2>&1 | tee /dev/stderr | grep -E "gridlook_jupyter .*enabled"
