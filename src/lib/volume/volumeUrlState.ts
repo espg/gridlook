@@ -1,3 +1,5 @@
+import { base64UrlDecode, base64UrlEncode } from "@/utils/base64Url.ts";
+
 export type TVolumeUrlSelection = {
   variable: string;
   color: string;
@@ -8,27 +10,6 @@ type TEncodedVolumeState = {
   version: 1;
   selections: Array<[variable: string, color: string, opacity: number]>;
 };
-
-function base64UrlEncode(value: string) {
-  const bytes = new TextEncoder().encode(value);
-  let binary = "";
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
-  }
-  return btoa(binary)
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-}
-
-function base64UrlDecode(value: string) {
-  const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
-  const padded = `${base64}${"=".repeat((4 - (base64.length % 4)) % 4)}`;
-  const binary = atob(padded);
-  return new TextDecoder().decode(
-    Uint8Array.from(binary, (character) => character.charCodeAt(0))
-  );
-}
 
 export function encodeVolumeUrlState(selections: TVolumeUrlSelection[]) {
   if (selections.length === 0) {

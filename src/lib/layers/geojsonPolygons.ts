@@ -31,6 +31,7 @@ type TGpuPolygonFillBuilder = {
   latLon: number[];
   triLatLonB: number[];
   triLatLonC: number[];
+  featureIndex: number[];
 };
 
 // Densify ring edges and unwrap each longitude against the previous vertex,
@@ -229,7 +230,8 @@ function addTriangle(
   helper: ProjectionHelper,
   builder: TGpuPolygonFillBuilder,
   radius: number,
-  zOffset: number
+  zOffset: number,
+  featureIndex: number
 ) {
   for (let i = 0; i < 3; i++) {
     const [lon, lat] = corners[i];
@@ -241,6 +243,7 @@ function addTriangle(
     builder.latLon.push(lat, normalizedLon);
     builder.triLatLonB.push(latB, ProjectionHelper.normalizeLongitude(lonB));
     builder.triLatLonC.push(latC, ProjectionHelper.normalizeLongitude(lonC));
+    builder.featureIndex.push(featureIndex);
   }
 }
 
@@ -249,7 +252,8 @@ function addPolygonFill(
   helper: ProjectionHelper,
   builder: TGpuPolygonFillBuilder,
   radius: number,
-  zOffset: number
+  zOffset: number,
+  featureIndex: number
 ) {
   const planar = planarFillRings(rings);
   if (!planar) {
@@ -272,7 +276,7 @@ function addPolygonFill(
     subdivideByEdgeLength(corners, triangles);
   }
   for (const corners of triangles) {
-    addTriangle(corners, helper, builder, radius, zOffset);
+    addTriangle(corners, helper, builder, radius, zOffset, featureIndex);
   }
 }
 
@@ -288,20 +292,22 @@ function geojson2gpuPolygonFillGeometry(
     latLon: [],
     triLatLonB: [],
     triLatLonC: [],
+    featureIndex: [],
   };
 
-  for (const feature of geojson.features) {
+  for (const [featureIndex, feature] of geojson.features.entries()) {
     if (feature.geometry.type === "Polygon") {
       addPolygonFill(
         feature.geometry.coordinates as number[][][],
         helper,
         builder,
         radius,
-        zOffset
+        zOffset,
+        featureIndex
       );
     } else if (feature.geometry.type === "MultiPolygon") {
       for (const rings of feature.geometry.coordinates as number[][][][]) {
-        addPolygonFill(rings, helper, builder, radius, zOffset);
+        addPolygonFill(rings, helper, builder, radius, zOffset, featureIndex);
       }
     }
     // other geometry types are handled by the line path (polygonsToOutlines)
@@ -327,8 +333,34 @@ function fillGeometryFromBuilder(builder: TGpuPolygonFillBuilder) {
     "triLatLonC",
     new THREE.Float32BufferAttribute(builder.triLatLonC, 2)
   );
+  // choropleth input, refilled by applyVectorFeatureValues; NaN renders as
+  // the constant fill color
+  geometry.setAttribute(
+    "featureValue",
+    new THREE.Float32BufferAttribute(
+      new Float32Array(builder.positions.length / 3).fill(NaN),
+      1
+    )
+  );
+  // vertex -> source-feature mapping, kept CPU-side so per-feature values can
+  // be refilled (colorBy changes) without retriangulating
+  geometry.userData.featureIndex = Uint32Array.from(builder.featureIndex);
   geometry.computeBoundingSphere();
   return geometry;
+}
+
+// Refill the featureValue attribute from per-feature values (in source
+// feature order) using the vertex mapping recorded at triangulation time.
+function applyVectorFeatureValues(
+  geometry: THREE.BufferGeometry,
+  values: ArrayLike<number>
+) {
+  const attribute = geometry.getAttribute("featureValue");
+  const featureIndex = geometry.userData.featureIndex as Uint32Array;
+  for (let i = 0; i < featureIndex.length; i++) {
+    attribute.setX(i, values[featureIndex[i]] ?? NaN);
+  }
+  attribute.needsUpdate = true;
 }
 
 // Convert Polygon/MultiPolygon features to ring outlines so the existing GPU
@@ -360,6 +392,7 @@ function polygonsToOutlines(geojson: FeatureCollection): FeatureCollection {
 }
 
 export {
+  applyVectorFeatureValues,
   geojson2gpuPolygonFillGeometry,
   MAX_TRIANGLE_EDGE_DEGREES,
   planarFillRings,

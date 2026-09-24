@@ -13,6 +13,10 @@ import {
   useGlobeControlStore,
   type TGlobeControlStoreKeys,
 } from "./store.ts";
+import {
+  encodeVectorLayersParam,
+  vectorLayerSpecsFromStack,
+} from "./vectorLayerParams.ts";
 
 import { encodeVolumeUrlState } from "@/lib/volume/volumeUrlState.ts";
 
@@ -188,6 +192,16 @@ export function useUrlSync() {
           typeof opacity === "number" && opacity < 1 ? opacity : "",
       });
     }
+  );
+
+  // URL-sourced vector layers (source URL + visibility/opacity/style); file
+  // layers carry no source URL and are not encoded
+  watchDebounced(
+    () => encodeVectorLayersParam(vectorLayerSpecsFromStack(store.layerStack)),
+    (state) => {
+      changeURLHash({ [URL_PARAMETERS.VECTOR_LAYERS]: state });
+    },
+    { debounce: 200 }
   );
 
   watch(

@@ -12,6 +12,7 @@ import {
 } from "@/lib/layers/equirectLayer.ts";
 import { geojson2gpuLineSegmentsGeometry } from "@/lib/layers/geojson.ts";
 import {
+  applyVectorFeatureValues,
   geojson2gpuPolygonFillGeometry,
   polygonsToOutlines,
 } from "@/lib/layers/geojsonPolygons.ts";
@@ -21,6 +22,7 @@ import {
 } from "@/lib/layers/gpuProjectedLines.ts";
 import {
   makeGpuProjectedPolygonMaterial,
+  updateGpuProjectedPolygonChoropleth,
   updateGpuProjectedPolygonMaterial,
 } from "@/lib/layers/gpuProjectedPolygons.ts";
 import {
@@ -30,6 +32,10 @@ import {
 } from "@/lib/layers/landSeaMask.ts";
 import { ResourceCache } from "@/lib/layers/ResourceCache.ts";
 import { getTexture } from "@/lib/layers/textureStore.ts";
+import {
+  resolveChoroplethRange,
+  scanFeatureProperty,
+} from "@/lib/layers/vectorChoropleth.ts";
 import { getVectorLayerData } from "@/lib/layers/vectorDataStore.ts";
 import type { ProjectionHelper } from "@/lib/projection/projectionUtils.ts";
 import {
@@ -589,8 +595,36 @@ export function useGridOverlays(options: UseGridOverlaysOptions) {
       } else if (child instanceof THREE.Mesh) {
         (material.uniforms.fillColor.value as THREE.Color).set(style.fillColor);
         material.uniforms.fillOpacity.value = entry.opacity;
+        applyVectorChoropleth(child, entry, style.colorBy);
       }
     }
+  }
+
+  // per-feature values ride the featureValue attribute (refilled only when
+  // colorBy changes); colormap and range are uniforms
+  function applyVectorChoropleth(
+    mesh: THREE.Mesh,
+    entry: TLayerEntry,
+    colorBy: string | undefined
+  ) {
+    const material = mesh.material as THREE.ShaderMaterial;
+    const style = getVectorStyle(entry);
+    const data = getVectorLayerData(entry.id);
+    if (!data || !colorBy) {
+      delete mesh.userData.choroplethProperty;
+      updateGpuProjectedPolygonChoropleth(material, undefined);
+      return;
+    }
+    const scan = scanFeatureProperty(data, colorBy);
+    if (mesh.userData.choroplethProperty !== colorBy) {
+      applyVectorFeatureValues(mesh.geometry, scan.values);
+      mesh.userData.choroplethProperty = colorBy;
+    }
+    const range = resolveChoroplethRange(scan.autoRange, style);
+    updateGpuProjectedPolygonChoropleth(
+      material,
+      range ? { colormap: style.colormap, ...range } : undefined
+    );
   }
 
   function updateVectorGroupProjection(group: THREE.Group) {

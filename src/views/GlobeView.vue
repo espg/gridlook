@@ -49,6 +49,7 @@ import {
   isPresenterActive,
 } from "@/store/usePresenterSync.ts";
 import { useUrlSync } from "@/store/useUrlSync.ts";
+import { decodeVectorLayersParam } from "@/store/vectorLayerParams.ts";
 import Toast from "@/ui/common/Toast.vue";
 import { useLog } from "@/ui/common/useLog.ts";
 import { useVectorLayerInjection } from "@/ui/common/useVectorLayerInjection.ts";
@@ -67,6 +68,7 @@ import GlobeControls from "@/ui/overlays/Controls.vue";
 import DistanceScale from "@/ui/overlays/DistanceScale.vue";
 import HoverReadout from "@/ui/overlays/HoverReadout.vue";
 import InfoPanel from "@/ui/overlays/InfoPanel.vue";
+import VectorChoroplethLegend from "@/ui/overlays/VectorChoroplethLegend.vue";
 import VectorHoverReadout from "@/ui/overlays/VectorHoverReadout.vue";
 
 const props = defineProps<{ src: string }>();
@@ -122,6 +124,7 @@ const {
   paramVolume,
   paramVolumeState,
   paramVolumeOpacity,
+  paramVectorLayers,
 } = storeToRefs(urlParameterStore);
 
 type TGlobeHandle = {
@@ -518,12 +521,31 @@ const applyHyperglobePresenter = () => {
 
 onMounted(async () => {
   await loadCurrentSource(false);
+  await restoreVectorLayersFromParam();
 });
+
+const { addVectorLayerFromFile, reconcileVectorLayersFromSpecs } =
+  useVectorLayerInjection();
+
+// Restore URL-sourced vector layers from the `vectorlayers` deep link. On a
+// hashchange this reconciles the stack against the new value; file/drag-drop
+// layers stay untouched.
+async function restoreVectorLayersFromParam() {
+  await reconcileVectorLayersFromSpecs(
+    decodeVectorLayersParam(paramVectorLayers.value ?? "")
+  );
+}
+
+watch(
+  () => paramVectorLayers.value,
+  () => {
+    void restoreVectorLayersFromParam();
+  }
+);
 
 // Drag-and-drop layer injection: dropping a file anywhere in the window routes
 // GeoJSON to the vector path and PNG/JPEG/GeoTIFF to the texture path, matching
 // the formats the upload action accepts (LayerPanel's onFileSelected).
-const { addVectorLayerFromFile } = useVectorLayerInjection();
 
 useEventListener(window, "dragover", (e: DragEvent) => {
   if (e.dataTransfer?.types.includes("Files")) {
@@ -644,6 +666,7 @@ useEventListener(window, "keydown", (e: KeyboardEvent) => {
       />
       <HoverReadout v-if="detectedGridType !== undefined" />
       <VectorHoverReadout v-if="detectedGridType !== undefined" />
+      <VectorChoroplethLegend v-if="detectedGridType !== undefined" />
       <DistanceScale v-if="detectedGridType !== undefined" />
     </div>
     <div

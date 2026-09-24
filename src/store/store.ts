@@ -12,6 +12,7 @@ import {
   LAND_SEA_MASK_MODES,
   type TLandSeaMaskMode,
 } from "@/lib/layers/landSeaMask.ts";
+import { scanNumericProperties } from "@/lib/layers/vectorChoropleth.ts";
 import {
   deleteVectorLayerData,
   setVectorLayerData,
@@ -102,11 +103,19 @@ export const VECTOR_LAYER_OPACITY = 0.35;
 export type TVectorLayerStyle = {
   fillColor: string;
   strokeColor: string;
+  // choropleth: when colorBy names a numeric feature property, fills derive
+  // per-feature colors from it through the named colormap; rangeLow/rangeHigh
+  // override the auto-computed data range per side (undefined = auto)
+  colorBy?: string;
+  colormap: TColorMap;
+  rangeLow?: number;
+  rangeHigh?: number;
 };
 
 export const VECTOR_LAYER_STYLE_DEFAULTS: TVectorLayerStyle = {
   fillColor: "#3388ff",
   strokeColor: "#88ccff",
+  colormap: "viridis",
 };
 
 export const STREAMLINE_LOADING_STAGES = {
@@ -128,6 +137,11 @@ export type TLayerEntry = {
   maskMode: TLandSeaMaskMode;
   // per-layer colors of vector layers (the fill opacity is `opacity`)
   vectorStyle?: TVectorLayerStyle;
+  // numeric feature properties available for choropleth (scanned at ingest)
+  vectorNumericProperties?: string[];
+  // source URL of URL-injected vector layers; drives deep-linking (file and
+  // drag-drop layers have none and stay session-only)
+  vectorSourceUrl?: string;
 };
 
 export type TVolumeSelection = {
@@ -473,7 +487,8 @@ export const useGlobeControlStore = defineStore("globeControl", {
       id: string,
       name: string,
       data: FeatureCollection,
-      visible = true
+      visible = true,
+      sourceUrl?: string
     ) {
       // the FeatureCollection lives in the module-level registry, not in the
       // stack: it is render-only input, and deep reactivity (or the JSON clone
@@ -487,6 +502,8 @@ export const useGlobeControlStore = defineStore("globeControl", {
         opacity: VECTOR_LAYER_OPACITY,
         maskMode: LAND_SEA_MASK_MODES.OFF,
         vectorStyle: { ...VECTOR_LAYER_STYLE_DEFAULTS },
+        vectorNumericProperties: scanNumericProperties(data),
+        vectorSourceUrl: sourceUrl,
       });
     },
     updateVectorLayerStyle(id: string, patch: Partial<TVectorLayerStyle>) {

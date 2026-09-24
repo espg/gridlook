@@ -288,3 +288,71 @@ it("tracks the hovered vector feature", () => {
   store.clearHoveredVectorFeature();
   expect(store.hoveredVectorFeature).toBeUndefined();
 });
+
+it("records the source URL for URL-injected vector layers only", () => {
+  const store = useGlobeControlStore();
+  const data: FeatureCollection = { type: "FeatureCollection", features: [] };
+
+  store.addVectorLayer("from-file", "local.geojson", data);
+  store.addVectorLayer(
+    "from-url",
+    "basins.geojson",
+    data,
+    true,
+    "https://example.com/basins.geojson"
+  );
+
+  const fromFile = store.layerStack.find((layer) => layer.id === "from-file");
+  const fromUrl = store.layerStack.find((layer) => layer.id === "from-url");
+  expect(fromFile?.vectorSourceUrl).toBeUndefined();
+  expect(fromUrl?.vectorSourceUrl).toBe("https://example.com/basins.geojson");
+});
+
+it("caches numeric properties and tracks choropleth style state", () => {
+  const store = useGlobeControlStore();
+  const data: FeatureCollection = {
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        properties: { name: "a", count: 12 },
+        geometry: { type: "Point", coordinates: [0, 0] },
+      },
+      {
+        type: "Feature",
+        properties: { count: 7, area: 1.5 },
+        geometry: { type: "Point", coordinates: [1, 0] },
+      },
+    ],
+  };
+
+  store.addVectorLayer("vector-layer", "basins.geojson", data);
+  const entry = store.layerStack.find((layer) => layer.id === "vector-layer");
+  // scanned once at ingest; string properties don't qualify
+  expect(entry?.vectorNumericProperties).toEqual(["area", "count"]);
+  expect(entry?.vectorStyle?.colorBy).toBeUndefined();
+  expect(entry?.vectorStyle?.colormap).toBe(
+    VECTOR_LAYER_STYLE_DEFAULTS.colormap
+  );
+
+  store.updateVectorLayerStyle("vector-layer", {
+    colorBy: "count",
+    colormap: "turbo",
+    rangeLow: 0,
+    rangeHigh: 20,
+  });
+  expect(entry?.vectorStyle?.colorBy).toBe("count");
+  expect(entry?.vectorStyle?.colormap).toBe("turbo");
+  expect(entry?.vectorStyle?.rangeLow).toBe(0);
+  expect(entry?.vectorStyle?.rangeHigh).toBe(20);
+
+  // undefined clears back to auto range / constant styling
+  store.updateVectorLayerStyle("vector-layer", {
+    colorBy: undefined,
+    rangeLow: undefined,
+    rangeHigh: undefined,
+  });
+  expect(entry?.vectorStyle?.colorBy).toBeUndefined();
+  expect(entry?.vectorStyle?.rangeLow).toBeUndefined();
+  expect(entry?.vectorStyle?.rangeHigh).toBeUndefined();
+});

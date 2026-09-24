@@ -29,6 +29,7 @@ const URL_PARAMETERS = {
   DIM_MIN_BOUNDS: "dimMinBounds",
   DIM_MAX_BOUNDS: "dimMaxBounds",
   LIVE: "live",
+  VECTOR_LAYERS: "vectorlayers",
 } as const;
 
 type TURLParameterValues = (typeof URL_PARAMETERS)[keyof typeof URL_PARAMETERS];

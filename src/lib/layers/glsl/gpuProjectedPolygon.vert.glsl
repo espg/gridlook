@@ -10,9 +10,11 @@ uniform float zOffset;
 attribute vec2 latLon;
 attribute vec2 triLatLonB;
 attribute vec2 triLatLonC;
+attribute float featureValue;
 
 varying float vHidden;
 varying vec2 vProjectedXY;
+varying float vFeatureValue;
 
 // Slack of the azimuthal span test, in radians of projected distance. Matches
 // the constant cutoff the line builder applies to its <= 2 degree segments.
@@ -113,6 +115,7 @@ void main() {
       maxSpan > (maxSeparation + AZIMUTHAL_SPAN_SLACK) * projectionRadius;
   }
 
+  vFeatureValue = featureValue;
   vHidden = hideTriangle ? 1.0 : 0.0;
   if (hideTriangle) {
     vProjectedXY = vec2(0.0);
