@@ -11,6 +11,7 @@ import { useScalarFieldCache } from "./composables/useScalarFieldCache.ts";
 import { useSharedGridLogic } from "./composables/useSharedGridLogic.ts";
 
 import { buildDimensionRangesAndIndices } from "@/lib/data/dimensionHandling.ts";
+import { currentLevel } from "@/lib/data/levels.ts";
 import {
   getTriangularMesh,
   loadTriangularMesh,
@@ -143,7 +144,9 @@ const colormapMaterial = computed(() =>
   makeInvertableGpuMeshMaterial(colormap.value, invertColormap.value)
 );
 
-const gridsource = computed(() => props.datasources?.levels[0].grid);
+const gridsource = computed(() =>
+  props.datasources ? currentLevel(props.datasources).grid : undefined
+);
 
 const { datasourceUpdate } = useGridDataLoader({
   getDatasources: () => props.datasources,

@@ -15,6 +15,7 @@ import {
   GRID_TYPES,
   type T_GRID_TYPES,
 } from "@/lib/data/gridTypeDetector.ts";
+import { currentLevel } from "@/lib/data/levels.ts";
 import {
   fetchCurrentTimestep,
   liveStoreBaseUrl,
@@ -175,7 +176,7 @@ const modelInfo = computed(() => {
   } else {
     return {
       title: datasources.value.name,
-      vars: datasources.value.levels[0].datasources,
+      vars: currentLevel(datasources.value).datasources,
       defaultVar: datasources.value.default_var,
       colormaps: Object.keys(availableColormaps) as TColorMap[],
     } as TModelInfo;
@@ -260,10 +261,11 @@ function prepareDefaults(src: string, index: TSources) {
 
   if (
     datasources.value &&
-    varnameSelector.value in datasources.value.levels[0].datasources
+    varnameSelector.value in currentLevel(datasources.value).datasources
   ) {
-    const variableDefaults =
-      datasources.value.levels[0].datasources[varnameSelector.value];
+    const variableDefaults = currentLevel(datasources.value).datasources[
+      varnameSelector.value
+    ];
     if (variableDefaults.default_colormap) {
       colormap.value = variableDefaults.default_colormap.name;
       if (Object.hasOwn(variableDefaults.default_colormap, "inverted")) {

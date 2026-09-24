@@ -18,6 +18,7 @@ import { useStreamlineLayer } from "./composables/useStreamlineLayer.ts";
 import { useVolume } from "./composables/useVolume.ts";
 
 import { buildDimensionRangesAndIndices } from "@/lib/data/dimensionHandling.ts";
+import { currentLevel } from "@/lib/data/levels.ts";
 import { loadVectorComponents } from "@/lib/data/streamlineData.ts";
 import {
   castDataVarToFloat32,
@@ -535,7 +536,7 @@ async function updateStreamlines(
 ) {
   const requestRevision = ++streamlineRequestRevision;
   const variableNames = Object.keys(
-    props.datasources?.levels[0]?.datasources ?? {}
+    (props.datasources && currentLevel(props.datasources)?.datasources) ?? {}
   );
   const pair = resolveVectorVariablePair(
     variableNames,

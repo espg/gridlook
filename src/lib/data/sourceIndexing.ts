@@ -491,15 +491,16 @@ export async function indexFromIndex(src: string): Promise<TSources> {
     throw new Error(`Index not found at ${src}`);
   }
   const sources = (await res.json()) as TSources;
-  const datasources = sources.levels[0].datasources;
-  const stores = collectStores(datasources);
-  try {
-    await enrichMetadata(stores, datasources, "v3");
-    sources.zarr_format = ZARR_FORMAT.V3; // eslint-disable-line camelcase
-  } catch {
-    await enrichMetadata(stores, datasources, "v2");
-    sources.zarr_format = ZARR_FORMAT.V2; // eslint-disable-line camelcase
+  for (const { datasources } of sources.levels) {
+    const stores = collectStores(datasources);
+    try {
+      await enrichMetadata(stores, datasources, "v3");
+      sources.zarr_format = ZARR_FORMAT.V3; // eslint-disable-line camelcase
+    } catch {
+      await enrichMetadata(stores, datasources, "v2");
+      sources.zarr_format = ZARR_FORMAT.V2; // eslint-disable-line camelcase
+    }
+    hideFormulaTermVariablesWithoutStandardName(datasources);
   }
-  hideFormulaTermVariablesWithoutStandardName(datasources);
   return sources;
 }

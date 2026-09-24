@@ -1,5 +1,7 @@
 import type * as zarr from "zarrita";
 
+import { currentLevel } from "./levels.ts";
+
 import { verticalCoordinateScore } from "@/lib/data/dimensionData.ts";
 import { isTimeCoordinate } from "@/lib/data/timeHandling.ts";
 import {
@@ -210,7 +212,7 @@ function magnitudeAlreadyExists(
   standardName: string
 ) {
   const group = getVariableGroup(pair.u);
-  return Object.entries(datasources.levels[0].datasources).some(
+  return Object.entries(currentLevel(datasources).datasources).some(
     ([name, source]) =>
       getVariableGroup(name) === group &&
       source.attrs?.standard_name === standardName
