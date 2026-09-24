@@ -81,8 +81,11 @@ jobs:
 
       - name: Assert both halves are enabled on install
         run: |
-          jupyter server extension list 2>&1 | tee /dev/stderr | grep -E "gridlook_jupyter .*enabled"
-          jupyter labextension list 2>&1 | tee /dev/stderr | grep -E "jupyterlab-gridlook .*enabled"
+          # enabled AND validated: `OK` is the part that proves each half loads
+          servers=$(jupyter server extension list 2>&1) && echo "$servers"
+          echo "$servers" | grep -E "gridlook_jupyter .*enabled"
+          echo "$servers" | grep -E "gridlook_jupyter [0-9.]+ .*OK"
+          jupyter labextension list 2>&1 | tee /dev/stderr | grep -E "jupyterlab-gridlook v[0-9.]+ .*enabled.*OK"
 
       - name: Ruff
         run: |
@@ -92,7 +95,7 @@ jobs:
       - name: Pytest
         run: pytest jupyter/tests -v
 
-      - name: Jest (labextension URL helpers)
+      - name: Jest (labextension helpers)
         working-directory: jupyter/labextension
         run: |
           jlpm install
