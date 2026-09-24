@@ -76,6 +76,21 @@ function estimatedCellCount(
 }
 
 /**
+ * Whether a level holds more cells than `maxCells`, the check that keeps it
+ * out of automatic selection. A level with neither a count nor a resolution
+ * cannot be judged and is not over the cap.
+ */
+export function exceedsCellCap(
+  level: Pick<TSourceLevel, "resolution" | "cellCount">,
+  maxCells = DEFAULT_MAX_LEVEL_CELLS
+) {
+  if (level.cellCount === undefined && !(level.resolution! > 0)) {
+    return false;
+  }
+  return estimatedCellCount(level) > maxCells;
+}
+
+/**
  * The level a camera should render: the level whose cells come nearest to
  * `pixelsPerCell` pixels at the sub-camera point (nearest in log2 cell size),
  * skipping levels with more cells than `maxCells`, and keeping the active
@@ -104,7 +119,7 @@ export function selectLevel(
   const mismatch = (index: number) =>
     Math.abs(Math.log2(levels[index].resolution!) - Math.log2(target));
   const eligible = candidates.filter(
-    ({ level }) => estimatedCellCount(level) <= maxCells
+    ({ level }) => !exceedsCellCap(level, maxCells)
   );
   if (eligible.length === 0) {
     // Nothing fits the renderer: the coarsest level is the least harmful.

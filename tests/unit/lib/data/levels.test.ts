@@ -9,6 +9,7 @@ import {
   DEFAULT_HYSTERESIS_ORDERS,
   DEFAULT_MAX_LEVEL_CELLS,
   DEFAULT_PIXELS_PER_CELL,
+  exceedsCellCap,
   groundMetersPerPixel,
   selectLevel,
   type TLevelSelectionCamera,
@@ -192,6 +193,14 @@ describe("selectLevel limits", () => {
       cellCount: 2_000_000,
     }));
     expect(selectLevel(cameraFor(resolution(16)), regional, 4)).toBe(0);
+  });
+
+  it("flags the levels selection leaves out, estimated or counted", () => {
+    expect(exceedsCellCap(healpixLevel(11))).toBe(true);
+    expect(exceedsCellCap(healpixLevel(10))).toBe(false);
+    // Order 10 without a count is estimated over the cap, as selectLevel does.
+    expect(exceedsCellCap({ resolution: resolution(10) })).toBe(true);
+    expect(exceedsCellCap({})).toBe(false);
   });
 
   it("falls back to the coarsest level when nothing fits the renderer", () => {

@@ -1,7 +1,8 @@
 <script lang="ts" setup>
 import { computed } from "vue";
 
-import { DEFAULT_MAX_LEVEL_CELLS } from "@/lib/data/levels.ts";
+import { exceedsCellCap } from "@/lib/data/levels.ts";
+import { PROJECTION_TYPES } from "@/lib/projection/projectionUtils.ts";
 import type { TSourceLevel } from "@/lib/types/GlobeTypes.ts";
 import { useGlobeControlStore } from "@/store/store.ts";
 
@@ -28,9 +29,14 @@ const options = computed(() =>
   props.levels.map((level, index) => ({
     index,
     label: `${level.name ?? index}${formatResolution(level.resolution)}`,
-    // still selectable by hand; the camera never picks these (see DEFAULT_MAX_LEVEL_CELLS)
-    tooManyCells: (level.cellCount ?? 0) > DEFAULT_MAX_LEVEL_CELLS,
+    // still selectable by hand; the camera never picks these
+    tooManyCells: exceedsCellCap(level),
   }))
+);
+
+// Flat projections have no camera height and keep the loaded level.
+const onGlobe = computed(
+  () => store.projectionMode === PROJECTION_TYPES.NEARSIDE_PERSPECTIVE
 );
 
 function onLevelChange(event: Event) {
@@ -71,11 +77,12 @@ function onAutoChange(event: Event) {
       </div>
       <label class="checkbox is-size-7">
         <input
-          :checked="store.levelAuto"
+          :checked="store.levelAuto && onGlobe"
+          :disabled="!onGlobe"
           type="checkbox"
           @change="onAutoChange"
         />
-        Pick the level from the zoom
+        Pick the level from the zoom{{ onGlobe ? "" : " (globe only)" }}
       </label>
     </div>
   </div>
