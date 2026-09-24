@@ -61,6 +61,8 @@ def test_region_is_omitted_when_unset(aws_env, captured_store, monkeypatch):
 
 
 def test_no_credentials_fails_loudly(aws_env, captured_store):
-    with pytest.raises(RuntimeError, match="no AWS credentials resolved for bucket 'private-bucket'"):
+    with pytest.raises(
+        RuntimeError, match="no AWS credentials resolved for bucket 'private-bucket'"
+    ):
         cfg.default_store_factory("private-bucket", None)
     assert captured_store == []
