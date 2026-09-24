@@ -32,6 +32,10 @@ import {
   loadTextures,
   saveTexture,
 } from "@/lib/layers/textureStore.ts";
+import {
+  isSupportedVectorLayerFile,
+  VECTOR_LAYER_UPLOAD_ACCEPT,
+} from "@/lib/layers/vectorLayerFormats.ts";
 import type { TModelInfo } from "@/lib/types/GlobeTypes.ts";
 import { getVolumeUnavailableReason } from "@/lib/volume/volumeVariables.ts";
 import {
@@ -41,10 +45,13 @@ import {
   LAYER_KINDS,
   LAYER_OPACITY,
   useGlobeControlStore,
+  VECTOR_LAYER_STYLE_DEFAULTS,
   type TLayerEntry,
   type TLayerKind,
+  type TVectorLayerStyle,
 } from "@/store/store.ts";
 import { useLog } from "@/ui/common/useLog.ts";
+import { useVectorLayerInjection } from "@/ui/common/useVectorLayerInjection.ts";
 import VolumeControls from "@/ui/overlays/controls/VolumeControls.vue";
 
 const props = defineProps<{
@@ -77,6 +84,10 @@ const {
   varinfo,
 } = storeToRefs(store);
 const { logError } = useLog();
+const { addVectorLayerFromFile, addVectorLayerFromUrl } =
+  useVectorLayerInjection();
+
+const LAYER_UPLOAD_ACCEPT = `${TEXTURE_LAYER_UPLOAD_ACCEPT},${VECTOR_LAYER_UPLOAD_ACCEPT}`;
 
 const streamlineLoadingLabel = computed(() =>
   streamlineProgress.value === undefined
@@ -85,6 +96,9 @@ const streamlineLoadingLabel = computed(() =>
 );
 
 const fileInput = ref<HTMLInputElement>();
+const vectorUrl = ref("");
+const vectorUrlFormOpen = ref(false);
+const vectorUrlLoading = ref(false);
 const draggedId = ref<string | undefined>(undefined);
 const dropTargetIndex = ref<number | undefined>(undefined);
 const expandedLayerId = ref<string | undefined>(undefined);
@@ -98,6 +112,7 @@ const ADD_LAYER_ACTIONS = {
   STREAMLINES: LAYER_KINDS.STREAMLINES,
   VOLUME: LAYER_KINDS.VOLUME,
   UPLOAD: "upload",
+  VECTOR_URL: "vector-url",
   VARIABLE_IMAGE: "variable-image",
 } as const;
 
@@ -474,7 +489,18 @@ async function onFileSelected(event: Event) {
   const input = event.target as HTMLInputElement;
   const file = input.files?.[0];
   input.value = "";
-  if (!file || !isSupportedTextureLayerFile(file)) {
+  if (!file) {
+    return;
+  }
+  if (isSupportedVectorLayerFile(file)) {
+    await addVectorLayerFromFile(file);
+    return;
+  }
+  if (!isSupportedTextureLayerFile(file)) {
+    logError(
+      new Error("Supported: PNG/JPEG/GeoTIFF images or GeoJSON files"),
+      `Couldn't add "${file.name}" as a layer`
+    );
     return;
   }
   try {
@@ -485,9 +511,46 @@ async function onFileSelected(event: Event) {
   }
 }
 
+async function loadVectorLayerUrl() {
+  const url = vectorUrl.value.trim();
+  if (!url || vectorUrlLoading.value) {
+    return;
+  }
+  vectorUrlLoading.value = true;
+  try {
+    if (await addVectorLayerFromUrl(url)) {
+      vectorUrl.value = "";
+      vectorUrlFormOpen.value = false;
+    }
+  } finally {
+    vectorUrlLoading.value = false;
+  }
+}
+
+function getVectorStyle(layer: TLayerEntry): TVectorLayerStyle {
+  return layer.vectorStyle ?? VECTOR_LAYER_STYLE_DEFAULTS;
+}
+
+function setVectorStyleColor(
+  layer: TLayerEntry,
+  key: keyof TVectorLayerStyle,
+  event: Event
+) {
+  store.updateVectorLayerStyle(layer.id, {
+    [key]: (event.target as HTMLInputElement).value,
+  });
+}
+
 async function removeLayer(layer: TLayerEntry) {
   expandedLayerId.value = undefined;
-  if (layer.kind !== LAYER_KINDS.TEXTURE && isLayerVisible(layer)) {
+  // built-ins keep their visibility in separate store flags, so they are
+  // hidden before the entry goes; texture and vector layers carry it on the
+  // entry itself, where the removal takes it with them
+  if (
+    layer.kind !== LAYER_KINDS.TEXTURE &&
+    layer.kind !== LAYER_KINDS.VECTOR &&
+    isLayerVisible(layer)
+  ) {
     toggleLayer(layer);
   }
   store.removeLayer(layer.id);
@@ -669,8 +732,13 @@ const addLayerOptions = computed<TAddLayerOption[]>(() => {
   options.push(
     {
       value: ADD_LAYER_ACTIONS.UPLOAD,
-      label: "Upload image layer",
+      label: "Upload image or GeoJSON layer",
       icon: "fa-upload",
+    },
+    {
+      value: ADD_LAYER_ACTIONS.VECTOR_URL,
+      label: "GeoJSON layer from URL",
+      icon: "fa-link",
     },
     {
       value: ADD_LAYER_ACTIONS.VARIABLE_IMAGE,
@@ -711,6 +779,8 @@ function addLayer(action: TAddLayerAction) {
     store.setVolumeLayerEnabled(true);
   } else if (action === ADD_LAYER_ACTIONS.UPLOAD) {
     fileInput.value?.click();
+  } else if (action === ADD_LAYER_ACTIONS.VECTOR_URL) {
+    vectorUrlFormOpen.value = true;
   } else if (
     action === ADD_LAYER_ACTIONS.VARIABLE_IMAGE &&
     !store.gridExportLoading &&
@@ -944,6 +1014,31 @@ function getLayerName(layer: TLayerEntry) {
           </button>
         </div>
         <div v-if="expandedLayerId === layer.id" class="layer-details">
+          <div
+            v-if="layer.kind === LAYER_KINDS.VECTOR"
+            class="vector-style-controls"
+          >
+            <label>
+              <span>Fill</span>
+              <input
+                class="input is-small"
+                type="color"
+                :value="getVectorStyle(layer).fillColor"
+                :aria-label="`${layer.name} fill color`"
+                @input="setVectorStyleColor(layer, 'fillColor', $event)"
+              />
+            </label>
+            <label>
+              <span>Outline</span>
+              <input
+                class="input is-small"
+                type="color"
+                :value="getVectorStyle(layer).strokeColor"
+                :aria-label="`${layer.name} outline color`"
+                @input="setVectorStyleColor(layer, 'strokeColor', $event)"
+              />
+            </label>
+          </div>
           <label
             v-if="
               LAYER_PROPERTIES[layer.kind].buttons.includes(
@@ -1170,9 +1265,45 @@ function getLayerName(layer: TLayerEntry) {
         </SelectListbox>
       </SelectPopover>
     </SelectRoot>
+    <form
+      v-if="vectorUrlFormOpen"
+      class="field has-addons mt-2 mb-0"
+      @submit.prevent="loadVectorLayerUrl"
+    >
+      <div class="control is-expanded">
+        <input
+          v-model="vectorUrl"
+          class="input is-small"
+          type="url"
+          placeholder="https://…/regions.geojson"
+          aria-label="GeoJSON layer URL"
+        />
+      </div>
+      <div class="control">
+        <button
+          class="button is-small is-info"
+          :class="{ 'is-loading': vectorUrlLoading }"
+          type="submit"
+          :disabled="vectorUrlLoading || !vectorUrl.trim()"
+        >
+          Load
+        </button>
+      </div>
+      <div class="control">
+        <button
+          class="button is-small is-light"
+          type="button"
+          title="Cancel"
+          aria-label="Cancel loading a GeoJSON layer"
+          @click="vectorUrlFormOpen = false"
+        >
+          <span class="icon is-small"><i class="fa-solid fa-xmark"></i></span>
+        </button>
+      </div>
+    </form>
     <input
       ref="fileInput"
-      :accept="TEXTURE_LAYER_UPLOAD_ACCEPT"
+      :accept="LAYER_UPLOAD_ACCEPT"
       class="is-hidden"
       type="file"
       @change="onFileSelected"
@@ -1328,6 +1459,25 @@ function getLayerName(layer: TLayerEntry) {
 .layer-opacity-control {
   display: block;
   width: 100%;
+}
+
+.vector-style-controls {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+
+  label {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.75rem;
+    font-weight: 700;
+  }
+
+  input {
+    width: 3rem;
+    padding: 0.1rem;
+  }
 }
 
 .layer-opacity-header {

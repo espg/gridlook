@@ -1,12 +1,12 @@
 import { beforeEach, expect, it, vi } from "vitest";
-import { effectScope, nextTick } from "vue";
+import { effectScope, nextTick, shallowRef } from "vue";
 
 const { updateLandSeaMask } = vi.hoisted(() => ({
   updateLandSeaMask: vi.fn(),
 }));
 
 vi.mock("@/ui/grids/composables/useGridScene.ts", () => ({
-  useGridScene: () => ({}),
+  useGridScene: () => ({ hoveredGeoPoint: shallowRef<null>(null) }),
 }));
 
 vi.mock("@/ui/grids/composables/useGridOverlays.ts", () => ({

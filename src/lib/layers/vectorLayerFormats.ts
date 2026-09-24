@@ -1,0 +1,130 @@
+// Validation and naming for user-injected GeoJSON vector layers (mirrors
+// textureLayerFormats.ts for the texture-layer upload path).
+
+import type { FeatureCollection } from "geojson";
+
+const VECTOR_LAYER_MIME_TYPES = {
+  GEOJSON: "application/geo+json",
+  JSON: "application/json",
+} as const;
+
+type TVectorLayerMimeType =
+  (typeof VECTOR_LAYER_MIME_TYPES)[keyof typeof VECTOR_LAYER_MIME_TYPES];
+
+const VECTOR_LAYER_FILE_EXTENSIONS = {
+  GEOJSON: ".geojson",
+  JSON: ".json",
+} as const;
+
+type TVectorLayerFileExtension =
+  (typeof VECTOR_LAYER_FILE_EXTENSIONS)[keyof typeof VECTOR_LAYER_FILE_EXTENSIONS];
+
+const SUPPORTED_VECTOR_LAYER_MIME_TYPES = Object.values(
+  VECTOR_LAYER_MIME_TYPES
+) as TVectorLayerMimeType[];
+
+const SUPPORTED_VECTOR_LAYER_FILE_EXTENSIONS = Object.values(
+  VECTOR_LAYER_FILE_EXTENSIONS
+) as TVectorLayerFileExtension[];
+
+export const VECTOR_LAYER_UPLOAD_ACCEPT = [
+  ...SUPPORTED_VECTOR_LAYER_MIME_TYPES,
+  ...SUPPORTED_VECTOR_LAYER_FILE_EXTENSIONS,
+].join(",");
+
+// A sanity ceiling rather than a performance budget: regional polygon
+// collections are a few MB, so this only catches a wrong URL or a stray
+// upload, which would stall triangulation.
+export const MAX_VECTOR_LAYER_BYTES = 50 * 1024 * 1024;
+
+export function isSupportedVectorLayerFile(file: File) {
+  const lowerName = file.name.toLowerCase();
+  return (
+    SUPPORTED_VECTOR_LAYER_MIME_TYPES.includes(
+      file.type as TVectorLayerMimeType
+    ) ||
+    SUPPORTED_VECTOR_LAYER_FILE_EXTENSIONS.some((ext) =>
+      lowerName.endsWith(ext)
+    )
+  );
+}
+
+function assertVectorLayerSize(bytes: number, label: string) {
+  if (bytes > MAX_VECTOR_LAYER_BYTES) {
+    const limitMb = MAX_VECTOR_LAYER_BYTES / (1024 * 1024);
+    throw new Error(`${label} exceeds the ${limitMb} MB vector layer limit`);
+  }
+}
+
+export function parseFeatureCollection(text: string): FeatureCollection {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error("the file is not valid JSON");
+  }
+  const candidate = parsed as { type?: unknown; features?: unknown } | null;
+  if (
+    !candidate ||
+    typeof candidate !== "object" ||
+    candidate.type !== "FeatureCollection"
+  ) {
+    throw new Error("the root object must be a GeoJSON FeatureCollection");
+  }
+  if (!Array.isArray(candidate.features)) {
+    throw new Error("the FeatureCollection has no features array");
+  }
+  const collection = parsed as FeatureCollection;
+  // GeoJSON permits `geometry: null` (an "unlocated" feature), but rendering
+  // and picking dereference `feature.geometry.type`; drop such features so a
+  // mostly-good file still loads
+  const usable = collection.features.filter(
+    (feature) =>
+      feature.geometry !== null &&
+      feature.geometry !== undefined &&
+      "type" in feature.geometry
+  );
+  const dropped = collection.features.length - usable.length;
+  if (dropped > 0) {
+    console.warn(`dropped ${dropped} feature(s) with null or missing geometry`);
+  }
+  return { ...collection, features: usable };
+}
+
+// layer display name from the URL basename (query/hash stripped)
+export function vectorLayerNameFromUrl(url: string): string {
+  const path = url.split(/[?#]/)[0].replace(/\/+$/, "");
+  const base = path.split("/").pop() ?? "";
+  let decoded = base;
+  try {
+    decoded = decodeURIComponent(base);
+  } catch {
+    /* keep the raw basename */
+  }
+  return decoded || "GeoJSON layer";
+}
+
+export async function readVectorLayerFile(
+  file: File
+): Promise<FeatureCollection> {
+  assertVectorLayerSize(file.size, `"${file.name}"`);
+  return parseFeatureCollection(await file.text());
+}
+
+export async function loadVectorLayerFromUrl(
+  url: string
+): Promise<FeatureCollection> {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`the request failed with HTTP ${response.status}`);
+  }
+  const contentLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > 0) {
+    assertVectorLayerSize(contentLength, "the response");
+  }
+  const text = await response.text();
+  // UTF-16 code units, not bytes: an under-count for non-ASCII text, but close
+  // enough for a guard this loose, and it also covers a missing content-length
+  assertVectorLayerSize(text.length, "the response");
+  return parseFeatureCollection(text);
+}

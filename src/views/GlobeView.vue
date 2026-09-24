@@ -26,6 +26,9 @@ import {
   indexFromZarr,
 } from "@/lib/data/sourceIndexing.ts";
 import { ZarrDataManager } from "@/lib/data/ZarrDataManager.ts";
+import { isSupportedTextureLayerFile } from "@/lib/layers/textureLayerFormats.ts";
+import { saveTexture } from "@/lib/layers/textureStore.ts";
+import { isSupportedVectorLayerFile } from "@/lib/layers/vectorLayerFormats.ts";
 import { PROJECTION_TYPES, clamp } from "@/lib/projection/projectionUtils.ts";
 import {
   availableColormaps,
@@ -48,6 +51,7 @@ import {
 import { useUrlSync } from "@/store/useUrlSync.ts";
 import Toast from "@/ui/common/Toast.vue";
 import { useLog } from "@/ui/common/useLog.ts";
+import { useVectorLayerInjection } from "@/ui/common/useVectorLayerInjection.ts";
 import { isMobileDevice } from "@/ui/common/viewConstants.ts";
 import type { TCameraState } from "@/ui/grids/composables/useGridCameraState.ts";
 import GridCurvilinear from "@/ui/grids/Curvilinear.vue";
@@ -63,6 +67,7 @@ import GlobeControls from "@/ui/overlays/Controls.vue";
 import DistanceScale from "@/ui/overlays/DistanceScale.vue";
 import HoverReadout from "@/ui/overlays/HoverReadout.vue";
 import InfoPanel from "@/ui/overlays/InfoPanel.vue";
+import VectorHoverReadout from "@/ui/overlays/VectorHoverReadout.vue";
 
 const props = defineProps<{ src: string }>();
 
@@ -515,6 +520,42 @@ onMounted(async () => {
   await loadCurrentSource(false);
 });
 
+// Drag-and-drop layer injection: dropping a file anywhere in the window routes
+// GeoJSON to the vector path and PNG/JPEG/GeoTIFF to the texture path, matching
+// the formats the upload action accepts (LayerPanel's onFileSelected).
+const { addVectorLayerFromFile } = useVectorLayerInjection();
+
+useEventListener(window, "dragover", (e: DragEvent) => {
+  if (e.dataTransfer?.types.includes("Files")) {
+    e.preventDefault();
+  }
+});
+
+useEventListener(window, "drop", async (e: DragEvent) => {
+  const files = e.dataTransfer?.files;
+  if (!files?.length) {
+    return;
+  }
+  e.preventDefault();
+  for (const file of Array.from(files)) {
+    if (isSupportedVectorLayerFile(file)) {
+      await addVectorLayerFromFile(file);
+    } else if (isSupportedTextureLayerFile(file)) {
+      try {
+        const stored = await saveTexture(file.name, file);
+        store.addTextureLayer(stored.id, stored.name);
+      } catch (error) {
+        logError(error, "Couldn't store the uploaded texture");
+      }
+    } else {
+      logError(
+        new Error("Supported: PNG/JPEG/GeoTIFF images or GeoJSON files"),
+        `Couldn't add "${file.name}" as a layer`
+      );
+    }
+  }
+});
+
 // Prevent the long-press context menu on touch-enabled devices (e.g. touchscreen
 // laptops) while still allowing right-click context menus from a regular mouse.
 let lastPointerType = "mouse";
@@ -602,6 +643,7 @@ useEventListener(window, "keydown", (e: KeyboardEvent) => {
         :is-rotated="detectedGridType === GRID_TYPES.REGULAR_ROTATED"
       />
       <HoverReadout v-if="detectedGridType !== undefined" />
+      <VectorHoverReadout v-if="detectedGridType !== undefined" />
       <DistanceScale v-if="detectedGridType !== undefined" />
     </div>
     <div

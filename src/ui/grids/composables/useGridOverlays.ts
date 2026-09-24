@@ -1,6 +1,6 @@
 import { storeToRefs } from "pinia";
 import * as THREE from "three";
-import { watch, type ComputedRef, type Ref } from "vue";
+import { onBeforeUnmount, watch, type ComputedRef, type Ref } from "vue";
 
 import {
   applyLayerStackPosition,
@@ -38,6 +38,7 @@ import {
   LAYER_KINDS,
   LAYER_OPACITY,
   useGlobeControlStore,
+  VECTOR_LAYER_STYLE_DEFAULTS,
   type TCoastlineResolution,
   type TGraticuleSpacing,
   type TLayerEntry,
@@ -73,15 +74,9 @@ const COASTLINE_GEOJSON_PATHS: Record<TCoastlineResolution, string> = {
   [COASTLINE_RESOLUTIONS.FIFTY_M]: "static/ne_50m_coastline.geojson",
 };
 
-const vectorFillStyle = {
-  color: "#3388ff",
-  radius: 1.001,
-} as const;
-
-const vectorStrokeStyle: TOverlayLineStyle = {
-  color: "#88ccff",
-  radius: 1.002,
-} as const;
+// placement only; colors come from the layer entry's vectorStyle
+const vectorFillPlacement = { radius: 1.001 } as const;
+const vectorStrokePlacement = { radius: 1.002 } as const;
 
 const GRATICULE_GEOJSON_PATHS: Record<TGraticuleSpacing, string> = {
   [GRATICULE_SPACINGS.FIFTEEN_DEGREES]: "static/ne_50m_graticules_15.geojson",
@@ -161,7 +156,7 @@ export function useGridOverlays(options: UseGridOverlaysOptions) {
     }
   );
 
-  function getLineProjectionOptions(style: TOverlayLineStyle) {
+  function getLineProjectionOptions(style: Pick<TOverlayLineStyle, "radius">) {
     return {
       radius: projectionHelper.value.isFlat ? 1 : style.radius,
       zOffset: 0,
@@ -535,7 +530,7 @@ export function useGridOverlays(options: UseGridOverlaysOptions) {
 
   function getFillProjectionOptions() {
     return {
-      radius: projectionHelper.value.isFlat ? 1 : vectorFillStyle.radius,
+      radius: projectionHelper.value.isFlat ? 1 : vectorFillPlacement.radius,
       zOffset: 0,
     };
   }
@@ -546,10 +541,11 @@ export function useGridOverlays(options: UseGridOverlaysOptions) {
       return undefined;
     }
     const helper = projectionHelper.value;
+    const style = getVectorStyle(entry);
     const fill = new THREE.Mesh(
       geojson2gpuPolygonFillGeometry(data, helper, getFillProjectionOptions()),
       makeGpuProjectedPolygonMaterial({
-        color: vectorFillStyle.color,
+        color: style.fillColor,
         opacity: entry.opacity,
         ...getFillProjectionOptions(),
       })
@@ -560,11 +556,11 @@ export function useGridOverlays(options: UseGridOverlaysOptions) {
       geojson2gpuLineSegmentsGeometry(
         polygonsToOutlines(data),
         helper,
-        getLineProjectionOptions(vectorStrokeStyle)
+        getLineProjectionOptions(vectorStrokePlacement)
       ),
       makeGpuProjectedLineMaterial({
-        color: vectorStrokeStyle.color,
-        ...getLineProjectionOptions(vectorStrokeStyle),
+        color: style.strokeColor,
+        ...getLineProjectionOptions(vectorStrokePlacement),
       })
     );
     outline.name = `vectorOutline:${entry.id}`;
@@ -575,12 +571,24 @@ export function useGridOverlays(options: UseGridOverlaysOptions) {
     return group;
   }
 
-  // the layer opacity applies to the fill only; outlines stay opaque
-  function applyVectorLayerOpacity(group: THREE.Group, opacity: number) {
+  function getVectorStyle(entry: TLayerEntry) {
+    return entry.vectorStyle ?? VECTOR_LAYER_STYLE_DEFAULTS;
+  }
+
+  // style changes are pure uniform updates; geometry is never rebuilt. The
+  // layer opacity applies to the fill only; outlines stay opaque.
+  function applyVectorLayerStyle(group: THREE.Group, entry: TLayerEntry) {
+    const style = getVectorStyle(entry);
     for (const child of group.children) {
-      if (child instanceof THREE.Mesh) {
-        (child.material as THREE.ShaderMaterial).uniforms.fillOpacity.value =
-          opacity;
+      const material = (child as THREE.Mesh | THREE.LineSegments)
+        .material as THREE.ShaderMaterial;
+      if (child instanceof THREE.LineSegments) {
+        (material.uniforms.lineColor.value as THREE.Color).set(
+          style.strokeColor
+        );
+      } else if (child instanceof THREE.Mesh) {
+        (material.uniforms.fillColor.value as THREE.Color).set(style.fillColor);
+        material.uniforms.fillOpacity.value = entry.opacity;
       }
     }
   }
@@ -591,7 +599,7 @@ export function useGridOverlays(options: UseGridOverlaysOptions) {
         updateGpuProjectedLineMaterial(
           child.material as THREE.ShaderMaterial,
           projectionHelper.value,
-          getLineProjectionOptions(vectorStrokeStyle)
+          getLineProjectionOptions(vectorStrokePlacement)
         );
       } else if (child instanceof THREE.Mesh) {
         updateGpuProjectedPolygonMaterial(
@@ -650,13 +658,23 @@ export function useGridOverlays(options: UseGridOverlaysOptions) {
         scene.add(group);
       }
       group.visible = entry.visible;
-      applyVectorLayerOpacity(group, entry.opacity);
+      applyVectorLayerStyle(group, entry);
       updateVectorGroupProjection(group);
     }
 
     applyLayerOrders();
     redraw();
   }
+
+  // useGridScene's teardown calls scene.clear(), which detaches without
+  // disposing; vector fills are the largest geometry produced here (a
+  // non-indexed triangle soup with 10 floats per vertex), so release them
+  // rather than leak one set per grid-type switch
+  onBeforeUnmount(() => {
+    for (const id of [...vectorLayerGroups.keys()]) {
+      removeVectorLayerGroup(id);
+    }
+  });
 
   function updateLayerProjectionUniforms() {
     if (landSeaMask) {
