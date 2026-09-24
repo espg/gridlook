@@ -3,10 +3,11 @@
  *
  * Ported from the index.ts attached to d70-t/gridlook#214. The one change:
  * the viewer is the SPA served by the gridlook-jupyter server extension at
- * `<base>/gridlook/`, not a copy in this extension's static dir — served from
- * there it gets jupyter's ordinary CSP (a document under `/files/` or a
- * labextension's static dir is sandboxed with an opaque origin), and one
- * wheel carries one build of the viewer.
+ * `<base>/gridlook/`, not a copy in this extension's static dir — one wheel
+ * carries one build of the viewer, served under the server extension's own
+ * handler and CSP next to the routes it fetches from, and the same URL works
+ * outside Lab. (A copy under `/files/` would not load at all: jupyter
+ * sandboxes user files with an opaque origin.)
  */
 
 import {
