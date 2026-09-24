@@ -12,11 +12,30 @@ _MAX_CACHED_STORES = 64
 
 
 def default_store_factory(bucket: str, region: str | None):
-    """Build an obstore store for *bucket* using the ambient AWS credential chain."""
+    """Build an obstore store for *bucket*, resolving credentials through botocore.
+
+    botocore's chain covers every setup a hub or a laptop uses -- ``AWS_PROFILE``
+    and the shared config, SSO caches, pod/instance roles, web identity, plain
+    ``AWS_*`` env -- and refreshes expiring tokens. obstore's own Rust chain reads
+    only env keys, web identity, container and instance-metadata credentials, so
+    a hub run with a profile fell through to the metadata endpoint and hung.
+    A bucket the chain cannot sign for fails here, loudly, rather than as an
+    unsigned request: public buckets do not need the proxy at all.
+    """
+    import boto3
+    from obstore.auth.boto3 import Boto3CredentialProvider
     from obstore.store import S3Store
 
+    session = boto3.Session(region_name=region or None)
+    try:
+        provider = Boto3CredentialProvider(session)
+    except ValueError as e:
+        raise RuntimeError(
+            f"no AWS credentials resolved for bucket {bucket!r}: configure a profile "
+            "(AWS_PROFILE), a role, or AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY"
+        ) from e
     kwargs = {"region": region} if region else {}
-    return S3Store(bucket, **kwargs)
+    return S3Store(bucket, credential_provider=provider, **kwargs)
 
 
 class GridlookProxy(Configurable):

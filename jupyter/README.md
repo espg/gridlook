@@ -139,8 +139,10 @@ export GRIDLOOK_ALLOWED_BUCKETS="my-zagg-outputs,another-bucket"
 export GRIDLOOK_S3_REGION="us-west-2"
 ```
 
-S3 credentials come from the ambient chain (instance/pod role, `AWS_*` env, shared config) —
-the standard hub setup. The proxy streams responses chunk-by-chunk and never buffers whole
+S3 credentials are resolved through botocore (the same chain as the AWS CLI: `AWS_PROFILE`
+and the shared config, SSO, instance/pod roles, web identity, plain `AWS_*` env), with
+expiring tokens refreshed. A bucket the chain cannot sign for fails the request loudly
+rather than falling back to an unsigned read. The proxy streams responses chunk-by-chunk and never buffers whole
 objects; there are no presigned URLs, so nothing credential-shaped is ever exposed to the
 browser.
 
