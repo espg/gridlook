@@ -347,12 +347,20 @@ async function indexLevel(
   if (Object.keys(datasources).length === 0) {
     return null;
   }
+  // The level group may describe its grid (the DGGS convention).
+  const levelAttrs = await zarr
+    .open(root.resolve(`/${path}`), { kind: "group" })
+    .then(
+      (level) => level.attrs,
+      () => ({})
+    );
   // The grid only has to be read when the attributes give no resolution.
   const geometry = await levelGeometryFromGrid(
     datasources,
     entry.resolution === undefined
       ? (name) => readAxisStart(root, `${path}/${name}`)
-      : undefined
+      : undefined,
+    levelAttrs
   );
   return {
     ...createLevel(groupAttrs, datasources, src, path),

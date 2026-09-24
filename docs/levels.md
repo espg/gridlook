@@ -10,17 +10,20 @@ behave as before.
 - **`multiscales` attribute.** When the root group (or the group a URL points
   at) carries a `multiscales` attribute, each entry it declares becomes one
   level, read from the named child group. Two layouts are understood:
-  - OME-NGFF: `multiscales[0].datasets[].path`, listed finest first. A `scale`
-    coordinate transformation together with `axes` that carry a length unit
-    (`degree`, `metre`, `km`) gives the level's ground resolution.
+  - OME-NGFF: `multiscales[0].datasets[].path` (0.4), or the same under
+    `ome.multiscales` (0.5), listed finest first. A `scale` coordinate
+    transformation together with `axes` that carry a length unit (`degree`,
+    `metre`, `km`) gives the level's ground resolution.
   - GeoZarr: `multiscales[0].tile_matrix_limits` keyed by tile matrix (child
-    group) id, sorted so the highest zoom comes first. With the
-    `WebMercatorQuad` tile matrix set the resolution follows from the zoom.
+    group) id, or the `tileMatrices` of an inline `tile_matrix_set`. A tile
+    matrix's `cellSize` is its resolution (degrees for a CRS84/EPSG:4326 set,
+    the CRS unit, taken as metres, otherwise); with the `WebMercatorQuad` tile
+    matrix set it follows from the zoom. Levels are sorted finest first.
 - **Grid metadata.** A level whose attributes do not state a resolution gets
   one from its grid where possible: the HEALPix `nside` (from the CRS
-  variable's `healpix_nside`, or a `cell` dimension of length `12 nside²`) or
-  the spacing of a one-dimensional `lon` coordinate on a regular grid. Every
-  level also records how many cells it holds: the length of its spatial
+  variable's `healpix_nside`, the level group's DGGS `refinement_level`, or a
+  `cell` dimension of length `12 nside²`) or the spacing of a one-dimensional
+  `lon` coordinate on a regular grid. Every level also records how many cells it holds: the length of its spatial
   dimensions (`cell` for HEALPix, sparse or not; `lat · lon` or `y · x` on a
   regular grid).
 - **JSON index.** An index file may list several `levels`, each with its own

@@ -105,44 +105,75 @@ function omeEntries(multiscale: Record<string, unknown>): TMultiscaleEntry[] {
     }));
 }
 
+// Geographic CRSs whose tile matrix `cellSize` is in degrees.
+const GEOGRAPHIC_CRS = /(CRS84|EPSG\W*(0\W*)?4326)$/i;
+
 /**
- * GeoZarr: one child group per tile matrix listed in `tile_matrix_limits`,
- * finest (highest zoom) first when the matrices are numbered. Only the
- * WebMercatorQuad tile matrix set has a known ground resolution per zoom.
+ * The ground size of each tile matrix an inline GeoZarr tile matrix set
+ * states as `tileMatrices[].cellSize`: in degrees for a CRS84/EPSG:4326 set,
+ * in metres (the projected CRS's unit) otherwise.
+ */
+function tileMatrixCellSizes(tileMatrixSet: unknown): Map<string, number> {
+  const sizes = new Map<string, number>();
+  if (!isRecord(tileMatrixSet) || !Array.isArray(tileMatrixSet.tileMatrices)) {
+    return sizes;
+  }
+  const factor = GEOGRAPHIC_CRS.test(String(tileMatrixSet.crs ?? ""))
+    ? METERS_PER_DEGREE
+    : 1;
+  for (const matrix of tileMatrixSet.tileMatrices) {
+    const cellSize = isRecord(matrix) ? Number(matrix.cellSize) : NaN;
+    if (isRecord(matrix) && typeof matrix.id === "string" && cellSize > 0) {
+      sizes.set(matrix.id, cellSize * factor);
+    }
+  }
+  return sizes;
+}
+
+/**
+ * GeoZarr: one child group per tile matrix listed in `tile_matrix_limits` (or,
+ * without limits, per matrix of an inline tile matrix set). Each resolution is
+ * the matrix's `cellSize`, or follows from the zoom for WebMercatorQuad.
+ * Finest first: by resolution when every matrix has one, else by zoom when
+ * the matrices are numbered.
  */
 function geoZarrEntries(
   multiscale: Record<string, unknown>
 ): TMultiscaleEntry[] {
   const limits = multiscale.tile_matrix_limits;
-  if (!isRecord(limits)) {
-    return [];
-  }
   const tileMatrixSet = multiscale.tile_matrix_set;
+  const cellSizes = tileMatrixCellSizes(tileMatrixSet);
+  const ids = isRecord(limits) ? Object.keys(limits) : [...cellSizes.keys()];
   const isWebMercator =
     tileMatrixSet === WEB_MERCATOR_QUAD ||
     (isRecord(tileMatrixSet) && tileMatrixSet.id === WEB_MERCATOR_QUAD);
-  const ids = Object.keys(limits);
-  if (ids.every((id) => /^\d+$/.test(id))) {
-    ids.sort((a, b) => Number(b) - Number(a));
-  }
-  return ids.map((id) => ({
+  const entries = ids.map((id) => ({
     path: id,
     resolution:
-      isWebMercator && /^\d+$/.test(id)
+      cellSizes.get(id) ??
+      (isWebMercator && /^\d+$/.test(id)
         ? WEB_MERCATOR_ZOOM0_METERS_PER_PIXEL / 2 ** Number(id)
-        : undefined,
+        : undefined),
   }));
+  if (entries.every(({ resolution }) => resolution !== undefined)) {
+    entries.sort((a, b) => a.resolution! - b.resolution!);
+  } else if (ids.every((id) => /^\d+$/.test(id))) {
+    entries.sort((a, b) => Number(b.path) - Number(a.path));
+  }
+  return entries;
 }
 
 /**
  * The levels a group's `multiscales` attribute declares, finest first (OME-NGFF
- * orders its datasets that way; GeoZarr tile matrices are sorted by zoom).
- * Groups without the attribute have no levels to declare.
+ * orders its datasets that way; GeoZarr tile matrices are sorted by size).
+ * OME-NGFF 0.5 nests the attribute under `ome`. Groups without the attribute
+ * have no levels to declare.
  */
 export function parseMultiscales(
   attrs: Record<string, unknown>
 ): TMultiscaleEntry[] {
-  const multiscales = attrs.multiscales;
+  const multiscales =
+    attrs.multiscales ?? (isRecord(attrs.ome) ? attrs.ome.multiscales : null);
   const multiscale = Array.isArray(multiscales) ? multiscales[0] : multiscales;
   if (!isRecord(multiscale)) {
     return [];
@@ -156,14 +187,28 @@ function healpixResolution(nside: number) {
   return (EARTH_RADIUS_METERS * Math.sqrt(Math.PI / 3)) / nside;
 }
 
+/** The HEALPix `dggs` attribute of a level group, if it has one. */
+function healpixDggs(levelAttrs: Record<string, unknown>) {
+  const dggs = levelAttrs.dggs;
+  return isRecord(dggs) &&
+    String(dggs.name ?? "healpix").toLowerCase() === "healpix"
+    ? dggs
+    : undefined;
+}
+
 function healpixNside(
-  datasources: Record<string, TDataSource>
+  datasources: Record<string, TDataSource>,
+  levelAttrs: Record<string, unknown>
 ): number | undefined {
   for (const source of Object.values(datasources)) {
     const nside = Number(source.attrs?.healpix_nside);
     if (Number.isInteger(nside) && nside > 0) {
       return nside;
     }
+  }
+  const refinementLevel = Number(healpixDggs(levelAttrs)?.refinement_level);
+  if (Number.isInteger(refinementLevel) && refinementLevel >= 0) {
+    return 2 ** refinementLevel;
   }
   for (const source of Object.values(datasources)) {
     const dimensions = source.attrs?.dimensionNames;
@@ -192,8 +237,18 @@ const SPATIAL_DIMENSION = /^(cells?|x|y|lat|lon|latitude|longitude|rlat|rlon)$/;
  * level, however sparse, or `lat · lon` / `y · x` on a regular grid.
  */
 function spatialCellCount(
-  datasources: Record<string, TDataSource>
+  datasources: Record<string, TDataSource>,
+  levelAttrs: Record<string, unknown>
 ): number | undefined {
+  // The DGGS convention names the cell coordinate, and so its dimension.
+  const coordinate = healpixDggs(levelAttrs)?.coordinate;
+  const cellDimension =
+    typeof coordinate === "string"
+      ? datasources[coordinate]?.attrs?.dimensionNames
+      : undefined;
+  const isSpatial = (name: unknown) =>
+    SPATIAL_DIMENSION.test(String(name)) ||
+    (Array.isArray(cellDimension) && name === cellDimension[0]);
   for (const source of Object.values(datasources)) {
     const dimensions = source.attrs?.dimensionNames;
     const shape = source.shape;
@@ -207,7 +262,7 @@ function spatialCellCount(
     let count = 1;
     let spatial = false;
     dimensions.forEach((name, index) => {
-      if (SPATIAL_DIMENSION.test(String(name))) {
+      if (isSpatial(name)) {
         count *= shape[index];
         spatial = true;
       }
@@ -232,17 +287,19 @@ function findAxis(
  * The cell size and cell count of a level whose attributes do not state them,
  * read off its grid. The count is the length of the level's spatial
  * dimensions (see `spatialCellCount`). The size comes from the HEALPix nside
- * (the CRS variable, or a `12 nside²` cell dimension) or the spacing of a
+ * (the CRS variable, the level group's DGGS `refinement_level`, or a
+ * `12 nside²` cell dimension) or the spacing of a
  * one-dimensional longitude coordinate on a regular grid; `readAxis` fetches
  * the first values of a coordinate variable of the level, and without it only
  * the count is read.
  */
 export async function levelGeometryFromGrid(
   datasources: Record<string, TDataSource>,
-  readAxis?: (name: string) => Promise<ArrayLike<number>>
+  readAxis?: (name: string) => Promise<ArrayLike<number>>,
+  levelAttrs: Record<string, unknown> = {}
 ): Promise<TLevelGeometry> {
-  const cellCount = spatialCellCount(datasources);
-  const nside = healpixNside(datasources);
+  const cellCount = spatialCellCount(datasources, levelAttrs);
+  const nside = healpixNside(datasources, levelAttrs);
   if (nside !== undefined) {
     return {
       resolution: healpixResolution(nside),

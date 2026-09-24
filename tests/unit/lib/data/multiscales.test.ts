@@ -1,3 +1,4 @@
+/* eslint-disable camelcase -- Zarr metadata uses snake_case keys. */
 import { describe, expect, it, vi } from "vitest";
 
 import { EARTH_RADIUS_METERS } from "@/lib/camera/cameraSettings.ts";
@@ -71,13 +72,32 @@ describe("parseMultiscales", () => {
   });
 });
 
+describe("parseMultiscales for OME-NGFF 0.5", () => {
+  it("reads the multiscales nested under `ome`", () => {
+    const levels = parseMultiscales({
+      ome: {
+        version: "0.5",
+        ...omeAttrs(
+          ["degree", "degree"],
+          [
+            [0.25, 0.25],
+            [0.5, 0.5],
+          ]
+        ),
+      },
+    });
+    expect(levels.map((level) => level.path)).toEqual(["0", "1"]);
+    expect(levels[1].resolution).toBeCloseTo(0.5 * METERS_PER_DEGREE, 6);
+  });
+});
+
 describe("parseMultiscales for GeoZarr", () => {
   it("orders GeoZarr tile matrices finest first with WebMercatorQuad resolutions", () => {
     const levels = parseMultiscales({
       multiscales: [
         {
-          tile_matrix_set: "WebMercatorQuad", // eslint-disable-line camelcase
-          tile_matrix_limits: { "0": {}, "1": {}, "2": {} }, // eslint-disable-line camelcase
+          tile_matrix_set: "WebMercatorQuad",
+          tile_matrix_limits: { "0": {}, "1": {}, "2": {} },
         },
       ],
     });
@@ -90,12 +110,42 @@ describe("parseMultiscales for GeoZarr", () => {
     const levels = parseMultiscales({
       multiscales: [
         {
-          tile_matrix_set: { id: "CustomGrid" }, // eslint-disable-line camelcase
-          tile_matrix_limits: { coarse: {}, fine: {} }, // eslint-disable-line camelcase
+          tile_matrix_set: { id: "CustomGrid" },
+          tile_matrix_limits: { coarse: {}, fine: {} },
         },
       ],
     });
     expect(levels).toEqual([{ path: "coarse" }, { path: "fine" }]);
+  });
+});
+
+describe("parseMultiscales for inline GeoZarr tile matrix sets", () => {
+  it("reads the cell size of an inline tile matrix set", () => {
+    const tileMatrixSet = (crs: string) => ({
+      id: "Regional",
+      crs,
+      tileMatrices: [
+        { id: "coarse", cellSize: 2 },
+        { id: "fine", cellSize: 0.5 },
+      ],
+    });
+    const projected = parseMultiscales({
+      multiscales: { tile_matrix_set: tileMatrixSet("EPSG:32633") },
+    });
+    expect(projected).toEqual([
+      { path: "fine", resolution: 0.5 },
+      { path: "coarse", resolution: 2 },
+    ]);
+    const geographic = parseMultiscales({
+      multiscales: {
+        tile_matrix_set: tileMatrixSet(
+          "http://www.opengis.net/def/crs/OGC/1.3/CRS84"
+        ),
+        tile_matrix_limits: { coarse: {}, fine: {} },
+      },
+    });
+    expect(geographic.map(({ path }) => path)).toEqual(["fine", "coarse"]);
+    expect(geographic[0].resolution).toBeCloseTo(0.5 * METERS_PER_DEGREE, 6);
   });
 
   it("declares no levels without a usable multiscales attribute", () => {
@@ -117,7 +167,7 @@ describe("levelGeometryFromGrid", () => {
     const geometry = await levelGeometryFromGrid(
       {
         crs: source({
-          attrs: { grid_mapping_name: "healpix", healpix_nside: 1024 }, // eslint-disable-line camelcase
+          attrs: { grid_mapping_name: "healpix", healpix_nside: 1024 },
         }),
         tas: source({ shape: [10, 12 * 1024 * 1024] }),
       },
@@ -139,7 +189,7 @@ describe("levelGeometryFromGrid on sparse HEALPix", () => {
     const geometry = await levelGeometryFromGrid(
       {
         crs: source({
-          attrs: { grid_mapping_name: "healpix", healpix_nside: 2 ** 16 }, // eslint-disable-line camelcase
+          attrs: { grid_mapping_name: "healpix", healpix_nside: 2 ** 16 },
         }),
         cell: source({
           shape: [5000],
@@ -159,17 +209,45 @@ describe("levelGeometryFromGrid on sparse HEALPix", () => {
       6
     );
   });
+});
 
-  it("infers the HEALPix nside from a global cell dimension", async () => {
+describe("levelGeometryFromGrid for the DGGS convention", () => {
+  it("takes the HEALPix nside from the DGGS convention", async () => {
     const geometry = await levelGeometryFromGrid(
       {
+        cell_ids: source({
+          shape: [300],
+          hidden: true,
+          attrs: { dimensionNames: ["zone"] },
+        }),
         tas: source({
-          shape: [10, 12 * 16],
-          attrs: { dimensionNames: ["time", "cell"] },
+          shape: [10, 300],
+          attrs: { dimensionNames: ["time", "zone"] },
         }),
       },
-      readAxis
+      undefined,
+      {
+        dggs: {
+          name: "healpix",
+          refinement_level: 14,
+          indexing_scheme: "nested",
+          coordinate: "cell_ids",
+        },
+      }
     );
+    expect(geometry).toEqual({
+      resolution: (EARTH_RADIUS_METERS * Math.sqrt(Math.PI / 3)) / 2 ** 14,
+      cellCount: 300,
+    });
+  });
+
+  it("infers the HEALPix nside from a global cell dimension", async () => {
+    const geometry = await levelGeometryFromGrid({
+      tas: source({
+        shape: [10, 12 * 16],
+        attrs: { dimensionNames: ["time", "cell"] },
+      }),
+    });
     expect(geometry).toEqual({
       resolution: (EARTH_RADIUS_METERS * Math.sqrt(Math.PI / 3)) / 4,
       cellCount: 12 * 16,

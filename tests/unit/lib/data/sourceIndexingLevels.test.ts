@@ -1,6 +1,7 @@
 /* eslint-disable camelcase -- Zarr metadata uses snake_case keys. */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { EARTH_RADIUS_METERS } from "@/lib/camera/cameraSettings.ts";
 import { indexFromIndex, indexFromZarr } from "@/lib/data/sourceIndexing.ts";
 
 const SRC = "https://example.test/pyramid.zarr";
@@ -139,6 +140,39 @@ describe("indexing a pyramid whose levels fail to read", () => {
     ]);
     const urls = fetchMock.mock.calls.map(([input]) => requestUrl(input));
     expect(urls.some((url) => url.endsWith("/lon/0"))).toBe(false);
+  });
+});
+
+describe("indexing a HEALPix pyramid under the DGGS convention", () => {
+  it("reads each level's refinement level and stored cell count", async () => {
+    const metadata: Record<string, unknown> = {
+      ".zgroup": { zarr_format: 2 },
+      ".zattrs": omeAttrs(["14", "13"]),
+    };
+    for (const [path, cells] of [
+      ["14", 4000],
+      ["13", 1000],
+    ] as const) {
+      metadata[`${path}/.zgroup`] = { zarr_format: 2 };
+      metadata[`${path}/.zattrs`] = {
+        dggs: { name: "healpix", refinement_level: Number(path) },
+      };
+      metadata[`${path}/cell_ids/.zarray`] = zarray([cells]);
+      metadata[`${path}/cell_ids/.zattrs`] = { _ARRAY_DIMENSIONS: ["cells"] };
+      metadata[`${path}/tas/.zarray`] = zarray([cells]);
+      metadata[`${path}/tas/.zattrs`] = { _ARRAY_DIMENSIONS: ["cells"] };
+    }
+    serve({
+      [`${SRC}/.zmetadata`]: { zarr_consolidated_format: 1, metadata },
+    });
+    const index = await indexFromZarr(SRC);
+    const nsideResolution = (order: number) =>
+      (EARTH_RADIUS_METERS * Math.sqrt(Math.PI / 3)) / 2 ** order;
+    expect(index.levels.map(({ cellCount }) => cellCount)).toEqual([
+      4000, 1000,
+    ]);
+    expect(index.levels[0].resolution).toBeCloseTo(nsideResolution(14), 6);
+    expect(index.levels[1].resolution).toBeCloseTo(nsideResolution(13), 6);
   });
 });
 
