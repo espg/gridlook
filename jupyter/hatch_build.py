@@ -22,18 +22,14 @@ from pathlib import Path
 
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
-
 # Development-build outputs of `jupyter labextension build`; a wheel never needs them.
 DEV_FILES = ("*.map", "build_log.json")
 
 
 def _tool(name: str) -> str | None:
-    """Find a console script on PATH, else next to the build environment's python."""
-    found = shutil.which(name)
-    if found:
-        return found
+    """Find a console script next to the build environment's python, else on PATH."""
     candidate = Path(sys.executable).parent / name
-    return str(candidate) if candidate.exists() else None
+    return str(candidate) if candidate.exists() else shutil.which(name)
 
 
 def _strip_dev_files(out: Path) -> None:
