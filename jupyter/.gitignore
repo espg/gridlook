@@ -11,3 +11,5 @@ build/
 gridlook_jupyter/labextension/
 labextension/lib/
 labextension/.yarn/
+labextension/node_modules/
+labextension/tsconfig.tsbuildinfo
