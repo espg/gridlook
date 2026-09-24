@@ -225,7 +225,7 @@ The Lab extension (editable install; the wheel build does all of this itself):
 ```bash
 cd jupyter/labextension
 jlpm install
-jlpm test                # jest: URL construction (src/urls.ts)
+jlpm test                # jest: URL construction (src/urls.ts), tab reuse (src/tabs.ts)
 jlpm build               # tsc + `jupyter labextension build` -> ../gridlook_jupyter/labextension/
 jupyter labextension develop --overwrite ../     # symlink it into share/jupyter/labextensions/
 jupyter lab              # launcher card + "Open with Gridlook" in the file browser
