@@ -72,12 +72,20 @@ handler, not something the extension works around.
 ### The viewer stays served by the server extension
 
 The Lab tab embeds the SPA at `<base>/gridlook/`, **not** a copy under the labextension's
-static directory or a page under `/files/`. Jupyter serves user files and labextension
-statics with a `sandbox allow-scripts` content-security policy, which gives the document an
-opaque origin: the app's own module scripts and every same-origin fetch it makes (the
-`/files/` store, the S3 proxy) then fail CORS with `Origin: null`, and IndexedDB is denied. The
-SPA is the extension's own code, so `extension.py` serves it through `SpaFileHandler` under
-jupyter's ordinary policy. Keep it that way when changing how the app is served.
+static directory or a page under `/files/`, for three reasons:
+
+- **one build** — the wheel carries the viewer once, as the server extension's package data;
+  the same `/gridlook/` also serves the S3 proxy the app fetches from.
+- **the server extension's own policy** — `extension.py` serves the SPA through
+  `SpaFileHandler` under jupyter's ordinary content-security policy
+  (`frame-ancestors 'self'`). A copy under `/files/` would not work: jupyter serves user files
+  with `sandbox allow-scripts`, which gives the document an opaque origin, so the app's own
+  module scripts and every same-origin fetch (the `/files/` store, the S3 proxy) fail CORS
+  with `Origin: null`, and IndexedDB is denied.
+- **one URL everywhere** — `<base>/gridlook/#<dataset-url>` works the same outside Lab
+  (Jupyter Server alone, notebook 7, a bookmark).
+
+Keep it that way when changing how the app is served.
 
 ### Reserved: iframe `postMessage` seam
 
