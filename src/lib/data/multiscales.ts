@@ -234,11 +234,12 @@ function findAxis(
  * dimensions (see `spatialCellCount`). The size comes from the HEALPix nside
  * (the CRS variable, or a `12 nside²` cell dimension) or the spacing of a
  * one-dimensional longitude coordinate on a regular grid; `readAxis` fetches
- * the first values of a coordinate variable of the level.
+ * the first values of a coordinate variable of the level, and without it only
+ * the count is read.
  */
 export async function levelGeometryFromGrid(
   datasources: Record<string, TDataSource>,
-  readAxis: (name: string) => Promise<ArrayLike<number>>
+  readAxis?: (name: string) => Promise<ArrayLike<number>>
 ): Promise<TLevelGeometry> {
   const cellCount = spatialCellCount(datasources);
   const nside = healpixNside(datasources);
@@ -250,25 +251,26 @@ export async function levelGeometryFromGrid(
     };
   }
   const longitudeName = findAxis(datasources, isLongitudeName);
-  if (!longitudeName) {
-    return cellCount === undefined ? {} : { cellCount };
+  const latitudeName = findAxis(datasources, isLatitudeName);
+  const longitudeCount = longitudeName
+    ? datasources[longitudeName].shape?.[0]
+    : undefined;
+  const latitudeCount = latitudeName
+    ? datasources[latitudeName].shape?.[0]
+    : undefined;
+  const count =
+    cellCount ??
+    (latitudeCount && longitudeCount
+      ? latitudeCount * longitudeCount
+      : undefined);
+  const counted = count === undefined ? {} : { cellCount: count };
+  if (!longitudeName || !readAxis) {
+    return counted;
   }
   const longitudes = await readAxis(longitudeName);
   const step = Math.abs(Number(longitudes[1]) - Number(longitudes[0]));
   if (longitudes.length < 2 || !(step > 0)) {
-    return cellCount === undefined ? {} : { cellCount };
+    return counted;
   }
-  const latitudeName = findAxis(datasources, isLatitudeName);
-  const latitudeCount = latitudeName
-    ? datasources[latitudeName].shape?.[0]
-    : undefined;
-  const longitudeCount = datasources[longitudeName].shape?.[0];
-  return {
-    resolution: step * METERS_PER_DEGREE,
-    cellCount:
-      cellCount ??
-      (latitudeCount && longitudeCount
-        ? latitudeCount * longitudeCount
-        : undefined),
-  };
+  return { resolution: step * METERS_PER_DEGREE, ...counted };
 }

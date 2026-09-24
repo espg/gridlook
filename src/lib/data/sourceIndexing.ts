@@ -13,7 +13,11 @@ import {
   isIcechunkStorePath,
   splitIcechunkStoreAndGroup,
 } from "./icechunkStore.ts";
-import { levelGeometryFromGrid, parseMultiscales } from "./multiscales.ts";
+import {
+  levelGeometryFromGrid,
+  parseMultiscales,
+  type TMultiscaleEntry,
+} from "./multiscales.ts";
 import { ZarrDataManager } from "./ZarrDataManager.ts";
 
 import trim from "@/utils/trim.ts";
@@ -331,10 +335,38 @@ async function readAxisStart(
   return chunk.data as ArrayLike<number>;
 }
 
+async function indexLevel(
+  store: zarr.Listable<zarr.AsyncReadable>,
+  root: zarr.Group<zarr.AsyncReadable>,
+  src: string,
+  groupAttrs: zarr.Attributes,
+  entry: TMultiscaleEntry,
+  path: string
+): Promise<TSourceLevel | null> {
+  const datasources = await processZarrVariables(store, root, src, path);
+  if (Object.keys(datasources).length === 0) {
+    return null;
+  }
+  // The grid only has to be read when the attributes give no resolution.
+  const geometry = await levelGeometryFromGrid(
+    datasources,
+    entry.resolution === undefined
+      ? (name) => readAxisStart(root, `${path}/${name}`)
+      : undefined
+  );
+  return {
+    ...createLevel(groupAttrs, datasources, src, path),
+    name: entry.path,
+    resolution: entry.resolution ?? geometry.resolution,
+    cellCount: geometry.cellCount,
+  };
+}
+
 /**
  * Index a group whose `multiscales` attribute declares a pyramid: one level
- * per declared child group that holds arrays, finest first. A group declaring
- * fewer than two usable levels is indexed as a single level by the caller.
+ * per declared child group that holds arrays, finest first. A level that
+ * fails to index is left out, and a group left with fewer than two levels is
+ * indexed as a single level by the caller, as it was before levels existed.
  */
 async function indexLevels(
   store: zarr.Listable<zarr.AsyncReadable>,
@@ -343,28 +375,32 @@ async function indexLevels(
   zarrFormat: TZarrFormat,
   groupPath = ""
 ): Promise<TSources | null> {
-  const group = groupPath
-    ? await zarr.open(root.resolve(`/${groupPath}`), { kind: "group" })
-    : root;
+  let group = root;
+  try {
+    if (groupPath) {
+      group = await zarr.open(root.resolve(`/${groupPath}`), { kind: "group" });
+    }
+  } catch {
+    // The single-level path opens the group again and reports the error.
+    return null;
+  }
   const levels: TSourceLevel[] = [];
   for (const entry of parseMultiscales(group.attrs)) {
     const path = [groupPath, entry.path]
       .map((part) => trim(part, "/"))
       .filter(Boolean)
       .join("/");
-    const datasources = await processZarrVariables(store, root, src, path);
-    if (Object.keys(datasources).length === 0) {
-      continue;
+    const level = await indexLevel(
+      store,
+      root,
+      src,
+      group.attrs,
+      entry,
+      path
+    ).catch(() => null);
+    if (level) {
+      levels.push(level);
     }
-    const geometry = await levelGeometryFromGrid(datasources, (name) =>
-      readAxisStart(root, `${path}/${name}`)
-    );
-    levels.push({
-      ...createLevel(group.attrs, datasources, src, path),
-      name: entry.path,
-      resolution: entry.resolution ?? geometry.resolution,
-      cellCount: geometry.cellCount,
-    });
   }
   if (levels.length < 2) {
     return null;
@@ -567,6 +603,21 @@ async function enrichMetadata(
   }
 }
 
+async function enrichLevel(
+  datasources: Record<string, TDataSource>
+): Promise<TZarrFormat> {
+  const stores = collectStores(datasources);
+  let format: TZarrFormat = ZARR_FORMAT.V3;
+  try {
+    await enrichMetadata(stores, datasources, "v3");
+  } catch {
+    await enrichMetadata(stores, datasources, "v2");
+    format = ZARR_FORMAT.V2;
+  }
+  hideFormulaTermVariablesWithoutStandardName(datasources);
+  return format;
+}
+
 export async function indexFromIndex(src: string): Promise<TSources> {
   const res = await fetch(src);
   if (!res.ok) {
@@ -575,16 +626,21 @@ export async function indexFromIndex(src: string): Promise<TSources> {
     throw new Error(`Index not found at ${src}`);
   }
   const sources = (await res.json()) as TSources;
-  for (const { datasources } of sources.levels) {
-    const stores = collectStores(datasources);
-    try {
-      await enrichMetadata(stores, datasources, "v3");
-      sources.zarr_format = ZARR_FORMAT.V3; // eslint-disable-line camelcase
-    } catch {
-      await enrichMetadata(stores, datasources, "v2");
-      sources.zarr_format = ZARR_FORMAT.V2; // eslint-disable-line camelcase
-    }
-    hideFormulaTermVariablesWithoutStandardName(datasources);
-  }
+  const [base, ...finer] = sources.levels;
+  sources.zarr_format = await enrichLevel(base.datasources); // eslint-disable-line camelcase
+  // A further level whose stores cannot be read is left out rather than
+  // failing an index whose first level loads.
+  const enriched = await Promise.all(
+    finer.map((level) =>
+      enrichLevel(level.datasources).then(
+        () => level,
+        () => null
+      )
+    )
+  );
+  sources.levels = [
+    base,
+    ...enriched.filter((level): level is TSourceLevel => level !== null),
+  ];
   return sources;
 }
