@@ -39,13 +39,13 @@ e.g. on a hub: `https://hub.example.org/user/<you>/gridlook/`.
 
 ## Routes
 
-| Route                         | What                                                                                                                                    |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `/gridlook/`                  | the static gridlook SPA                                                                                                                 |
-| `/gridlook/api/health`        | tiny JSON probe (`{"extension": "gridlook-jupyter", ...}`)                                                                              |
-| `/gridlook/s3/<bucket>/<key>` | streaming S3 proxy — GET/HEAD only, `Range` pass-through (206), no LIST                                                                 |
-| `/gridlook/hive/open`         | open (or LRU-refresh) a **morton-hive virtual-store view** via moczarr — see below                                                      |
-| `/gridlook/hive/<view>/<key>` | serve one zarr object (metadata / whole chunk) of an open view                                                                          |
+| Route                         | What                                                                               |
+| ----------------------------- | ---------------------------------------------------------------------------------- |
+| `/gridlook/`                  | the static gridlook SPA                                                            |
+| `/gridlook/api/health`        | tiny JSON probe (`{"extension": "gridlook-jupyter", ...}`)                         |
+| `/gridlook/s3/<bucket>/<key>` | streaming S3 proxy — GET/HEAD only, `Range` pass-through (206), no LIST            |
+| `/gridlook/hive/open`         | open (or LRU-refresh) a **morton-hive virtual-store view** via moczarr — see below |
+| `/gridlook/hive/<view>/<key>` | serve one zarr object (metadata / whole chunk) of an open view                     |
 
 ## Configuration
 
