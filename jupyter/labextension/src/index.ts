@@ -13,7 +13,7 @@ import {
   JupyterFrontEnd,
   JupyterFrontEndPlugin,
 } from "@jupyterlab/application";
-import { ICommandPalette } from "@jupyterlab/apputils";
+import { DOMUtils, ICommandPalette } from "@jupyterlab/apputils";
 import { IFileBrowserFactory } from "@jupyterlab/filebrowser";
 import { ILauncher } from "@jupyterlab/launcher";
 import { ServerConnection } from "@jupyterlab/services";
@@ -22,6 +22,7 @@ import { Widget } from "@lumino/widgets";
 
 import gridlookSvg from "../style/gridlook.svg";
 
+import { ViewerTabs } from "./tabs";
 import { viewerSrc } from "./urls";
 
 const CommandIDs = {
@@ -41,7 +42,9 @@ class GridlookViewer extends Widget {
   constructor(baseUrl: string, path?: string) {
     super();
     const name = path ? path.split("/").pop() || path : "";
-    this.id = `gridlook-view-${(path ?? "").replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+    // Unique per tab: the path is not an id (the launcher has none, and
+    // distinct paths can sanitize alike); reuse is decided by ViewerTabs.
+    this.id = `gridlook-view-${DOMUtils.createDomID()}`;
     this.addClass("jp-GridlookViewer");
     this.title.label = name ? `Gridlook: ${name}` : "Gridlook";
     this.title.caption = path ?? "Gridlook viewer";
@@ -80,6 +83,7 @@ function activate(
   palette: ICommandPalette | null
 ): void {
   const { baseUrl } = ServerConnection.makeSettings();
+  const tabs = new ViewerTabs<GridlookViewer>();
 
   app.commands.addCommand(CommandIDs.open, {
     label: "Gridlook",
@@ -87,8 +91,14 @@ function activate(
     icon: gridlookIcon,
     execute: (args) => {
       const path = typeof args.path === "string" ? args.path : undefined;
-      const viewer = new GridlookViewer(baseUrl, path);
-      app.shell.add(viewer, "main");
+      let viewer = tabs.find(path);
+      if (!viewer) {
+        const created = new GridlookViewer(baseUrl, path);
+        tabs.add(path, created);
+        created.disposed.connect(() => tabs.remove(path, created));
+        app.shell.add(created, "main");
+        viewer = created;
+      }
       app.shell.activateById(viewer.id);
     },
   });
