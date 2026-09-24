@@ -97,11 +97,11 @@ the extension only creates the `<iframe>` (`labextension/src/index.ts`).
 
 ## Routes
 
-| Route                         | What                                                                                              |
-| ----------------------------- | ------------------------------------------------------------------------------------------------- |
-| `/gridlook/`                  | the static gridlook SPA                                                                           |
-| `/gridlook/api/health`        | tiny JSON probe (`{"extension": "gridlook-jupyter", "labextension": "jupyterlab-gridlook", ...}`) |
-| `/gridlook/s3/<bucket>/<key>` | streaming S3 proxy — GET/HEAD only, `Range` pass-through (206), no LIST                           |
+| Route                         | What                                                                                                                                                           |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/gridlook/`                  | the static gridlook SPA                                                                                                                                        |
+| `/gridlook/api/health`        | tiny JSON probe (`{"extension": "gridlook-jupyter", "labextension": "jupyterlab-gridlook", ...}`; `labextension` is `null` when the Lab half is not installed) |
+| `/gridlook/s3/<bucket>/<key>` | streaming S3 proxy — GET/HEAD only, `Range` pass-through (206), no LIST                                                                                        |
 
 ## Configuration
 
