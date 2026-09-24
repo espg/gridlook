@@ -3,6 +3,7 @@ import * as zarr from "zarrita";
 import {
   ZARR_FORMAT,
   type TDataSource,
+  type TSourceLevel,
   type TSources,
   type TZarrFormat,
 } from "../types/GlobeTypes.ts";
@@ -12,6 +13,7 @@ import {
   isIcechunkStorePath,
   splitIcechunkStoreAndGroup,
 } from "./icechunkStore.ts";
+import { levelGeometryFromGrid, parseMultiscales } from "./multiscales.ts";
 import { ZarrDataManager } from "./ZarrDataManager.ts";
 
 import trim from "@/utils/trim.ts";
@@ -276,14 +278,13 @@ async function processZarrVariables(
   return Object.fromEntries(entries);
 }
 
-function createIndex(
+function createLevel(
   groupAttrs: zarr.Attributes,
   datasources: Record<string, TDataSource>,
   src: string,
-  zarrFormat: TZarrFormat,
   datasetPath = "",
   file?: File
-): TSources {
+): TSourceLevel {
   for (const source of Object.values(datasources)) {
     source.groupAttrs = groupAttrs;
   }
@@ -294,19 +295,84 @@ function createIndex(
     ...(file ? { file } : {}),
   };
   return {
+    time: {
+      ...datasetSource,
+    },
+    grid: {
+      ...datasetSource,
+    },
+    datasources,
+  };
+}
+
+function createIndex(
+  groupAttrs: zarr.Attributes,
+  datasources: Record<string, TDataSource>,
+  src: string,
+  zarrFormat: TZarrFormat,
+  datasetPath = "",
+  file?: File
+): TSources {
+  return {
     name: groupAttrs.title as string,
     zarr_format: zarrFormat, // eslint-disable-line camelcase
-    levels: [
-      {
-        time: {
-          ...datasetSource,
-        },
-        grid: {
-          ...datasetSource,
-        },
-        datasources,
-      },
-    ],
+    levels: [createLevel(groupAttrs, datasources, src, datasetPath, file)],
+  };
+}
+
+async function readAxisStart(
+  root: zarr.Group<zarr.AsyncReadable>,
+  path: string
+): Promise<ArrayLike<number>> {
+  const array = await zarr.open(root.resolve(`/${path}`), { kind: "array" });
+  const chunk = await ZarrDataManager.getVariableDataFromArray(array, [
+    zarr.slice(0, 2),
+  ]);
+  return chunk.data as ArrayLike<number>;
+}
+
+/**
+ * Index a group whose `multiscales` attribute declares a pyramid: one level
+ * per declared child group that holds arrays, finest first. A group declaring
+ * fewer than two usable levels is indexed as a single level by the caller.
+ */
+async function indexLevels(
+  store: zarr.Listable<zarr.AsyncReadable>,
+  root: zarr.Group<zarr.AsyncReadable>,
+  src: string,
+  zarrFormat: TZarrFormat,
+  groupPath = ""
+): Promise<TSources | null> {
+  const group = groupPath
+    ? await zarr.open(root.resolve(`/${groupPath}`), { kind: "group" })
+    : root;
+  const levels: TSourceLevel[] = [];
+  for (const entry of parseMultiscales(group.attrs)) {
+    const path = [groupPath, entry.path]
+      .map((part) => trim(part, "/"))
+      .filter(Boolean)
+      .join("/");
+    const datasources = await processZarrVariables(store, root, src, path);
+    if (Object.keys(datasources).length === 0) {
+      continue;
+    }
+    const geometry = await levelGeometryFromGrid(datasources, (name) =>
+      readAxisStart(root, `${path}/${name}`)
+    );
+    levels.push({
+      ...createLevel(group.attrs, datasources, src, path),
+      name: entry.path,
+      resolution: entry.resolution ?? geometry.resolution,
+      cellCount: geometry.cellCount,
+    });
+  }
+  if (levels.length < 2) {
+    return null;
+  }
+  return {
+    name: group.attrs.title as string,
+    zarr_format: zarrFormat, // eslint-disable-line camelcase
+    levels,
   };
 }
 
@@ -378,6 +444,16 @@ async function indexFromIcechunk(src: string): Promise<TSources> {
   const { storePath, groupPath } = await splitIcechunkStoreAndGroup(src);
   const store = await createListableIcechunkStore(storePath);
   const root = await zarr.open.v3(store, { kind: "group" });
+  const levels = await indexLevels(
+    store,
+    root,
+    storePath,
+    ZARR_FORMAT.ICECHUNK,
+    groupPath
+  );
+  if (levels) {
+    return levels;
+  }
   const group = groupPath
     ? await zarr.open.v3(root.resolve(groupPath), { kind: "group" })
     : root;
@@ -406,6 +482,10 @@ export async function indexFromZarr(src: string): Promise<TSources> {
       { format: "v2" }
     );
     const root = await zarr.open(store, { kind: "group" });
+    const levels = await indexLevels(store, root, src, ZARR_FORMAT.V2);
+    if (levels) {
+      return levels;
+    }
     const datasources = await processZarrVariables(store, root, src);
     return createIndex(root.attrs, datasources, src, ZARR_FORMAT.V2);
   } catch {
@@ -415,6 +495,10 @@ export async function indexFromZarr(src: string): Promise<TSources> {
         { format: "v3" }
       );
       const root = await zarr.open(store, { kind: "group" });
+      const levels = await indexLevels(store, root, src, ZARR_FORMAT.V3);
+      if (levels) {
+        return levels;
+      }
       const datasources = await processZarrVariables(store, root, src);
       return createIndex(root.attrs, datasources, src, ZARR_FORMAT.V3);
     } catch {
