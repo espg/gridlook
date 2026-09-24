@@ -164,9 +164,25 @@ describe("selectLevel limits", () => {
         maxCells: 12 * 4 ** 12,
       })
     ).toBe(0);
-    // Without a recorded cell count the count of a global grid is assumed.
+    // Without a recorded count the estimate over-counts HEALPix (by π), so
+    // order 10 (≈ 39.5 M estimated) is left out and order 9 (≈ 9.9 M) is kept.
     const unknownCounts = deep.map(({ resolution }) => ({ resolution }));
-    expect(selectLevel(cameraFor(resolution(12)), unknownCounts, 0)).toBe(2);
+    expect(selectLevel(cameraFor(resolution(12)), unknownCounts, 0)).toBe(3);
+  });
+
+  it("over-counts levels whose cell count is unknown", () => {
+    // A global 1/16° lat/lon level holds 5760 × 2880 ≈ 16.6 M cells, over the
+    // cap; the next coarser 1/8° level (≈ 4.1 M) is eligible.
+    const degree = (Math.PI / 180) * EARTH_RADIUS_METERS;
+    const latLon = [1 / 16, 1 / 8].map((step) => ({
+      resolution: step * degree,
+    }));
+    expect(selectLevel(cameraFor(degree / 16), latLon, 0)).toBe(1);
+    // WebMercatorQuad zoom 4 holds (256 · 2⁴)² ≈ 16.8 M pixels; zoom 3 fits.
+    const zoom = (z: number) => ({ resolution: 156543.03392804097 / 2 ** z });
+    expect(
+      selectLevel(cameraFor(zoom(4).resolution), [zoom(4), zoom(3)], 0)
+    ).toBe(1);
   });
 
   it("counts the cells a sparse level stores, not the full sphere", () => {

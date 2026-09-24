@@ -46,7 +46,10 @@ holds (a dense global HEALPix level also builds textures of that size).
 Automatic selection therefore never picks a level with more than
 **12 · 4^10 ≈ 12.6 million cells** (about 50 MB of Float32 per timestep); a
 sparse regional level counts only the cells it stores, so a deep regional
-pyramid is picked all the way down. Finer levels remain available through the
+pyramid is picked all the way down. A level whose cell count is unknown is
+counted as a square grid as wide and as tall as the equator at its
+resolution, `(2πR / resolution)²`, which is never less than a global grid of
+that resolution holds. Finer levels remain available through the
 manual picker.
 
 Choosing a level in the **Variable** card turns automatic selection off; the

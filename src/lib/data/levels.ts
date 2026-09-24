@@ -60,10 +60,11 @@ export function groundMetersPerPixel(camera: TLevelSelectionCamera): number {
 }
 
 /**
- * Cells a level would allocate: its recorded count, else the count of a
- * global grid of its resolution (`4πR² / resolution²`).
- * ponytail: the estimate overshoots for regional data, which errs towards
- * keeping a level out of auto-selection; record `cellCount` to be exact.
+ * Cells a level holds: its recorded count, else an upper bound from its
+ * resolution alone — a square grid as wide and as tall as the equator,
+ * `(2πR / resolution)²`. That over-counts a global lat/lon grid (by 2) and a
+ * HEALPix sphere (by π) and matches a WebMercatorQuad zoom level, so an
+ * unknown count errs towards keeping a level out of automatic selection.
  */
 function estimatedCellCount(
   level: Pick<TSourceLevel, "resolution" | "cellCount">
@@ -71,7 +72,7 @@ function estimatedCellCount(
   if (level.cellCount !== undefined) {
     return level.cellCount;
   }
-  return (4 * Math.PI * EARTH_RADIUS_METERS ** 2) / level.resolution! ** 2;
+  return ((2 * Math.PI * EARTH_RADIUS_METERS) / level.resolution!) ** 2;
 }
 
 /**
