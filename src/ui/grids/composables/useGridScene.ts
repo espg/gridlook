@@ -28,6 +28,7 @@ import { useGridSnapshot } from "./useGridSnapshot.ts";
 
 import {
   CAMERA_VERTICAL_FOV_DEGREES,
+  getGlobeFitCameraDistance,
   getCameraDistanceForVerticalSpan,
   getGlobeMovementScale,
   getVisibleVerticalSpan,
@@ -641,12 +642,7 @@ export function useGridScene(options: UseGridSceneOptions) {
   ) {
     // Compute the tightest distance at which the globe (radius 1) still fits
     // fully within the viewport on both axes, with a small 5 % margin.
-    const vHalfFov = THREE.MathUtils.degToRad(
-      (cam.fov ?? CAMERA_VERTICAL_FOV_DEGREES) / 2
-    );
-    const hHalfFov = Math.atan(Math.tan(vHalfFov) * cam.aspect);
-    const minHalfFov = Math.min(vHalfFov, hHalfFov);
-    const targetDistance = 1.05 / Math.sin(minHalfFov);
+    const targetDistance = getGlobeFitCameraDistance(cam.aspect, cam.fov);
 
     cam.up.set(0, 0, 1);
     cam.near = 0.1;
