@@ -97,3 +97,15 @@ jobs:
         run: |
           jlpm install
           jlpm test
+
+      - name: Assert the sdist carries sources only
+        # After the jlpm install above, labextension/node_modules is present: the
+        # sdist must still leave it (and the tsc outputs) out.
+        run: |
+          uv build --sdist jupyter -o "$RUNNER_TEMP/sdist"
+          listing=$(tar tzf "$RUNNER_TEMP"/sdist/*.tar.gz)
+          echo "$listing"
+          if echo "$listing" | grep -E 'node_modules/|tsbuildinfo$|labextension/lib/'; then
+            echo "::error::the sdist ships build outputs" && exit 1
+          fi
+          test "$(echo "$listing" | wc -l)" -lt 100

@@ -49,6 +49,13 @@ include = [
     "hatch_build.py",
     "README.md",
 ]
+# Hatch reads only this directory's .gitignore (not the repo root's), so name the
+# jlpm install/tsc outputs explicitly: a wheel build runs `jlpm install` in labextension/.
+exclude = [
+    "labextension/node_modules",
+    "labextension/lib",
+    "labextension/tsconfig.tsbuildinfo",
+]
 
 [tool.ruff]
 line-length = 100
