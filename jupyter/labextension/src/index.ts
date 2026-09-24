@@ -59,6 +59,16 @@ class GridlookViewer extends Widget {
     // would travel parent <-> iframe by postMessage on this element.
     this.node.appendChild(iframe);
   }
+
+  /**
+   * Closing the tab disposes the viewer. Lumino's default close request only
+   * unparents a widget, so a closed tab would stay registered as live and
+   * "Open with Gridlook" could never reopen that path.
+   */
+  close(): void {
+    super.close();
+    this.dispose();
+  }
 }
 
 /** The single selected file-browser item, if it is a directory or .zarr. */
