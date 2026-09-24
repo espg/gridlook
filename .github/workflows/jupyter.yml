@@ -33,21 +33,39 @@ jobs:
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
-        with:
-          python-version: "3.12"
 
-      - name: Build the wheel (runs the vite build hook)
+      - name: Create a fresh venv outside the checkout
+        # Outside on purpose: the repo root package.json declares "type": "module",
+        # and node would load jlpm's bundled yarn.js as ESM (and fail) from a venv
+        # nested under it. uv's isolated build env for the wheel is elsewhere already.
+        run: |
+          uv venv --python 3.12 "$RUNNER_TEMP/venv"
+          echo "VIRTUAL_ENV=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+
+      - name: Build the wheel (runs the vite and jlpm build hooks)
         run: uv build --wheel jupyter -o jupyter/dist-py
 
       - name: Assert the wheel carries the SPA
         run: unzip -l jupyter/dist-py/*.whl | grep -q "gridlook_jupyter/static/index.html"
 
+      - name: Assert the wheel carries the prebuilt labextension
+        run: |
+          listing=$(unzip -l jupyter/dist-py/*.whl)
+          echo "$listing" | grep -q "share/jupyter/labextensions/jupyterlab-gridlook/package.json"
+          echo "$listing" | grep -q "share/jupyter/labextensions/jupyterlab-gridlook/install.json"
+          echo "$listing" | grep -q "share/jupyter/labextensions/jupyterlab-gridlook/static/remoteEntry\."
+
       - name: Assert the wheel ships no source maps
         run: "! unzip -l jupyter/dist-py/*.whl | grep -q '\\.map$'"
 
-      - name: Install the wheel with test deps
-        # setup-uv's python-version input already created and activated .venv
-        run: uv pip install "$(ls jupyter/dist-py/*.whl)[test]" ruff
+      - name: Install the wheel with jupyterlab and test deps
+        run: uv pip install "$(ls jupyter/dist-py/*.whl)[test]" "jupyterlab>=4" ruff
+
+      - name: Assert both halves are enabled on install
+        run: |
+          jupyter server extension list 2>&1 | tee /dev/stderr | grep -E "gridlook_jupyter .*enabled"
+          jupyter labextension list 2>&1 | tee /dev/stderr | grep -E "jupyterlab-gridlook .*enabled"
 
       - name: Ruff
         run: |
@@ -56,3 +74,9 @@ jobs:
 
       - name: Pytest
         run: pytest jupyter/tests -v
+
+      - name: Jest (labextension URL helpers)
+        working-directory: jupyter/labextension
+        run: |
+          jlpm install
+          jlpm test
