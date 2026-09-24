@@ -1,5 +1,7 @@
 [build-system]
-requires = ["hatchling"]
+# jupyterlab is build-time only: it provides jlpm / `jupyter labextension build`
+# for the Lab extension half (hatch_build.py). Runtime deps stay below.
+requires = ["hatchling", "jupyterlab>=4.0.0,<5"]
 build-backend = "hatchling.build"
 
 [project]
@@ -34,8 +36,13 @@ packages = ["gridlook_jupyter"]
 # re-includes VCS-ignored paths.
 artifacts = ["gridlook_jupyter/static/**"]
 
+# Both halves enable themselves on install: the server extension through
+# jupyter_server_config.d, the Lab extension as a prebuilt labextension (built
+# into gridlook_jupyter/labextension/ by the hook) with its install.json.
 [tool.hatch.build.targets.wheel.shared-data]
 "jupyter-config/jupyter_server_config.d" = "etc/jupyter/jupyter_server_config.d"
+"gridlook_jupyter/labextension" = "share/jupyter/labextensions/jupyterlab-gridlook"
+"labextension/install.json" = "share/jupyter/labextensions/jupyterlab-gridlook/install.json"
 
 [tool.hatch.build.targets.wheel.hooks.custom]
 path = "hatch_build.py"
@@ -44,6 +51,7 @@ path = "hatch_build.py"
 include = [
     "gridlook_jupyter",
     "jupyter-config",
+    "labextension",
     "hatch_build.py",
     "README.md",
 ]
