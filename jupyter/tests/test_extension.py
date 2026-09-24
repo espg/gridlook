@@ -3,14 +3,27 @@ import json
 import pytest
 from tornado.httpclient import HTTPClientError
 
+from gridlook_jupyter import handlers
+
 
 async def test_health(jp_fetch, proxy):
     resp = await jp_fetch("gridlook", "api", "health")
     assert resp.code == 200
     body = json.loads(resp.body)
     assert body["extension"] == "gridlook-jupyter"
-    assert body["labextension"] == "jupyterlab-gridlook"
     assert body["proxy_enabled"] is True
+
+
+@pytest.mark.parametrize("installed", [True, False])
+async def test_health_reports_labextension_only_when_installed(
+    jp_fetch, proxy, tmp_path, monkeypatch, installed
+):
+    if installed:
+        (tmp_path / "jupyterlab-gridlook").mkdir()
+        (tmp_path / "jupyterlab-gridlook" / "package.json").write_text("{}")
+    monkeypatch.setattr(handlers, "jupyter_path", lambda *_: [str(tmp_path)])
+    body = json.loads((await jp_fetch("gridlook", "api", "health")).body)
+    assert body["labextension"] == ("jupyterlab-gridlook" if installed else None)
 
 
 async def test_static_index_served(jp_fetch, proxy):

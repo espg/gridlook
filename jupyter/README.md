@@ -104,13 +104,13 @@ the extension only creates the `<iframe>` (`labextension/src/index.ts`).
 
 ## Routes
 
-| Route                         | What                                                                                              |
-| ----------------------------- | ------------------------------------------------------------------------------------------------- |
-| `/gridlook/`                  | the static gridlook SPA                                                                           |
-| `/gridlook/api/health`        | tiny JSON probe (`{"extension": "gridlook-jupyter", "labextension": "jupyterlab-gridlook", ...}`) |
-| `/gridlook/s3/<bucket>/<key>` | streaming S3 proxy — GET/HEAD only, `Range` pass-through (206), no LIST                           |
-| `/gridlook/hive/open`         | open (or LRU-refresh) a **morton-hive virtual-store view** via moczarr — see below                |
-| `/gridlook/hive/<view>/<key>` | serve one zarr object (metadata / whole chunk) of an open view                                    |
+| Route                         | What                                                                                                                                                           |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/gridlook/`                  | the static gridlook SPA                                                                                                                                        |
+| `/gridlook/api/health`        | tiny JSON probe (`{"extension": "gridlook-jupyter", "labextension": "jupyterlab-gridlook", ...}`; `labextension` is `null` when the Lab half is not installed) |
+| `/gridlook/s3/<bucket>/<key>` | streaming S3 proxy — GET/HEAD only, `Range` pass-through (206), no LIST                                                                                        |
+| `/gridlook/hive/open`         | open (or LRU-refresh) a **morton-hive virtual-store view** via moczarr — see below                                                                             |
+| `/gridlook/hive/<view>/<key>` | serve one zarr object (metadata / whole chunk) of an open view                                                                                                 |
 
 ## Configuration
 

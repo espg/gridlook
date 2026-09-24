@@ -3,8 +3,10 @@
 import json
 import mimetypes
 import re
+from pathlib import Path
 
 import obstore
+from jupyter_core.paths import jupyter_path
 from jupyter_server.base.handlers import JupyterHandler
 from obstore.exceptions import BaseError, NotFoundError
 from tornado import web
@@ -17,6 +19,16 @@ from .config import GridlookProxy
 _RANGE_RE = re.compile(r"^bytes=(\d*)-(\d*)$")
 
 _STREAM_CHUNK = 256 * 1024
+
+#: The Lab half shipped in the same wheel (its directory under share/jupyter/labextensions/).
+LABEXTENSION = "jupyterlab-gridlook"
+
+
+def labextension_installed() -> bool:
+    """Whether the Lab half is on a Jupyter data path (wheel shared-data or `develop` link)."""
+    return any(
+        Path(d, LABEXTENSION, "package.json").exists() for d in jupyter_path("labextensions")
+    )
 
 
 class _RangeNotSatisfiableError(Exception):
@@ -72,9 +84,8 @@ class HealthHandler(JupyterHandler):
                     "extension": "gridlook-jupyter",
                     "version": __version__,
                     "proxy_enabled": proxy.enabled,
-                    # The Lab half shipped in the same wheel (the name under
-                    # share/jupyter/labextensions/); a probe for hub operators.
-                    "labextension": "jupyterlab-gridlook",
+                    # A probe for hub operators: null when the Lab half is not installed.
+                    "labextension": LABEXTENSION if labextension_installed() else None,
                 }
             )
         )
