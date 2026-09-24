@@ -72,6 +72,9 @@ class HealthHandler(JupyterHandler):
                     "extension": "gridlook-jupyter",
                     "version": __version__,
                     "proxy_enabled": proxy.enabled,
+                    # The Lab half shipped in the same wheel (the name under
+                    # share/jupyter/labextensions/); a probe for hub operators.
+                    "labextension": "jupyterlab-gridlook",
                 }
             )
         )
