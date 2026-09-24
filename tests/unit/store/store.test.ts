@@ -1,4 +1,6 @@
+import type { FeatureCollection } from "geojson";
 import { beforeEach, expect, it, vi } from "vitest";
+import { isReactive } from "vue";
 
 vi.stubGlobal("localStorage", {
   getItem: () => null,
@@ -14,7 +16,9 @@ const {
   LAYER_KINDS,
   LAYER_OPACITY,
   useGlobeControlStore,
+  VECTOR_LAYER_OPACITY,
 } = await import("@/store/store.ts");
+const { getVectorLayerData } = await import("@/lib/layers/vectorDataStore.ts");
 
 beforeEach(() => {
   setActivePinia(createPinia());
@@ -185,4 +189,59 @@ it("sets volume layer visibility and selection", () => {
   ]);
   store.setVolumeLayerEnabled(false);
   expect(store.isVolumeLayerEnabled()).toBe(false);
+});
+
+it("adds, toggles and removes vector layers", () => {
+  const store = useGlobeControlStore();
+  const data: FeatureCollection = { type: "FeatureCollection", features: [] };
+
+  store.addVectorLayer("vector-layer", "basins.geojson", data);
+  const entry = store.layerStack.find((layer) => layer.id === "vector-layer");
+  expect(store.layerStack[0]).toBe(entry);
+  expect(entry?.kind).toBe(LAYER_KINDS.VECTOR);
+  expect(entry?.name).toBe("basins.geojson");
+  expect(entry?.visible).toBe(true);
+  expect(entry?.opacity).toBe(VECTOR_LAYER_OPACITY);
+  // the FeatureCollection lives outside the stack, keyed by layer id
+  expect(getVectorLayerData("vector-layer")).toBe(data);
+
+  store.toggleLayerVisibility("vector-layer");
+  expect(entry?.visible).toBe(false);
+
+  // vector layers are never restored as built-ins
+  store.restoreBuiltinLayer(LAYER_KINDS.VECTOR);
+  expect(
+    store.layerStack.filter((layer) => layer.kind === LAYER_KINDS.VECTOR)
+  ).toHaveLength(1);
+
+  store.removeLayer("vector-layer");
+  expect(store.layerStack.some((layer) => layer.id === "vector-layer")).toBe(
+    false
+  );
+  expect(getVectorLayerData("vector-layer")).toBeUndefined();
+});
+
+it("keeps vector data raw and identical across a kept-layerStack reset", () => {
+  const store = useGlobeControlStore();
+  const data: FeatureCollection = {
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        properties: { count: 3 },
+        geometry: { type: "Point", coordinates: [0, 0] },
+      },
+    ],
+  };
+
+  store.addVectorLayer("vector-layer", "basins.geojson", data);
+  // the source-change path of GlobeView: the stack survives, and the
+  // FeatureCollection must survive with it, unmodified and non-reactive
+  store.resetExcept(["layerStack"]);
+
+  expect(store.layerStack.some((layer) => layer.id === "vector-layer")).toBe(
+    true
+  );
+  expect(getVectorLayerData("vector-layer")).toBe(data);
+  expect(isReactive(getVectorLayerData("vector-layer"))).toBe(false);
 });

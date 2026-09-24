@@ -1,3 +1,4 @@
+import type { FeatureCollection } from "geojson";
 import { defineStore } from "pinia";
 
 import {
@@ -11,6 +12,10 @@ import {
   LAND_SEA_MASK_MODES,
   type TLandSeaMaskMode,
 } from "@/lib/layers/landSeaMask.ts";
+import {
+  deleteVectorLayerData,
+  setVectorLayerData,
+} from "@/lib/layers/vectorDataStore.ts";
 import type { TDistanceScale } from "@/lib/projection/distanceScale.ts";
 import {
   PROJECTION_TYPES,
@@ -47,6 +52,7 @@ export const LAYER_KINDS = {
   STREAMLINES: "streamlines",
   VOLUME: "volume",
   TEXTURE: "texture",
+  VECTOR: "vector",
 } as const;
 
 export type TLayerKind = (typeof LAYER_KINDS)[keyof typeof LAYER_KINDS];
@@ -81,6 +87,9 @@ export const LAYER_OPACITY = {
   MAX: 1,
   STEP: 0.05,
 } as const;
+
+// default fill opacity of vector layers, so the grid stays readable below
+export const VECTOR_LAYER_OPACITY = 0.35;
 
 export const STREAMLINE_LOADING_STAGES = {
   DATA: "Loading vector data",
@@ -128,7 +137,7 @@ export const BUILTIN_LAYER_NAMES = {
   [LAYER_KINDS.STREAMLINES]: "Flow streamlines",
   [LAYER_KINDS.VOLUME]: "Volume",
 } as const satisfies Record<
-  Exclude<TLayerKind, typeof LAYER_KINDS.TEXTURE>,
+  Exclude<TLayerKind, typeof LAYER_KINDS.TEXTURE | typeof LAYER_KINDS.VECTOR>,
   string
 >;
 
@@ -418,10 +427,12 @@ export const useGlobeControlStore = defineStore("globeControl", {
     },
     removeLayer(id: string) {
       this.layerStack = this.layerStack.filter((layer) => layer.id !== id);
+      deleteVectorLayerData(id);
     },
     restoreBuiltinLayer(kind: TLayerKind) {
       if (
         kind === LAYER_KINDS.TEXTURE ||
+        kind === LAYER_KINDS.VECTOR ||
         this.layerStack.some((layer) => layer.kind === kind)
       ) {
         return;
@@ -436,6 +447,25 @@ export const useGlobeControlStore = defineStore("globeControl", {
       if (layer) {
         Object.assign(layer, patch);
       }
+    },
+    addVectorLayer(
+      id: string,
+      name: string,
+      data: FeatureCollection,
+      visible = true
+    ) {
+      // the FeatureCollection lives in the module-level registry, not in the
+      // stack: it is render-only input, and deep reactivity (or the JSON clone
+      // `resetExcept` makes) over large coordinate arrays is wasted work
+      setVectorLayerData(id, data);
+      this.layerStack.unshift({
+        id,
+        kind: LAYER_KINDS.VECTOR,
+        name,
+        visible,
+        opacity: VECTOR_LAYER_OPACITY,
+        maskMode: LAND_SEA_MASK_MODES.OFF,
+      });
     },
     updateLayerOpacity(id: string, opacity: number) {
       const layer = this.layerStack.find((entry) => entry.id === id);

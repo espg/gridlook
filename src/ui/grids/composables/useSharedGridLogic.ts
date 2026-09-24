@@ -73,6 +73,7 @@ export function useSharedGridLogic() {
   let updateCoastlines: TAsyncVoidFunction = async () => {};
   let updateGraticules: TAsyncVoidFunction = async () => {};
   let syncTextureLayersOnReady: TAsyncVoidFunction = async () => {};
+  let syncVectorLayersOnReady: TVoidFunction = () => {};
 
   const {
     canvas,
@@ -105,6 +106,7 @@ export function useSharedGridLogic() {
       updateCoastlines();
       updateGraticules();
       void syncTextureLayersOnReady();
+      syncVectorLayersOnReady();
     },
   });
 
@@ -113,6 +115,7 @@ export function useSharedGridLogic() {
     updateGraticules: updateGraticulesInternal,
     updateLandSeaMask,
     updateTextureLayers,
+    updateVectorLayers,
     updateLayerProjectionUniforms,
     updateOverlayProjectionUniforms,
   } = useGridOverlays({
@@ -128,6 +131,7 @@ export function useSharedGridLogic() {
   updateCoastlines = updateCoastlinesInternal;
   updateGraticules = updateGraticulesInternal;
   syncTextureLayersOnReady = () => updateTextureLayers();
+  syncVectorLayersOnReady = () => updateVectorLayers();
 
   watch(
     [() => landSeaMaskChoice.value, () => landSeaMaskUseTexture.value],
@@ -141,6 +145,7 @@ export function useSharedGridLogic() {
     () => store.layerStack,
     () => {
       void updateTextureLayers();
+      updateVectorLayers();
       for (const cb of colormapChangeCallbacks) {
         cb();
       }
@@ -189,6 +194,7 @@ export function useSharedGridLogic() {
         void updateOverlayProjectionUniforms(true);
         updateLandSeaMask();
         void updateTextureLayers(true);
+        updateVectorLayers();
         configureCameraForProjection();
       } else if (centerChanged && projectionHelper.value.isFlat) {
         void updateOverlayProjectionUniforms();

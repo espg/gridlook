@@ -13,6 +13,7 @@ vi.mock("@/ui/grids/composables/useGridOverlays.ts", () => ({
   useGridOverlays: () => ({
     updateLandSeaMask,
     updateTextureLayers: vi.fn(),
+    updateVectorLayers: vi.fn(),
   }),
 }));
 

@@ -325,6 +325,7 @@ const LAYER_ICONS: Record<TLayerKind, string> = {
   [LAYER_KINDS.STREAMLINES]: "fa-wind",
   [LAYER_KINDS.VOLUME]: "fa-cloud",
   [LAYER_KINDS.TEXTURE]: "fa-image",
+  [LAYER_KINDS.VECTOR]: "fa-draw-polygon",
 };
 
 const MASK_LAYER_OPTIONS = {
@@ -450,6 +451,9 @@ const LAYER_PROPERTIES: Record<TLayerKind, TLayerProperties> = {
       LAYER_BUTTONS.DOWNLOAD,
       LAYER_BUTTONS.REMOVE,
     ],
+  },
+  [LAYER_KINDS.VECTOR]: {
+    buttons: [LAYER_BUTTONS.OPACITY, LAYER_BUTTONS.REMOVE],
   },
 };
 

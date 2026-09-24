@@ -164,4 +164,8 @@ function geojson2gpuLineSegmentsGeometry(
   return geometry;
 }
 
-export { geojson2gpuLineSegmentsGeometry };
+export {
+  densifyGeographicPolyline,
+  geojson2gpuLineSegmentsGeometry,
+  unwrapLongitude,
+};
