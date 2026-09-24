@@ -233,6 +233,10 @@ export const useGlobeControlStore = defineStore("globeControl", {
       distanceScale: null as TDistanceScale | null,
       catalogUrl: undefined as string | undefined,
       catalogData: undefined as TCatalog | undefined,
+      // multi-resolution datasets: the level every consumer reads, and
+      // whether the camera picks it (a manual pick turns that off)
+      selectedLevel: 0 as number,
+      levelAuto: true,
       // ── Live datasets ──────────────────────────────────────────────
       // A live dataset exposes only the currently-available timestep and is
       // followed automatically by polling the store's timestep endpoints.
@@ -301,6 +305,17 @@ export const useGlobeControlStore = defineStore("globeControl", {
       this.startLoading();
       this.varnameSelector = varname;
       this.signifyVariableChange();
+    },
+    selectLevel(index: number, manual = true) {
+      if (manual) {
+        this.levelAuto = false;
+      }
+      if (this.selectedLevel !== index) {
+        this.selectedLevel = index;
+      }
+    },
+    setLevelAuto(auto: boolean) {
+      this.levelAuto = auto;
     },
     isNewDataset(): boolean {
       return this.newDatasetSignifier % 2 === 0;

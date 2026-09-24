@@ -75,6 +75,7 @@ export type TModelInfo = {
   defaultVar: string;
   title: string;
   colormaps: TColorMap[];
+  levels?: TSourceLevel[];
 };
 
 export type TSourceLevel = {
