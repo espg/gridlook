@@ -16,7 +16,7 @@ import {
 import { resolveVectorMagnitude } from "@/lib/data/vectorMagnitude.ts";
 import { ZarrDataManager } from "@/lib/data/ZarrDataManager.ts";
 import { getGridVariableData } from "@/lib/grids/gridDataWorkerClient.ts";
-import type { TSources } from "@/lib/types/GlobeTypes.ts";
+import type { TSourceLevel, TSources } from "@/lib/types/GlobeTypes.ts";
 
 type TDataVar = zarr.Array<zarr.DataType, zarr.AsyncReadable>;
 
@@ -43,8 +43,9 @@ type TLevelDimension = {
   info: TCoordinateInfo;
 };
 
+// Keyed by the level read, since a level switch keeps the same TSources.
 const coordinateInfoCache = new WeakMap<
-  TSources,
+  TSourceLevel,
   Map<string, Promise<TCoordinateInfo>>
 >();
 
@@ -67,10 +68,11 @@ async function loadCoordinateInfo(
   dimensionName: string,
   size: number
 ) {
-  let datasetCache = coordinateInfoCache.get(datasources);
+  const level = currentLevel(datasources);
+  let datasetCache = coordinateInfoCache.get(level);
   if (!datasetCache) {
     datasetCache = new Map();
-    coordinateInfoCache.set(datasources, datasetCache);
+    coordinateInfoCache.set(level, datasetCache);
   }
   const key = `${variable}\u0000${dimensionName}`;
   const cached = datasetCache.get(key);
