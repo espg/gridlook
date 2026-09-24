@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import { computed } from "vue";
 
-import { DEFAULT_MAX_CELLS } from "@/lib/data/levels.ts";
+import { DEFAULT_MAX_LEVEL_CELLS } from "@/lib/data/levels.ts";
 import type { TSourceLevel } from "@/lib/types/GlobeTypes.ts";
 import { useGlobeControlStore } from "@/store/store.ts";
 
@@ -28,8 +28,8 @@ const options = computed(() =>
   props.levels.map((level, index) => ({
     index,
     label: `${level.name ?? index}${formatResolution(level.resolution)}`,
-    // still selectable by hand; the camera never picks these (see DEFAULT_MAX_CELLS)
-    tooManyCells: (level.cellCount ?? 0) > DEFAULT_MAX_CELLS,
+    // still selectable by hand; the camera never picks these (see DEFAULT_MAX_LEVEL_CELLS)
+    tooManyCells: (level.cellCount ?? 0) > DEFAULT_MAX_LEVEL_CELLS,
   }))
 );
 

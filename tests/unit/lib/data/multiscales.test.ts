@@ -130,6 +130,35 @@ describe("levelGeometryFromGrid", () => {
     );
     expect(readAxis).not.toHaveBeenCalled();
   });
+});
+
+describe("levelGeometryFromGrid on sparse HEALPix", () => {
+  const readAxis = vi.fn(async () => [0, 0.25]);
+
+  it("counts only the cells a sparse HEALPix level stores", async () => {
+    const geometry = await levelGeometryFromGrid(
+      {
+        crs: source({
+          attrs: { grid_mapping_name: "healpix", healpix_nside: 2 ** 16 }, // eslint-disable-line camelcase
+        }),
+        cell: source({
+          shape: [5000],
+          hidden: true,
+          attrs: { dimensionNames: ["cell"] },
+        }),
+        tas: source({
+          shape: [10, 5000],
+          attrs: { dimensionNames: ["time", "cell"] },
+        }),
+      },
+      readAxis
+    );
+    expect(geometry.cellCount).toBe(5000);
+    expect(geometry.resolution).toBeCloseTo(
+      (EARTH_RADIUS_METERS * Math.sqrt(Math.PI / 3)) / 2 ** 16,
+      6
+    );
+  });
 
   it("infers the HEALPix nside from a global cell dimension", async () => {
     const geometry = await levelGeometryFromGrid(
@@ -168,7 +197,7 @@ describe("levelGeometryFromGrid on regular grids", () => {
     expect(geometry.cellCount).toBe(720 * 1440);
   });
 
-  it("knows nothing about other grids", async () => {
+  it("counts the cells of a projected grid without a resolution", async () => {
     readAxis.mockClear();
     const geometry = await levelGeometryFromGrid(
       {
@@ -180,7 +209,20 @@ describe("levelGeometryFromGrid on regular grids", () => {
       },
       readAxis
     );
-    expect(geometry).toEqual({});
+    expect(geometry).toEqual({ cellCount: 500 * 500 });
     expect(readAxis).not.toHaveBeenCalled();
+  });
+
+  it("knows nothing about grids without spatial dimensions", async () => {
+    const geometry = await levelGeometryFromGrid(
+      {
+        tas: source({
+          shape: [10, 7],
+          attrs: { dimensionNames: ["time", "ncells"] },
+        }),
+      },
+      readAxis
+    );
+    expect(geometry).toEqual({});
   });
 });

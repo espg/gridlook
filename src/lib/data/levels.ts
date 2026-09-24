@@ -26,13 +26,14 @@ export const DEFAULT_PIXELS_PER_CELL = 2;
 export const DEFAULT_HYSTERESIS_ORDERS = 0.35;
 
 /**
- * Finest level the camera may pick, as a cell count. The dense renderers
- * allocate whole-grid textures — the HEALPix path holds `12 · 4^order` floats
- * per level whatever the data's sparsity (order 10 ≈ 50 MB renders; order 12
- * ≈ 805 MB hangs the tab), and a regular grid's `nlat · nlon` texture is the
- * same bound — so a level above this is only ever reached by a manual pick.
+ * Finest level the camera may pick, as the number of cells one horizontal
+ * slice of the level holds (`cellCount`: the length of a HEALPix level's
+ * `cell` dimension, however sparse, or `nlat · nlon` on a regular grid). Every
+ * timestep of a variable fetches and decodes that many values into Float32
+ * (about 50 MB at this cap), and a dense global HEALPix level builds textures
+ * of the same size; a level above it is only ever reached by a manual pick.
  */
-export const DEFAULT_MAX_CELLS = 12 * 4 ** 10;
+export const DEFAULT_MAX_LEVEL_CELLS = 12 * 4 ** 10;
 
 export type TLevelSelectionCamera = {
   /** Height of the camera above the globe's surface, metres. */
@@ -87,7 +88,7 @@ export function selectLevel(
   active: number,
   options: TLevelSelectionOptions = {}
 ): number {
-  const maxCells = options.maxCells ?? DEFAULT_MAX_CELLS;
+  const maxCells = options.maxCells ?? DEFAULT_MAX_LEVEL_CELLS;
   const candidates = levels
     .map((level, index) => ({ level, index }))
     .filter(

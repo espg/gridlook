@@ -19,8 +19,10 @@ behave as before.
 - **Grid metadata.** A level whose attributes do not state a resolution gets
   one from its grid where possible: the HEALPix `nside` (from the CRS
   variable's `healpix_nside`, or a `cell` dimension of length `12 nside²`) or
-  the spacing of a one-dimensional `lon` coordinate on a regular grid. This
-  also records how many cells the level holds.
+  the spacing of a one-dimensional `lon` coordinate on a regular grid. Every
+  level also records how many cells it holds: the length of its spatial
+  dimensions (`cell` for HEALPix, sparse or not; `lat · lon` or `y · x` on a
+  regular grid).
 - **JSON index.** An index file may list several `levels`, each with its own
   `datasources`, and may state `resolution` (metres per cell) and `cellCount`
   per level.
@@ -38,12 +40,14 @@ the cell size). The active level is kept unless another level fits better by
 more than **0.35 orders**, so panning along a boundary does not flip back and
 forth. Flat projections have no camera height and keep the loaded level.
 
-The renderers allocate whole-grid textures: the HEALPix path holds
-`12 · 4^order` values per level regardless of how sparse the data is (order 10
-is about 50 MB; order 12 about 800 MB, which stalls the tab), and a regular
-grid's `nlat · nlon` texture is the same bound. Automatic selection therefore
-never picks a level above **12 · 4^10 ≈ 12.6 million cells**; finer levels
-remain available through the manual picker.
+Every timestep of a variable fetches and decodes as many values as the level
+has cells, so the cell count bounds the download and the memory a level
+holds (a dense global HEALPix level also builds textures of that size).
+Automatic selection therefore never picks a level with more than
+**12 · 4^10 ≈ 12.6 million cells** (about 50 MB of Float32 per timestep); a
+sparse regional level counts only the cells it stores, so a deep regional
+pyramid is picked all the way down. Finer levels remain available through the
+manual picker.
 
 Choosing a level in the **Variable** card turns automatic selection off; the
 "Pick the level from the zoom" checkbox turns it back on. The selected level

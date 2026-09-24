@@ -85,7 +85,8 @@ export type TSourceLevel = {
   datasources: Record<string, TDataSource>;
   // ground size of one cell in metres, when known (drives level selection)
   resolution?: number;
-  // number of cells the level's dense textures allocate, when known
+  // cells one horizontal slice of the level holds (the values one timestep
+  // of a variable fetches), when known; caps automatic selection
   cellCount?: number;
 };
 

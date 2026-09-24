@@ -7,7 +7,7 @@ import {
 import {
   currentLevel,
   DEFAULT_HYSTERESIS_ORDERS,
-  DEFAULT_MAX_CELLS,
+  DEFAULT_MAX_LEVEL_CELLS,
   DEFAULT_PIXELS_PER_CELL,
   groundMetersPerPixel,
   selectLevel,
@@ -154,9 +154,9 @@ describe("selectLevel", () => {
 });
 
 describe("selectLevel limits", () => {
-  it("never picks a level with more cells than the renderer allocates", () => {
+  it("never picks a level with more cells than the cap", () => {
     const deep = [12, 11, 10, 9].map(healpixLevel);
-    expect(DEFAULT_MAX_CELLS).toBe(12 * 4 ** 10);
+    expect(DEFAULT_MAX_LEVEL_CELLS).toBe(12 * 4 ** 10);
     // The finest eligible level wins even from an ineligible active level.
     expect(selectLevel(cameraFor(resolution(12)), deep, 0)).toBe(2);
     expect(
@@ -167,6 +167,15 @@ describe("selectLevel limits", () => {
     // Without a recorded cell count the count of a global grid is assumed.
     const unknownCounts = deep.map(({ resolution }) => ({ resolution }));
     expect(selectLevel(cameraFor(resolution(12)), unknownCounts, 0)).toBe(2);
+  });
+
+  it("counts the cells a sparse level stores, not the full sphere", () => {
+    // A regional pyramid at orders 16..12 holding 2 million cells per level.
+    const regional = [16, 15, 14, 13, 12].map((order) => ({
+      resolution: resolution(order),
+      cellCount: 2_000_000,
+    }));
+    expect(selectLevel(cameraFor(resolution(16)), regional, 4)).toBe(0);
   });
 
   it("falls back to the coarsest level when nothing fits the renderer", () => {

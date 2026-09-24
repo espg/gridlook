@@ -151,21 +151,18 @@ export function parseMultiscales(
   return entries.length > 0 ? entries : geoZarrEntries(multiscale);
 }
 
-function healpixGeometry(nside: number): TLevelGeometry {
+function healpixResolution(nside: number) {
   // Every HEALPix cell has the same area, 4π / (12 nside²) steradians.
-  return {
-    resolution: (EARTH_RADIUS_METERS * Math.sqrt(Math.PI / 3)) / nside,
-    cellCount: 12 * nside * nside,
-  };
+  return (EARTH_RADIUS_METERS * Math.sqrt(Math.PI / 3)) / nside;
 }
 
-function healpixGeometryFromSources(
+function healpixNside(
   datasources: Record<string, TDataSource>
-): TLevelGeometry | undefined {
+): number | undefined {
   for (const source of Object.values(datasources)) {
     const nside = Number(source.attrs?.healpix_nside);
     if (Number.isInteger(nside) && nside > 0) {
-      return healpixGeometry(nside);
+      return nside;
     }
   }
   for (const source of Object.values(datasources)) {
@@ -179,7 +176,44 @@ function healpixGeometryFromSources(
     }
     const nside = Math.sqrt(shape[shape.length - 1] / 12);
     if (Number.isInteger(nside) && nside > 0) {
-      return healpixGeometry(nside);
+      return nside;
+    }
+  }
+  return undefined;
+}
+
+// Dimensions that span a level horizontally.
+const SPATIAL_DIMENSION = /^(cells?|x|y|lat|lon|latitude|longitude|rlat|rlon)$/;
+
+/**
+ * The cells one horizontal slice of a level holds, i.e. the values one
+ * timestep of a variable fetches: the product of the spatial dimension
+ * lengths of the first visible variable — the `cell` dimension of a HEALPix
+ * level, however sparse, or `lat · lon` / `y · x` on a regular grid.
+ */
+function spatialCellCount(
+  datasources: Record<string, TDataSource>
+): number | undefined {
+  for (const source of Object.values(datasources)) {
+    const dimensions = source.attrs?.dimensionNames;
+    const shape = source.shape;
+    if (
+      source.hidden ||
+      !Array.isArray(dimensions) ||
+      shape?.length !== dimensions.length
+    ) {
+      continue;
+    }
+    let count = 1;
+    let spatial = false;
+    dimensions.forEach((name, index) => {
+      if (SPATIAL_DIMENSION.test(String(name))) {
+        count *= shape[index];
+        spatial = true;
+      }
+    });
+    if (spatial) {
+      return count;
     }
   }
   return undefined;
@@ -196,27 +230,33 @@ function findAxis(
 
 /**
  * The cell size and cell count of a level whose attributes do not state them,
- * read off its grid: the HEALPix nside (from the CRS variable or a
- * `12 nside²` cell dimension), or the spacing of a one-dimensional longitude
- * coordinate on a regular grid. `readAxis` fetches the first values of a
- * coordinate variable of the level.
+ * read off its grid. The count is the length of the level's spatial
+ * dimensions (see `spatialCellCount`). The size comes from the HEALPix nside
+ * (the CRS variable, or a `12 nside²` cell dimension) or the spacing of a
+ * one-dimensional longitude coordinate on a regular grid; `readAxis` fetches
+ * the first values of a coordinate variable of the level.
  */
 export async function levelGeometryFromGrid(
   datasources: Record<string, TDataSource>,
   readAxis: (name: string) => Promise<ArrayLike<number>>
 ): Promise<TLevelGeometry> {
-  const healpix = healpixGeometryFromSources(datasources);
-  if (healpix) {
-    return healpix;
+  const cellCount = spatialCellCount(datasources);
+  const nside = healpixNside(datasources);
+  if (nside !== undefined) {
+    return {
+      resolution: healpixResolution(nside),
+      // A dense level whose variables state no dimension names.
+      cellCount: cellCount ?? 12 * nside * nside,
+    };
   }
   const longitudeName = findAxis(datasources, isLongitudeName);
   if (!longitudeName) {
-    return {};
+    return cellCount === undefined ? {} : { cellCount };
   }
   const longitudes = await readAxis(longitudeName);
   const step = Math.abs(Number(longitudes[1]) - Number(longitudes[0]));
   if (longitudes.length < 2 || !(step > 0)) {
-    return {};
+    return cellCount === undefined ? {} : { cellCount };
   }
   const latitudeName = findAxis(datasources, isLatitudeName);
   const latitudeCount = latitudeName
@@ -226,8 +266,9 @@ export async function levelGeometryFromGrid(
   return {
     resolution: step * METERS_PER_DEGREE,
     cellCount:
-      latitudeCount && longitudeCount
+      cellCount ??
+      (latitudeCount && longitudeCount
         ? latitudeCount * longitudeCount
-        : undefined,
+        : undefined),
   };
 }
