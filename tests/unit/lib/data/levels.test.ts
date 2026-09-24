@@ -124,14 +124,14 @@ describe("selectLevel", () => {
     // The switch point sits half the hysteresis past the midpoint.
     const inside = DEFAULT_HYSTERESIS_ORDERS / 2 - 0.02;
     const outside = DEFAULT_HYSTERESIS_ORDERS / 2 + 0.02;
-    // Zooming in from order 8 …
+    // Zooming out from order 8 …
     expect(
       selectLevel(cameraFor(resolution(7.5 - inside)), LADDER, ORDER_8)
     ).toBe(ORDER_8);
     expect(
       selectLevel(cameraFor(resolution(7.5 - outside)), LADDER, ORDER_8)
     ).toBe(ORDER_7);
-    // … and zooming out from order 7 are symmetric.
+    // … and zooming in from order 7 are symmetric.
     expect(
       selectLevel(cameraFor(resolution(7.5 + inside)), LADDER, ORDER_7)
     ).toBe(ORDER_7);
