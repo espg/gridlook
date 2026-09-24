@@ -6,6 +6,11 @@ private buckets through the hub's credentials — credentials never reach the br
 buckets never need to be public. Phase 4 of the viewer plan
 ([espg/gridlook#1](https://github.com/espg/gridlook/issues/1)).
 
+The same wheel carries a **JupyterLab extension** (`jupyterlab-gridlook`, under
+[`labextension/`](labextension/)): a launcher card and an **Open with Gridlook** entry in the
+file browser's context menu, both opening the viewer in a Lab tab (phase 5;
+[d70-t/gridlook#214](https://github.com/d70-t/gridlook/issues/214)).
+
 The primary deployment target is [CryoCloud](https://cryointhecloud.com/) (a 2i2c-operated
 JupyterHub): the hub role holds the S3 read credentials, and gridlook runs against buckets that
 are hub-viewable but not public (e.g. zagg output stores — see englacial/zagg#301 for the
@@ -19,33 +24,85 @@ pip install ./jupyter        # from a gridlook checkout — needs node >= 24 on 
 pip install gridlook_jupyter-<version>-py3-none-any.whl
 ```
 
-The wheel embeds the built Vite app as package data. **Building the wheel requires node/npm**
-(the build hook runs `npm ci && npm run build` at the repo root and copies `dist/` into the
-wheel); installing a pre-built wheel does not. The extension auto-enables on install via
-`jupyter_server_config.d`.
+The wheel embeds the built Vite app as package data and the prebuilt Lab extension as
+shared data (`share/jupyter/labextensions/jupyterlab-gridlook/`). **Building the wheel requires
+node/npm** — the build hook ([`hatch_build.py`](hatch_build.py)) runs `npm ci && npm run build`
+at the repo root and copies `dist/` into the wheel, then `jlpm install && jlpm build:prod` in
+`labextension/` (jlpm comes from `jupyterlab`, a build-time-only requirement in
+`build-system.requires`; an isolated build fetches it). Installing a pre-built wheel needs
+neither. Both halves auto-enable on install — the server extension via
+`jupyter_server_config.d`, the Lab extension as a prebuilt labextension with its
+`install.json` — so there is no `jupyter labextension develop` step for users. Runtime
+dependencies stay `jupyter-server` and `obstore`.
 
-Editable installs (`pip install -e ./jupyter`) skip the frontend build — point
-`GridlookProxy.static_dir` at a locally built `dist/` instead (see below).
+Editable installs (`pip install -e ./jupyter`) skip both frontend builds — point
+`GridlookProxy.static_dir` at a locally built `dist/` and `jupyter labextension develop` the
+built extension instead (see [Development](#development)).
 
 ## Launch
 
-There is no launcher card yet (that is phase 5). Open the app by URL:
+In JupyterLab, either:
+
+- the **Gridlook** launcher card (under _Other_; also in the command palette) — opens the
+  viewer in a Lab tab on its start page, where any dataset URL can be pasted (including
+  `s3://…` through the proxy, see below);
+- **right-click a directory or a `.zarr` entry in the file browser → Open with Gridlook** —
+  opens the viewer in a Lab tab on that store. The tab holds an iframe on
+
+  ```
+  <base>/gridlook/#<base>/files/<path>
+  ```
+
+  i.e. the extension-served viewer with the store handed over in the hash as a URL under
+  jupyter's own `/files/` handler, so it is read with the user's session — anything the user
+  can see in the file browser (home directory, mounted shares) opens this way.
+
+The URL form still works without Lab (Jupyter Server alone, notebook 7, a bookmark):
 
 ```
 <your-server-base>/gridlook/
 ```
 
-e.g. on a hub: `https://hub.example.org/user/<you>/gridlook/`.
+e.g. on a hub: `https://hub.example.org/user/<you>/gridlook/`, optionally with a
+`#<dataset-url>` hash.
+
+### Stores opened through `/files/` need consolidated metadata
+
+`/files/` serves single files and **cannot list a directory**, so the viewer can only
+discover a store's arrays from consolidated metadata: a zarr **v3** root `zarr.json` carrying a
+`consolidated_metadata` block, or a **v2** `.zmetadata`. Write stores with
+`zarr.consolidate_metadata(path)` (zarr-python) or `ds.to_zarr(path, consolidated=True)`
+(xarray); an unconsolidated store opens to "Failed to fetch index". This is a property of the
+handler, not something the extension works around.
+
+### The viewer stays served by the server extension
+
+The Lab tab embeds the SPA at `<base>/gridlook/`, **not** a copy under the labextension's
+static directory or a page under `/files/`. Jupyter serves user files and labextension
+statics with a `sandbox allow-scripts` content-security policy, which gives the document an
+opaque origin: every same-origin fetch the app makes (the `/files/` store, the S3 proxy, the
+hive views) then fails CORS with `Origin: null`, and IndexedDB is denied. The SPA is the
+extension's own code, so `extension.py` serves it through `SpaFileHandler` under jupyter's
+ordinary policy ([espg/gridlook#13](https://github.com/espg/gridlook/pull/13)). Keep it that
+way when changing how the app is served.
+
+### Reserved: iframe `postMessage` seam
+
+The iframe is the natural seam for parent → viewer control — camera and parameters
+([d70-t/gridlook#133](https://github.com/d70-t/gridlook/issues/133)) and bearer tokens
+handed over by `postMessage` instead of the URL
+([d70-t/gridlook#56](https://github.com/d70-t/gridlook/issues/56)). Neither is implemented;
+the extension only creates the `<iframe>` (`labextension/src/index.ts`).
 
 ## Routes
 
-| Route                         | What                                                                                                                                    |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `/gridlook/`                  | the static gridlook SPA                                                                                                                 |
-| `/gridlook/api/health`        | tiny JSON probe (`{"extension": "gridlook-jupyter", ...}`)                                                                              |
-| `/gridlook/s3/<bucket>/<key>` | streaming S3 proxy — GET/HEAD only, `Range` pass-through (206), no LIST                                                                 |
-| `/gridlook/hive/open`         | open (or LRU-refresh) a **morton-hive virtual-store view** via moczarr — see below                                                      |
-| `/gridlook/hive/<view>/<key>` | serve one zarr object (metadata / whole chunk) of an open view                                                                          |
+| Route                         | What                                                                                              |
+| ----------------------------- | ------------------------------------------------------------------------------------------------- |
+| `/gridlook/`                  | the static gridlook SPA                                                                           |
+| `/gridlook/api/health`        | tiny JSON probe (`{"extension": "gridlook-jupyter", "labextension": "jupyterlab-gridlook", ...}`) |
+| `/gridlook/s3/<bucket>/<key>` | streaming S3 proxy — GET/HEAD only, `Range` pass-through (206), no LIST                           |
+| `/gridlook/hive/open`         | open (or LRU-refresh) a **morton-hive virtual-store view** via moczarr — see below                |
+| `/gridlook/hive/<view>/<key>` | serve one zarr object (metadata / whole chunk) of an open view                                    |
 
 ## Configuration
 
@@ -146,18 +203,36 @@ untouched. Pasting the proxy URL directly always works.
 
 ## Development
 
+Create the venv **outside the checkout**: the repo root `package.json` declares
+`"type": "module"`, and node then loads jlpm's bundled `yarn.js` as an ES module (and fails)
+from any venv nested under it.
+
 ```bash
-cd jupyter
-uv venv && uv pip install -e ".[test]" ruff
-.venv/bin/pytest tests -v
-.venv/bin/ruff check gridlook_jupyter tests hatch_build.py
+uv venv ~/.venvs/gridlook && source ~/.venvs/gridlook/bin/activate
+uv pip install -e "./jupyter[test]" "jupyterlab>=4" ruff
+pytest jupyter/tests -v
+ruff check jupyter/gridlook_jupyter jupyter/tests jupyter/hatch_build.py
 # run against a dev-built frontend:
 npm run build   # at the repo root
-jupyter server --GridlookProxy.static_dir="$(pwd)/../dist" --GridlookProxy.allowed_buckets='["my-bucket"]'
+jupyter server --GridlookProxy.static_dir="$(pwd)/dist" --GridlookProxy.allowed_buckets='["my-bucket"]'
 ```
 
 Tests exercise the proxy against an obstore `LocalStore` via the `GridlookProxy.store_factory`
 seam — no real S3 needed.
+
+The Lab extension (editable install; the wheel build does all of this itself):
+
+```bash
+cd jupyter/labextension
+jlpm install
+jlpm test                # jest: URL construction (src/urls.ts)
+jlpm build               # tsc + `jupyter labextension build` -> ../gridlook_jupyter/labextension/
+jupyter labextension develop --overwrite ../     # symlink it into share/jupyter/labextensions/
+jupyter lab              # launcher card + "Open with Gridlook" in the file browser
+```
+
+`jlpm watch` rebuilds `lib/` on change; rerun `jlpm build:labextension:dev` (or `jlpm build`)
+to refresh the prebuilt bundle, then reload Lab.
 
 The hive tests run against moczarr's committed SERC fixture and need moczarr importable from a
 **repo checkout** (so the fixture sits next to the package): `uv pip install -e
