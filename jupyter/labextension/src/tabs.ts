@@ -10,6 +10,8 @@
 /** The slice of a Lumino widget the registry needs. */
 export interface ViewerTab {
   readonly isDisposed: boolean;
+  /** False once the widget left the DOM (a closed tab that was not disposed). */
+  readonly isAttached?: boolean;
 }
 
 export class ViewerTabs<T extends ViewerTab> {
@@ -21,7 +23,7 @@ export class ViewerTabs<T extends ViewerTab> {
       return undefined;
     }
     const tab = this.byPath.get(path);
-    if (tab?.isDisposed) {
+    if (tab && (tab.isDisposed || tab.isAttached === false)) {
       this.byPath.delete(path);
       return undefined;
     }
