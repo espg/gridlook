@@ -19,6 +19,19 @@ async def test_static_index_served(jp_fetch, proxy):
     assert b"gridlook test index" in resp.body
 
 
+async def test_spa_csp_has_no_sandbox(jp_fetch, proxy, static_root):
+    # AuthenticatedFileHandler's `sandbox allow-scripts` gives the document an
+    # opaque origin (same-origin fetches fail CORS, IndexedDB is denied); the
+    # SPA is served under jupyter's ordinary policy instead.
+    (static_root / "app.js").write_text("console.log('gridlook');")
+    for path in (("gridlook/",), ("gridlook", "index.html"), ("gridlook", "app.js")):
+        resp = await jp_fetch(*path)
+        assert resp.code == 200
+        csp = resp.headers.get("Content-Security-Policy", "")
+        assert "sandbox" not in csp
+        assert "frame-ancestors" in csp  # the ordinary jupyter policy still applies
+
+
 async def test_static_asset_served(jp_fetch, proxy, static_root):
     (static_root / "app.js").write_text("console.log('gridlook');")
     resp = await jp_fetch("gridlook", "app.js")
@@ -49,6 +62,21 @@ class TestEnvFallback:
 
         monkeypatch.setenv("GRIDLOOK_S3_REGION", "us-west-2")
         assert GridlookProxy().region == "us-west-2"
+
+    @pytest.mark.parametrize(
+        "raw,expected", [("1", True), ("true", True), ("YES", True), ("0", False), ("", False)]
+    )
+    def test_anonymous_from_env(self, monkeypatch, raw, expected):
+        from gridlook_jupyter.config import GridlookProxy
+
+        monkeypatch.setenv("GRIDLOOK_ANONYMOUS", raw)
+        assert GridlookProxy().anonymous is expected
+
+    def test_anonymous_trait_wins_over_env(self, monkeypatch):
+        from gridlook_jupyter.config import GridlookProxy
+
+        monkeypatch.setenv("GRIDLOOK_ANONYMOUS", "1")
+        assert GridlookProxy(anonymous=False).anonymous is False
 
     def test_traitlet_wins_over_env(self, monkeypatch):
         from gridlook_jupyter.config import GridlookProxy
