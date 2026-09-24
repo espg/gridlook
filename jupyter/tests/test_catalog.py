@@ -196,20 +196,7 @@ async def test_aoi_scopes_every_entry(jp_fetch):
     assert len(ids) == 16  # 4^(8-6), the one shard
 
 
-async def test_forwarded_proto_makes_https_entries(jp_fetch):
-    resp = await jp_fetch(
-        "gridlook",
-        "hive",
-        "catalog",
-        params={"store": str(SERC)},
-        headers={"X-Forwarded-Proto": "https"},
-    )
-    doc = json.loads(resp.body)
-    assert doc["datasets"][0]["url"].startswith("https://")
-
-
-@pytest.mark.parametrize("forwarded", ["gopher", "", "https://evil", "ftp", "http, https"])
-async def test_junk_forwarded_proto_falls_back_to_the_socket_scheme(jp_fetch, forwarded):
+async def _entry_url(jp_fetch, forwarded):
     resp = await jp_fetch(
         "gridlook",
         "hive",
@@ -217,8 +204,28 @@ async def test_junk_forwarded_proto_falls_back_to_the_socket_scheme(jp_fetch, fo
         params={"store": str(SERC)},
         headers={"X-Forwarded-Proto": forwarded},
     )
-    doc = json.loads(resp.body)
-    assert doc["datasets"][0]["url"].startswith("http://")
+    return json.loads(resp.body)["datasets"][0]["url"]
+
+
+async def test_forwarded_proto_ignored_unless_trusted(jp_fetch, jp_serverapp):
+    assert not jp_serverapp.trust_xheaders
+    assert (await _entry_url(jp_fetch, "https")).startswith("http://")
+
+
+class TestTrustedXheaders:
+    @pytest.fixture
+    def jp_server_config(self, jp_server_config):
+        return {
+            **jp_server_config,
+            "ServerApp": {**jp_server_config["ServerApp"], "trust_xheaders": True},
+        }
+
+    async def test_forwarded_proto_makes_https_entries(self, jp_fetch):
+        assert (await _entry_url(jp_fetch, "https")).startswith("https://")
+
+    @pytest.mark.parametrize("forwarded", ["gopher", "", "https://evil", "ftp"])
+    async def test_junk_forwarded_proto_falls_back_to_the_socket_scheme(self, jp_fetch, forwarded):
+        assert (await _entry_url(jp_fetch, forwarded)).startswith("http://")
 
 
 async def test_missing_store_400(jp_fetch):

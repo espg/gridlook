@@ -122,6 +122,11 @@ message rather than a blank globe (each mirrors a refusal `src/lib/morton/cells.
   browser holds cell ids in. The order is read off the served **words**, not off the manifest's
   `cell_order`, so an under-declaring store is caught too.
 
+`GET /gridlook/hive/catalog?store=…` lists one absolute view URL per materialized pyramid order.
+Behind a TLS-terminating proxy those URLs are `https://` only if the server trusts forwarded
+headers: set `--ServerApp.trust_xheaders=True` (JupyterHub's single-user server already does).
+Untrusted, `X-Forwarded-Proto` is ignored and the entries carry the socket's own scheme.
+
 ### CryoCloud MVP recipe: render a hive store
 
 ```bash

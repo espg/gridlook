@@ -107,17 +107,14 @@ def _public_origin(request) -> str:
 
     zarrita resolves a store URL with ``new URL(root)``, so entries must be
     absolute. Hub proxies terminate TLS and speak plain HTTP to the server;
-    ``X-Forwarded-Proto`` (what JupyterHub's proxy sets) wins over the
-    socket's scheme so the entries don't become mixed content. Host is taken
-    as received (the proxy forwards it unchanged).
-
-    Only ``http``/``https`` are honoured: an absent, empty or exotic value
-    (``gopher``, ``ftp``) falls back to the socket's own scheme rather than
-    being pasted into every entry URL the SPA then fetches.
+    forwarded headers are honoured only under ``ServerApp.trust_xheaders``,
+    where Tornado's ``xheaders=True`` has already rewritten
+    ``request.protocol`` from ``X-Scheme``/``X-Forwarded-Proto`` (``http``/
+    ``https`` only; any other value keeps the socket's scheme). Untrusted,
+    the headers are ignored. Host is taken as received either way (the hub
+    proxy forwards it unchanged).
     """
-    forwarded = request.headers.get("X-Forwarded-Proto", "").split(",")[0].strip().lower()
-    proto = forwarded if forwarded in ("http", "https") else request.protocol
-    return f"{proto}://{request.host}"
+    return f"{request.protocol}://{request.host}"
 
 
 def catalog_entries(levels, *, origin: str, base_url: str, reserve) -> list[dict]:
