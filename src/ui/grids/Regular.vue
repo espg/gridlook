@@ -28,6 +28,7 @@ import {
 } from "@/lib/data/coordinateVariables.ts";
 import { downsampleDataTexture } from "@/lib/data/dataTexture.ts";
 import { buildDimensionRangesAndIndices } from "@/lib/data/dimensionHandling.ts";
+import { currentLevel } from "@/lib/data/levels.ts";
 import { loadVectorComponents } from "@/lib/data/streamlineData.ts";
 import {
   castDataVarToFloat32,
@@ -225,7 +226,7 @@ async function getDims() {
 
   projectedGrid = undefined;
   rotatedProjection = undefined;
-  const grid = props.datasources!.levels[0].grid;
+  const grid = currentLevel(props.datasources!).grid;
   if (latOnlyCheck) {
     const latitudesData = await getDimensionData(grid, lastDim);
     latitudes.value = latitudesData.data as Float32Array;
@@ -871,7 +872,9 @@ async function makeVectorField(
 
 function selectedVectorPair() {
   return resolveVectorVariablePair(
-    Object.keys(props.datasources?.levels[0]?.datasources ?? {}),
+    Object.keys(
+      (props.datasources && currentLevel(props.datasources)?.datasources) ?? {}
+    ),
     varnameSelector.value,
     store.streamlineSelection,
     store.isStreamlineLayerEnabled() ? store.streamlinePair : undefined
