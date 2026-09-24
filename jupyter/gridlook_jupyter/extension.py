@@ -7,6 +7,7 @@ from jupyter_server.base.handlers import AuthenticatedFileHandler, JupyterHandle
 from jupyter_server.utils import url_path_join
 from tornado import web
 
+from .catalog import HiveCatalogHandler
 from .config import GridlookProxy
 from .handlers import HealthHandler, S3ProxyHandler
 from .hive import HiveOpenHandler, HiveViewCache, HiveViewHandler
@@ -46,6 +47,9 @@ def load_extension(serverapp):
         # an open_hive() product/AOI/window selection served as ONE flat zarr
         # store, native morton coordinate and all (see hive.py).
         (escaped + r"/hive/open", HiveOpenHandler),
+        # gridlook#10 phase 1: the per-order catalog (one entry per materialized
+        # pyramid level, views reserved and built on first demand).
+        (escaped + r"/hive/catalog(?:\.json)?", HiveCatalogHandler),
         (escaped + r"/hive/([0-9a-f]{16})/(.+)", HiveViewHandler),
         (escaped + r"$", web.RedirectHandler, {"url": base + "/"}),
         (

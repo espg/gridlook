@@ -1,4 +1,5 @@
 import pytest
+import tornado.httpserver
 from obstore.store import LocalStore
 
 pytest_plugins = ["pytest_jupyter.jupyter_server"]
@@ -42,6 +43,25 @@ def jp_server_config(static_root, allowed_buckets, hive_config):
             **hive_config,
         },
     }
+
+
+@pytest.fixture
+def http_server(jp_asyncio_loop, http_server_port, jp_web_app, jp_serverapp):
+    """pytest-jupyter's server, but built as ``ServerApp.init_httpserver`` builds it.
+
+    The stock fixture drops ``xheaders``, so ``trust_xheaders`` would be inert.
+    """
+
+    async def start():
+        server = tornado.httpserver.HTTPServer(jp_web_app, xheaders=jp_serverapp.trust_xheaders)
+        server.add_socket(http_server_port[0])
+        return server
+
+    server = jp_asyncio_loop.run_until_complete(start())
+    yield server
+    server.stop()
+    jp_asyncio_loop.run_until_complete(server.close_all_connections())
+    http_server_port[0].close()
 
 
 @pytest.fixture
