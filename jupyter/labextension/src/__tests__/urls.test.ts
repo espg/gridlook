@@ -34,6 +34,7 @@ describe("dataUrl", () => {
 
   it("encodes colons so the SPA's :: parameter separator cannot be forged", () => {
     expect(dataUrl("/", "t::x.zarr")).toBe("/files/t%3A%3Ax.zarr");
+    expect(dataUrl("/", "a:b/c::d.zarr")).toBe("/files/a%3Ab/c%3A%3Ad.zarr");
   });
 
   it("drops empty segments", () => {
