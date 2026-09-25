@@ -7,6 +7,12 @@ def _jupyter_server_extension_points():
     return [{"module": "gridlook_jupyter"}]
 
 
+def _jupyter_labextension_paths():
+    # The prebuilt Lab extension next to this package (hatch_build.py output);
+    # `jupyter labextension develop` symlinks it for editable installs.
+    return [{"src": "labextension", "dest": "jupyterlab-gridlook"}]
+
+
 def _load_jupyter_server_extension(serverapp):
     from .extension import load_extension
 

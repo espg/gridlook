@@ -7,3 +7,9 @@ dist-py/
 build/
 .pytest_cache/
 .ruff_cache/
+# Labextension build outputs (hatch_build.py / jlpm build)
+gridlook_jupyter/labextension/
+labextension/lib/
+labextension/.yarn/
+labextension/node_modules/
+labextension/tsconfig.tsbuildinfo
