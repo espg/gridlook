@@ -119,6 +119,35 @@ async def test_head_non_allowlisted_403(jp_fetch, seeded):
     assert e.value.code == 403
 
 
+@pytest.fixture
+def failing_factory(proxy):
+    """A store factory that cannot resolve credentials, as default_store_factory raises."""
+    calls = []
+
+    def factory(bucket, region):
+        calls.append(bucket)
+        raise RuntimeError(f"no AWS credentials resolved for bucket {bucket!r}")
+
+    proxy.store_factory = factory
+    return calls
+
+
+async def test_store_factory_failure_502_get(jp_fetch, failing_factory):
+    for _ in range(2):
+        with pytest.raises(HTTPClientError) as e:
+            await jp_fetch("gridlook", "s3", ALLOWED_BUCKET, "any/key")
+        assert e.value.code == 502
+        assert b"no AWS credentials resolved for bucket 'test-bucket'" in e.value.response.body
+    assert failing_factory == [ALLOWED_BUCKET] * 2  # the failure is not cached
+
+
+async def test_store_factory_failure_502_head(jp_fetch, failing_factory):
+    with pytest.raises(HTTPClientError) as e:
+        await jp_fetch("gridlook", "s3", ALLOWED_BUCKET, "any/key", method="HEAD")
+    assert e.value.code == 502
+    assert failing_factory == [ALLOWED_BUCKET]
+
+
 class TestDisabledProxy:
     @pytest.fixture
     def allowed_buckets(self):

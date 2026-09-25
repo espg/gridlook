@@ -58,9 +58,10 @@ class FrontendBuildHook(BuildHookInterface):
         if not (repo_root / "package.json").exists():
             raise RuntimeError(
                 "gridlook-jupyter: gridlook_jupyter/static/ is empty and the frontend "
-                "sources are not present one directory up (no package.json). Build from "
-                "the gridlook repo checkout, or pre-populate gridlook_jupyter/static/ "
-                "with a built dist/. Refusing to ship a wheel without the SPA."
+                "sources are not present one directory up (no package.json). Build the "
+                "wheel from a repository checkout, not from the sdist (`uv build --wheel "
+                "jupyter`), or pre-populate gridlook_jupyter/static/ with a built dist/. "
+                "Refusing to ship a wheel without the SPA."
             )
         npm = shutil.which("npm")
         if npm is None:

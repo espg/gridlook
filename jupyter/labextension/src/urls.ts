@@ -27,15 +27,15 @@ export function viewerUrl(baseUrl: string): string {
 }
 
 /**
- * `<baseUrl>/files/<path>` with every path segment percent-encoded, so that
- * spaces, `#`, `?` and `::` (the SPA's hash parameter separator) survive the
- * trip through the fragment.
+ * `<baseUrl>/files/<path>` with every path segment passed through
+ * `encodeURIComponent`, which escapes spaces, `#`, `?` and `:`, so a `::` in a
+ * name cannot forge the SPA's hash parameter separator.
  */
 export function dataUrl(baseUrl: string, path: string): string {
   const segments = path
     .split("/")
     .filter((s) => s.length > 0)
-    .map((s) => encodeURIComponent(s).replace(/:/g, "%3A"));
+    .map((s) => encodeURIComponent(s));
   return underBase(baseUrl, "files", ...segments);
 }
 
