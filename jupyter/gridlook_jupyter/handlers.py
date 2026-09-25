@@ -122,7 +122,12 @@ class S3ProxyHandler(PlainTextErrorMixin, JupyterHandler):
                 f"bucket '{bucket}' is not in the gridlook proxy allowlist "
                 f"(GridlookProxy.allowed_buckets)",
             )
-        return proxy.get_store(bucket)
+        try:
+            return proxy.get_store(bucket)
+        except RuntimeError as e:
+            # The store factory could not sign for an allowlisted bucket (no credentials):
+            # an upstream-auth fault like the other S3 errors, so 502 with the message.
+            raise web.HTTPError(502, str(e)) from e
 
     async def _send_range_not_satisfiable(self, store, key):
         """Emit a 416 with ``Content-Range: bytes */<size>``; head the object for the size.
