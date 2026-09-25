@@ -76,6 +76,34 @@ discover a store's arrays from consolidated metadata: a zarr **v3** root `zarr.j
 (xarray); an unconsolidated store opens to "Failed to fetch index". This is a property of the
 handler, not something the extension works around.
 
+The viewer also has to detect a grid from that metadata (see
+[Supported grid types](../docs/grid-types.md)). For a regular grid, the data array's
+`dimension_names` must name `lat`/`lon` coordinate arrays, which carry CF `units`
+(`degrees_north`/`degrees_east`); a HEALPix store carries a `dggs` block instead. A bare array
+with neither opens the viewer but fails with "Could not determine grid type". A minimal store
+that opens, with zarr-python 3:
+
+```python
+import numpy as np
+import zarr
+
+root = zarr.create_group("example.zarr", zarr_format=3)
+root.create_array(
+    "lat",
+    data=np.linspace(-89, 89, 90),
+    dimension_names=("lat",),
+    attributes={"units": "degrees_north"},
+)
+root.create_array(
+    "lon",
+    data=np.linspace(-179, 179, 180),
+    dimension_names=("lon",),
+    attributes={"units": "degrees_east"},
+)
+root.create_array("t", data=np.zeros((90, 180), "f4"), dimension_names=("lat", "lon"))
+zarr.consolidate_metadata("example.zarr")
+```
+
 ### The viewer stays served by the server extension
 
 The Lab tab embeds the SPA at `<base>/gridlook/`, **not** a copy under the labextension's
