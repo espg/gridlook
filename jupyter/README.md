@@ -33,7 +33,8 @@ at the repo root and copies `dist/` into the wheel, then `jlpm install && jlpm b
 neither. Both halves auto-enable on install — the server extension via
 `jupyter_server_config.d`, the Lab extension as a prebuilt labextension with its
 `install.json` — so there is no `jupyter labextension develop` step for users. Runtime
-dependencies stay `jupyter-server` and `obstore`.
+dependencies are `jupyter-server`, `obstore` and `boto3` (plus `moczarr` with the `hive`
+extra).
 
 Editable installs (`pip install -e ./jupyter`) skip both frontend builds — point
 `GridlookProxy.static_dir` at a locally built `dist/` and `jupyter labextension develop` the
@@ -122,14 +123,14 @@ Via traitlets (`jupyter_server_config.py`, or `--GridlookProxy.…` on the comma
 
 ```python
 c.GridlookProxy.allowed_buckets = ["my-zagg-outputs"]
-c.GridlookProxy.region = "us-west-2"          # optional; ambient AWS config otherwise
+c.GridlookProxy.region = "us-west-2"  # optional; ambient AWS config otherwise
 c.GridlookProxy.static_dir = "/path/to/dist"  # optional; dev override for the SPA files
 
 # /gridlook/hive/ knobs (phase 6d; defaults shown)
-c.GridlookProxy.hive_max_views = 8            # LRU bound on materialized views
-c.GridlookProxy.hive_max_cells = 500_000      # per-view cell bound; 413 beyond
-c.GridlookProxy.hive_max_concurrent_builds = 2  # concurrent materializations; over-limit opens queue
-c.GridlookProxy.local_hive_store_roots = []   # allowed roots for local-path stores (dev only)
+c.GridlookProxy.hive_max_views = 8  # LRU bound on materialized views
+c.GridlookProxy.hive_max_cells = 500_000  # per-view cell bound; 413 beyond
+c.GridlookProxy.hive_max_concurrent_builds = 2  # concurrent builds; over-limit opens queue
+c.GridlookProxy.local_hive_store_roots = []  # allowed roots for local-path stores (dev only)
 ```
 
 Or environment variables (used only when the trait is not configured):
@@ -142,9 +143,9 @@ export GRIDLOOK_S3_REGION="us-west-2"
 S3 credentials are resolved through botocore (the same chain as the AWS CLI: `AWS_PROFILE`
 and the shared config, SSO, instance/pod roles, web identity, plain `AWS_*` env), with
 expiring tokens refreshed. A bucket the chain cannot sign for fails the request loudly
-rather than falling back to an unsigned read. The proxy streams responses chunk-by-chunk and never buffers whole
-objects; there are no presigned URLs, so nothing credential-shaped is ever exposed to the
-browser.
+rather than falling back to an unsigned read: the proxy answers 502 with the reason. The
+proxy streams responses chunk-by-chunk and never buffers whole objects; there are no presigned
+URLs, so nothing credential-shaped is ever exposed to the browser.
 
 ## Morton-hive virtual store (`/gridlook/hive/`)
 
