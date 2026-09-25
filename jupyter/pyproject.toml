@@ -48,6 +48,8 @@ artifacts = ["gridlook_jupyter/static/**"]
 [tool.hatch.build.targets.wheel.hooks.custom]
 path = "hatch_build.py"
 
+# The sdist is source-only: it cannot build a wheel, because the build hook needs
+# the gridlook frontend sources one directory up. Build wheels from a checkout.
 [tool.hatch.build.targets.sdist]
 include = [
     "gridlook_jupyter",

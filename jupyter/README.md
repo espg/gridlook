@@ -36,6 +36,11 @@ neither. Both halves auto-enable on install — the server extension via
 dependencies are `jupyter-server`, `obstore` and `boto3` (plus `moczarr` with the `hive`
 extra).
 
+The sdist is **source-only**: the hook needs the frontend sources one directory up, which the
+sdist does not carry, so a wheel cannot be built from it. Build the wheel from a repository
+checkout (`uv build --wheel jupyter`, or `pip install ./jupyter`); `uv build jupyter` without
+`--wheel` builds the wheel from the sdist and fails for this reason.
+
 Editable installs (`pip install -e ./jupyter`) skip both frontend builds — point
 `GridlookProxy.static_dir` at a locally built `dist/` and `jupyter labextension develop` the
 built extension instead (see [Development](#development)).
