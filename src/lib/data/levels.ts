@@ -14,7 +14,7 @@ export function currentLevel(datasources: TSources): TSourceLevel {
 }
 
 /** Target on-screen size of one cell, in pixels, at the sub-camera point. */
-export const DEFAULT_PIXELS_PER_CELL = 2;
+export const DEFAULT_PIXELS_PER_CELL = 16;
 
 /**
  * Hysteresis in orders (log2 of cell size, so one order is one unit): another

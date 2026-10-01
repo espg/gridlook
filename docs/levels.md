@@ -38,7 +38,7 @@ than two usable levels is opened as a single-level dataset.
 
 On the globe, also while the camera is moving, Gridlook computes the ground
 distance one screen pixel covers at the point below the camera and picks the
-level whose cells come nearest to **2 pixels** on screen (nearest in log2 of
+level whose cells come nearest to **16 pixels** on screen (nearest in log2 of
 the cell size). The active level is kept unless another level fits better by
 more than **0.35 orders**, so panning along a boundary does not flip back and
 forth. Flat projections have no camera height and keep the loaded level.

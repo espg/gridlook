@@ -163,13 +163,13 @@ it("picks from the globe's fitted framing before the URL has a camera", () => {
   const store = useGlobeControlStore();
   const scope = effectScope();
   const { pickLevel } = scope.run(() =>
-    useLevelSelection(pyramid([12, 10, 8, 6]), () => VIEWPORT)
+    useLevelSelection(pyramid([12, 10, 8, 5]), () => VIEWPORT)
   )!;
   try {
     pickLevel();
-    // A square 1000 px viewport frames the globe ~15 radii up: order-8 cells
-    // are about two pixels there, and order 12 is over the renderer's cap anyway.
-    expect(store.selectedLevel).toBe(2);
+    // A square 1000 px viewport frames the globe ~15 radii up: order-5 cells
+    // are about 16 pixels there, and order 12 is over the renderer's cap anyway.
+    expect(store.selectedLevel).toBe(3);
   } finally {
     scope.stop();
   }
