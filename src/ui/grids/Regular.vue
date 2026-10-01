@@ -29,6 +29,7 @@ import {
 import { downsampleDataTexture } from "@/lib/data/dataTexture.ts";
 import { buildDimensionRangesAndIndices } from "@/lib/data/dimensionHandling.ts";
 import {
+  coarsestLevel,
   currentLevel,
   DEFAULT_MAX_LEVEL_CELLS,
   DEFAULT_MAX_VIEW_CELLS,
@@ -148,14 +149,32 @@ const VIEW_WINDOW_MARGIN = 0.5;
 let meshes: THREE.Mesh[] = [];
 let geometryPending = false;
 
-onColormapChange(() => updateColormap(meshes));
+// The coarsest level of a multi-resolution dataset at the selected slice. A
+// finer level takes its colour range from it and is drawn over it, so the
+// range holds still and nothing is empty where the finer level has no cells.
+type TBackdropFrame = {
+  key: string;
+  latitudes: Float32Array;
+  longitudes: Float32Array;
+  data: Float32Array;
+  min: number;
+  max: number;
+};
+let backdropFrame: TBackdropFrame | undefined;
+let backdrop: THREE.Mesh | undefined;
+
+function drawnMeshes() {
+  return backdrop ? [backdrop, ...meshes] : meshes;
+}
+
+onColormapChange(() => updateColormap(drawnMeshes()));
 
 onProjectionChange(updateMeshProjectionUniforms);
 onMotionStateChange(updateMeshProjectionUniforms);
 
 const scalarCache = useScalarFieldCache({
   updateHistogram,
-  updateColormap: () => updateColormap(meshes),
+  updateColormap: () => updateColormap(drawnMeshes()),
   redraw,
 });
 
@@ -179,7 +198,7 @@ const volume = useVolume({
 });
 
 function updateMeshProjectionUniforms() {
-  updateProjectionMeshes(meshes, {
+  updateProjectionMeshes(drawnMeshes(), {
     redraw,
     projectionHelper: projectionHelper.value,
     isSceneInMotion: isSceneInMotion.value,
@@ -205,7 +224,7 @@ const { datasourceUpdate } = useGridDataLoader({
   canLoadByView,
   viewWindowStale,
   updateLandSeaMask,
-  updateColormap: () => updateColormap(meshes),
+  updateColormap: () => updateColormap(drawnMeshes()),
   refreshStreamlines: async (reuseCached) => {
     if (lastStreamlineIndices) {
       await updateStreamlines(lastStreamlineIndices, reuseCached);
@@ -473,12 +492,16 @@ function subsampleCoords(
   return { coords, origIndices };
 }
 
-function getRegularTextureExportMetadata(isRotated: boolean | undefined) {
+function getRegularTextureExportMetadata(
+  isRotated: boolean | undefined,
+  lats: Float32Array,
+  lons: Float32Array
+) {
   if (isRotated || isProjectedGrid.value) {
     return undefined;
   }
 
-  const bounds = getRegularLatLonGridBounds(latitudes.value, longitudes.value);
+  const bounds = getRegularLatLonGridBounds(lats, lons);
   if (!bounds) {
     return undefined;
   }
@@ -486,16 +509,18 @@ function getRegularTextureExportMetadata(isRotated: boolean | undefined) {
   return {
     bounds,
     topV:
-      latitudes.value[0] > latitudes.value[latitudes.value.length - 1]
+      lats[0] > lats[lats.length - 1]
         ? TextureExportVCoordinate.BOTTOM
         : TextureExportVCoordinate.TOP,
   };
 }
 
-function getRegularGridParameters() {
-  const isRotated = props.isRotated;
-  let longitudeValues = normalizeLongitudes(longitudes.value);
-  let latitudeValues = latitudes.value;
+function getRegularGridParameters(
+  lats = latitudes.value,
+  lons = longitudes.value
+) {
+  let longitudeValues = normalizeLongitudes(lons);
+  let latitudeValues = lats;
 
   // Check if latitudes are descending and reverse if necessary
   const isLatReversed =
@@ -504,10 +529,14 @@ function getRegularGridParameters() {
     latitudeValues = Float32Array.from(latitudeValues).reverse();
   }
 
-  const isGlobal = isLongitudeGlobal(longitudes.value);
+  const isGlobal = isLongitudeGlobal(lons);
   const textureLonCount = longitudeValues.length;
   const originalLatCount = latitudeValues.length;
-  const textureExportMetadata = getRegularTextureExportMetadata(isRotated);
+  const textureExportMetadata = getRegularTextureExportMetadata(
+    props.isRotated,
+    lats,
+    lons
+  );
 
   const { coords: geoLatitudes, origIndices: latOrigIndices } = subsampleCoords(
     latitudeValues,
@@ -712,9 +741,12 @@ function createLatOnlyTextureData(
   return data;
 }
 
-function createRegularTexture(rawData: Float32Array, wrapRepeat: boolean) {
-  const latCount = latitudes.value.length;
-  const lonCount = longitudes.value.length;
+function createRegularTexture(
+  rawData: Float32Array,
+  wrapRepeat: boolean,
+  latCount: number,
+  lonCount: number
+) {
   const textureData = isLatOnly.value
     ? createLatOnlyTextureData(rawData, latCount, lonCount)
     : rawData;
@@ -739,10 +771,16 @@ function createRegularTexture(rawData: Float32Array, wrapRepeat: boolean) {
   return texture;
 }
 
-function makeMaterial(rawData: Float32Array) {
+function makeMaterial(
+  rawData: Float32Array,
+  lats = latitudes.value,
+  lons = longitudes.value
+) {
   const texture = createRegularTexture(
     rawData,
-    isLongitudeGlobal(longitudes.value)
+    isLongitudeGlobal(lons),
+    lats.length,
+    lons.length
   );
   const low = store.selection?.low as number;
   const high = store.selection?.high as number;
@@ -957,7 +995,90 @@ function updateMeshMaterials(rawData: Float32Array) {
   const material = makeMaterial(rawData);
   updateProjectionUniforms(material, projectionHelper.value);
   setMeshMaterials(material);
-  updateColormap(meshes);
+  updateColormap(drawnMeshes());
+}
+
+/** Load the coarsest level at the selected slice, unless it is on screen. */
+async function loadBackdrop(indices: (number | null | zarr.Slice)[]) {
+  const sources = props.datasources!;
+  const level = coarsestLevel(sources.levels);
+  if (
+    level === undefined ||
+    level === (sources.selectedLevel ?? 0) ||
+    !canLoadByView()
+  ) {
+    return undefined;
+  }
+  const variable = varnameSelector.value;
+  const key = JSON.stringify([level, variable, indices]);
+  if (backdropFrame?.key === key) {
+    return backdropFrame;
+  }
+  const coarse = { ...sources, selectedLevel: level };
+  const datavar = await getDataVar(variable, coarse);
+  if (!datavar) {
+    return undefined;
+  }
+  const [{ x, y }, values] = await Promise.all([
+    loadGridAxes(coarse, variable, selectedDimensionNames.value),
+    getGridVariableData({
+      source: ZarrDataManager.getDatasetSource(coarse, variable),
+      variable,
+      format: sources.zarr_format,
+      selection: indices,
+    }),
+  ]);
+  const data = castDataVarToFloat32(values);
+  const { min, max } = decodeVariableDataAndGetBounds(datavar, data);
+  backdropFrame = { key, latitudes: y, longitudes: x, data, min, max };
+  return backdropFrame;
+}
+
+function removeBackdrop() {
+  if (backdrop) {
+    backdrop.geometry.dispose();
+    disposeMaterial(backdrop.material as THREE.Material);
+    getScene()?.remove(backdrop);
+    backdrop = undefined;
+  }
+}
+
+/** Draw the coarsest level under a level that leaves part of the view empty. */
+function showBackdrop(frame: TBackdropFrame | undefined) {
+  const wanted =
+    frame && (gridWindow !== undefined || !isLongitudeGlobal(levelLongitudes))
+      ? frame
+      : undefined;
+  if (backdrop?.userData.key === wanted?.key) {
+    return;
+  }
+  removeBackdrop();
+  if (!wanted) {
+    return;
+  }
+  const params = getRegularGridParameters(wanted.latitudes, wanted.longitudes);
+  const geometry = createBatchGeometry(params, 0, params.geoLatCount - 1);
+  // Only the level on screen is exported.
+  delete geometry.userData[GridTextureExportUserDataKey.METADATA];
+  const material = makeMaterial(
+    wanted.data,
+    wanted.latitudes,
+    wanted.longitudes
+  );
+  // Both surfaces lie on the globe: let the finer one win the depth test.
+  material.polygonOffset = true;
+  material.polygonOffsetFactor = 1;
+  material.polygonOffsetUnits = 1;
+  updateProjectionUniforms(material, projectionHelper.value);
+  backdrop = createWrappedProjectionMesh(
+    geometry,
+    material,
+    projectionHelper.value.type
+  );
+  backdrop.frustumCulled = false;
+  backdrop.renderOrder = -1;
+  backdrop.userData.key = wanted.key;
+  getScene()?.add(backdrop);
 }
 
 async function showMagnitude(scalar: TVectorMagnitudeData) {
@@ -1142,7 +1263,10 @@ async function fetchAndRenderData(
 ) {
   const { dimensionRanges, indices } = await buildDimensionConfig(datavar);
 
-  const rawData = await fetchLoadedData(indices);
+  const [rawData, backdropData] = await Promise.all([
+    fetchLoadedData(indices),
+    loadBackdrop(indices).catch(() => undefined),
+  ]);
 
   if (!isCurrent()) {
     return;
@@ -1169,7 +1293,7 @@ async function fetchAndRenderData(
   const scalarInfo = {
     attrs: datavar.attrs,
     dimInfo,
-    bounds: { low: min, high: max },
+    bounds: { low: backdropData?.min ?? min, high: backdropData?.max ?? max },
     dimRanges: dimensionRanges,
   };
   const renderScalar = () => {
@@ -1177,6 +1301,7 @@ async function fetchAndRenderData(
       makeGeometry();
       geometryPending = false;
     }
+    showBackdrop(backdropData);
     updateMeshMaterials(rawData);
     setHoverLookupFromIndex(hoverIndex, fillValue, missingValue);
   };
@@ -1208,7 +1333,7 @@ async function fetchAndRenderData(
     render: renderScalar,
     info: scalarInfo,
     indices: indices as number[],
-    data: rawData,
+    data: backdropData?.data ?? rawData,
     missingValue,
     fillValue,
     isCurrent,
@@ -1226,6 +1351,7 @@ onBeforeMount(async () => {
 onBeforeUnmount(() => {
   streamlineRequestRevision++;
   terminateGridDataWorker();
+  removeBackdrop();
   for (const mesh of meshes) {
     mesh.geometry.dispose();
     getScene()?.remove(mesh);

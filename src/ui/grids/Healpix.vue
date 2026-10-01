@@ -19,6 +19,7 @@ import { useVolume } from "./composables/useVolume.ts";
 
 import { buildDimensionRangesAndIndices } from "@/lib/data/dimensionHandling.ts";
 import {
+  coarsestLevel,
   currentLevel,
   DEFAULT_MAX_LEVEL_CELLS,
   DEFAULT_MAX_VIEW_CELLS,
@@ -171,14 +172,34 @@ let loadedBlocks: number[] | undefined;
 
 let mainMeshes: Array<THREE.Mesh | undefined> = new Array(HEALPIX_NUMCHUNKS);
 
-onColormapChange(() => updateColormap(mainMeshes));
+// The coarsest level of a multi-resolution dataset at the selected slice. A
+// finer level takes its colour range from it and is drawn over it, so the
+// range holds still and nothing is empty where the finer level has no cells.
+type TBackdropFrame = {
+  key: string;
+  min: number;
+  max: number;
+  histogramSummaries: THistogramSummary[];
+  batches: THealpixBatch[];
+};
+let backdropFrame: TBackdropFrame | undefined;
+let backdropKey: string | undefined;
+const backdropMeshes: Array<THREE.Mesh | undefined> = new Array(
+  HEALPIX_NUMCHUNKS
+);
+
+function drawnMeshes() {
+  return [...backdropMeshes, ...mainMeshes];
+}
+
+onColormapChange(() => updateColormap(drawnMeshes()));
 
 onProjectionChange(updateMeshProjectionUniforms);
 onMotionStateChange(updateMeshProjectionUniforms);
 
 const scalarCache = useScalarFieldCache({
   updateHistogram,
-  updateColormap: () => updateColormap(mainMeshes),
+  updateColormap: () => updateColormap(drawnMeshes()),
   redraw,
 });
 
@@ -206,7 +227,7 @@ const volume = useVolume({
  * This is the fast path - no geometry rebuild needed.
  */
 function updateMeshProjectionUniforms() {
-  updateProjectionMeshes(mainMeshes, {
+  updateProjectionMeshes(drawnMeshes(), {
     redraw,
     projectionHelper: projectionHelper.value,
     isSceneInMotion: isSceneInMotion.value,
@@ -226,7 +247,7 @@ const { datasourceUpdate } = useGridDataLoader({
   canLoadByView: () => levelWindowable,
   viewWindowStale,
   updateLandSeaMask,
-  updateColormap: () => updateColormap(mainMeshes),
+  updateColormap: () => updateColormap(drawnMeshes()),
   refreshStreamlines: async (reuseCached) => {
     if (lastStreamlineContext) {
       await updateStreamlines(lastStreamlineContext, reuseCached);
@@ -268,10 +289,12 @@ function coerceEllipsoid(value: unknown): healpixGeo.EllipsoidInput | null {
     : (value as healpixGeo.EllipsoidInput);
 }
 
-async function gridFromEasygemsConvention(): Promise<healpixGeo.Grid | null> {
+async function gridFromEasygemsConvention(
+  sources: TSources
+): Promise<healpixGeo.Grid | null> {
   try {
     const crs = await ZarrDataManager.getCRSInfo(
-      props.datasources!,
+      sources,
       varnameSelector.value
     );
     const nside = coerceInteger(crs.attrs["healpix_nside"]);
@@ -289,9 +312,11 @@ async function gridFromEasygemsConvention(): Promise<healpixGeo.Grid | null> {
   return null;
 }
 
-async function gridFromDggsConvention(): Promise<healpixGeo.Grid | null> {
+async function gridFromDggsConvention(
+  sources: TSources
+): Promise<healpixGeo.Grid | null> {
   const metadata = await ZarrDataManager.getDggsMetadata(
-    props.datasources!,
+    sources,
     varnameSelector.value
   );
   if (metadata !== null) {
@@ -332,20 +357,22 @@ function inferGridFromCellCount(
   return null;
 }
 
-async function getHealpixGridParameters(): Promise<healpixGeo.Grid> {
-  const fromEasygems = await gridFromEasygemsConvention();
+async function getHealpixGridParameters(
+  sources = props.datasources!
+): Promise<healpixGeo.Grid> {
+  const fromEasygems = await gridFromEasygemsConvention(sources);
   if (fromEasygems !== null) {
     return fromEasygems;
   }
 
-  const fromDggsConvention = await gridFromDggsConvention();
+  const fromDggsConvention = await gridFromDggsConvention(sources);
   if (fromDggsConvention !== null) {
     return fromDggsConvention;
   }
 
   // last resort: assume nested / spherical and infer level from a global grid's cell count (12 * 4^level)
   const datavar = await ZarrDataManager.getVariableInfo(
-    ZarrDataManager.getDatasetSource(props.datasources!, varnameSelector.value),
+    ZarrDataManager.getDatasetSource(sources, varnameSelector.value),
     varnameSelector.value
   );
   const fromShape = await inferGridFromCellCount(datavar);
@@ -368,10 +395,10 @@ function unpackGrid(): healpixGeo.Grid {
   return grid as healpixGeo.Grid;
 }
 
-async function getCellCoordinateName() {
+async function getCellCoordinateName(sources = props.datasources!) {
   let cellCoord = "cell";
   const dggsMetadata = await ZarrDataManager.getDggsMetadata(
-    props.datasources!,
+    sources,
     varnameSelector.value
   );
   if (dggsMetadata !== null) {
@@ -385,13 +412,14 @@ async function getCellCoordinateName() {
   return cellCoord as string;
 }
 
-async function getCells() {
-  const cellCoord = await getCellCoordinateName();
+async function getCells(sources = props.datasources!) {
+  const cellCoord = await getCellCoordinateName(sources);
 
   try {
     const rawCells = await fetchHealpixVariableData(
       [],
-      ZarrDataManager.resolveVariablePath(varnameSelector.value, cellCoord)
+      ZarrDataManager.resolveVariablePath(varnameSelector.value, cellCoord),
+      sources
     );
 
     return Array.from(rawCells, (cell) => Number(cell));
@@ -528,15 +556,13 @@ async function fetchFaceBlocks(
 
 function fetchHealpixVariableData(
   selection: (number | zarr.Slice | null)[],
-  variable = varnameSelector.value
+  variable = varnameSelector.value,
+  sources = props.datasources!
 ) {
   return getGridVariableData({
-    source: ZarrDataManager.getDatasetSource(
-      props.datasources!,
-      varnameSelector.value
-    ),
+    source: ZarrDataManager.getDatasetSource(sources, varnameSelector.value),
     variable,
-    format: props.datasources!.zarr_format,
+    format: sources.zarr_format,
     selection,
   });
 }
@@ -608,7 +634,7 @@ async function showMagnitude(scalar: TVectorMagnitudeData) {
         ),
       });
     }
-    return () => textures.forEach(updateHealpixTexture);
+    return () => textures.forEach((texture) => updateHealpixTexture(texture));
   });
 }
 
@@ -830,8 +856,8 @@ async function getDimensionValues(
   return dimValues;
 }
 
-function disposeHealpixMesh(batchIndex: number) {
-  const mesh = mainMeshes[batchIndex];
+function disposeHealpixMesh(batchIndex: number, target = mainMeshes) {
+  const mesh = target[batchIndex];
   if (!mesh) {
     return;
   }
@@ -844,12 +870,13 @@ function disposeHealpixMesh(batchIndex: number) {
     mat.dispose();
   }
   getScene()?.remove(mesh);
-  mainMeshes[batchIndex] = undefined;
+  target[batchIndex] = undefined;
 }
 
 function createHealpixMesh(
   batchIndex: number,
-  geometry: THREE.InstancedBufferGeometry
+  geometry: THREE.InstancedBufferGeometry,
+  target = mainMeshes
 ) {
   const { addOffset, scaleFactor } = getColormapScaleOffset(
     store.selection?.low as number,
@@ -869,27 +896,34 @@ function createHealpixMesh(
     projectionHelper.value.type
   );
   mesh.frustumCulled = false;
-  mainMeshes[batchIndex] = mesh;
+  if (target === backdropMeshes) {
+    // Both surfaces lie on the globe: let the finer one win the depth test.
+    material.polygonOffset = true;
+    material.polygonOffsetFactor = 1;
+    material.polygonOffsetUnits = 1;
+    mesh.renderOrder = -1;
+  }
+  target[batchIndex] = mesh;
   getScene()?.add(mesh);
   return mesh;
 }
 
-function updateHealpixBatch(batch: THealpixBatch) {
+function updateHealpixBatch(batch: THealpixBatch, target = mainMeshes) {
   if (batch.width === 0 || batch.height === 0) {
     // No cells of a regional/sparse dataset fall in this face.
-    disposeHealpixMesh(batch.batchIndex);
+    disposeHealpixMesh(batch.batchIndex, target);
     return;
   }
   const geometry = createGeometry(batch);
-  let mesh = mainMeshes[batch.batchIndex];
+  let mesh = target[batch.batchIndex];
   if (mesh) {
     mesh.geometry.dispose();
     setupProjectionGeometryWrap(geometry);
     mesh.geometry = geometry;
   } else {
-    mesh = createHealpixMesh(batch.batchIndex, geometry);
+    mesh = createHealpixMesh(batch.batchIndex, geometry, target);
   }
-  updateHealpixTexture(batch);
+  updateHealpixTexture(batch, target);
   updateMeshProjectionUniforms();
 }
 
@@ -898,8 +932,8 @@ type THealpixTexture = Pick<
   "batchIndex" | "dataValues" | "width" | "height" | "dataRect"
 >;
 
-function updateHealpixTexture(batch: THealpixTexture) {
-  const mesh = mainMeshes[batch.batchIndex];
+function updateHealpixTexture(batch: THealpixTexture, target = mainMeshes) {
+  const mesh = target[batch.batchIndex];
   if (!mesh) {
     return;
   }
@@ -934,7 +968,10 @@ async function processHealpixChunks(
   grid: healpixGeo.Grid,
   indices: (number | zarr.Slice | null)[],
   deferDisplay: boolean,
-  isCurrent: () => boolean
+  isCurrent: () => boolean,
+  // the backdrop reads another level, whole
+  sources = props.datasources!,
+  byView = loadedBlocks !== undefined
 ) {
   let dataMin = Number.POSITIVE_INFINITY;
   let dataMax = Number.NEGATIVE_INFINITY;
@@ -969,13 +1006,15 @@ async function processHealpixChunks(
     const range = getHealpixFaceRange(faceIndex, grid.nside, cells);
     const selection = indices.slice();
     selection[selection.length - 1] = zarr.slice(range.start, range.end);
-    const face = loadedBlocks
+    const face = byView
       ? await fetchFaceBlocks(faceIndex, grid, indices)
       : {
           data:
             range.start === range.end
               ? new Float32Array()
-              : castDataVarToFloat32(await fetchHealpixVariableData(selection)),
+              : castDataVarToFloat32(
+                  await fetchHealpixVariableData(selection, undefined, sources)
+                ),
           cells: range.cells,
         };
     if (disposed || !isCurrent()) {
@@ -1003,6 +1042,62 @@ async function processHealpixChunks(
     }
   }
   return { dataMin, dataMax, histogramSummaries, textures, batches };
+}
+
+/** Load the coarsest level at the selected slice, unless it is on screen. */
+async function loadBackdrop(
+  indices: (number | zarr.Slice | null)[],
+  isCurrent: () => boolean
+) {
+  const sources = props.datasources!;
+  const level = coarsestLevel(sources.levels);
+  if (level === undefined || level === (sources.selectedLevel ?? 0)) {
+    return undefined;
+  }
+  const key = JSON.stringify([level, varnameSelector.value, indices]);
+  if (backdropFrame?.key === key) {
+    return backdropFrame;
+  }
+  const coarse = { ...sources, selectedLevel: level };
+  const datavar = await getDataVar(varnameSelector.value, coarse);
+  if (!datavar) {
+    return undefined;
+  }
+  const result = await processHealpixChunks(
+    datavar,
+    await getCells(coarse),
+    await getHealpixGridParameters(coarse),
+    indices,
+    true,
+    isCurrent,
+    coarse,
+    false
+  );
+  if (!result) {
+    return undefined;
+  }
+  backdropFrame = {
+    key,
+    min: result.dataMin,
+    max: result.dataMax,
+    histogramSummaries: result.histogramSummaries,
+    batches: result.batches,
+  };
+  return backdropFrame;
+}
+
+/** Draw the coarsest level under a level that leaves part of the view empty. */
+function showBackdrop(frame: TBackdropFrame | undefined) {
+  const dense = levelCellCount === 12 * unpackGrid().nside ** 2;
+  const wanted = frame && (loadedBlocks || !dense) ? frame : undefined;
+  if (backdropKey === wanted?.key) {
+    return;
+  }
+  backdropKey = wanted?.key;
+  for (let face = 0; face < HEALPIX_NUMCHUNKS; face++) {
+    disposeHealpixMesh(face, backdropMeshes);
+  }
+  wanted?.batches.forEach((batch) => updateHealpixBatch(batch, backdropMeshes));
 }
 
 function healpixHoverLookup(
@@ -1068,6 +1163,10 @@ async function fetchAndRenderData(
   const cellCoord = loadedBlocks ? undefined : await getCells();
   fitCameraToCells(grid, cellCoord);
   const { dimensionRanges, indices } = await prepareDimensionData(datavar);
+  // One after the other: the face worker runs a single build at a time.
+  const backdropData = await loadBackdrop(indices, isCurrent).catch(
+    () => undefined
+  );
   const result = await processHealpixChunks(
     datavar,
     cellCoord,
@@ -1116,17 +1215,21 @@ async function fetchAndRenderData(
   const scalarInfo = {
     attrs: datavar.attrs,
     dimInfo,
-    bounds: { low: dataMin, high: dataMax },
+    bounds: {
+      low: backdropData?.min ?? dataMin,
+      high: backdropData?.max ?? dataMax,
+    },
     dimRanges: dimensionRanges,
   };
   let geometryPending = deferDisplay;
   const renderScalar = () => {
+    showBackdrop(backdropData);
     if (geometryPending) {
-      batches.forEach(updateHealpixBatch);
+      batches.forEach((batch) => updateHealpixBatch(batch));
       batches.length = 0;
       geometryPending = false;
     } else {
-      textures.forEach(updateHealpixTexture);
+      textures.forEach((texture) => updateHealpixTexture(texture));
     }
     setHoverLookup(healpixHoverLookup);
   };
@@ -1137,7 +1240,7 @@ async function fetchAndRenderData(
     render: renderScalar,
     info: scalarInfo,
     indices: indices as number[],
-    data: histogramSummaries,
+    data: backdropData?.histogramSummaries ?? histogramSummaries,
     isCurrent,
   });
   await updateStreamlines(lastStreamlineContext);
@@ -1158,6 +1261,7 @@ onBeforeUnmount(() => {
   terminateGridDataWorker();
   for (let ipix = 0; ipix < HEALPIX_NUMCHUNKS; ++ipix) {
     disposeHealpixMesh(ipix);
+    disposeHealpixMesh(ipix, backdropMeshes);
   }
 });
 

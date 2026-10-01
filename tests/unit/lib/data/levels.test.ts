@@ -5,6 +5,7 @@ import {
   EARTH_RADIUS_METERS,
 } from "@/lib/camera/cameraSettings.ts";
 import {
+  coarsestLevel,
   currentLevel,
   DEFAULT_HYSTERESIS_ORDERS,
   DEFAULT_MAX_LEVEL_CELLS,
@@ -215,4 +216,16 @@ describe("selectLevel limits", () => {
     ).toBe(0);
     expect(selectLevel(cameraFor(resolution(8)), [], 0)).toBe(0);
   });
+});
+
+it("names the coarsest level, when every level states its resolution", () => {
+  expect(
+    coarsestLevel([
+      { resolution: 100 },
+      { resolution: 400 },
+      { resolution: 200 },
+    ])
+  ).toBe(1);
+  expect(coarsestLevel([{ resolution: 100 }])).toBeUndefined();
+  expect(coarsestLevel([{ resolution: 100 }, {}])).toBeUndefined();
 });

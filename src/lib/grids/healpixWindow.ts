@@ -10,7 +10,7 @@ import type { TViewFootprint } from "@/lib/projection/viewFootprint.ts";
  */
 // ponytail: a fixed block size. Derive it from the chunk length if stores
 // with much larger chunks make single blocks wasteful.
-export const HEALPIX_BLOCK_DEPTH = 6;
+const HEALPIX_BLOCK_DEPTH = 6;
 
 // side of one of the 12 base faces, sqrt(4π / 12) in degrees
 const FACE_SIDE_DEGREES = 58.63;

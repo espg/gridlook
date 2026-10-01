@@ -13,6 +13,30 @@ export function currentLevel(datasources: TSources): TSourceLevel {
   return datasources.levels[datasources.selectedLevel ?? 0];
 }
 
+/**
+ * Index of the level with the largest cells. Grids that load only the view
+ * draw it whole under a finer level and take the colour range from it, so
+ * neither changes as the view moves. Undefined for a single level, or when a
+ * level does not state its resolution.
+ */
+export function coarsestLevel(
+  levels: readonly Pick<TSourceLevel, "resolution">[]
+) {
+  let coarsest: number | undefined;
+  for (const [index, level] of levels.entries()) {
+    if (levels.length < 2 || !(level.resolution! > 0)) {
+      return undefined;
+    }
+    if (
+      coarsest === undefined ||
+      level.resolution! > levels[coarsest].resolution!
+    ) {
+      coarsest = index;
+    }
+  }
+  return coarsest;
+}
+
 /** Target on-screen size of one cell, in pixels, at the sub-camera point. */
 export const DEFAULT_PIXELS_PER_CELL = 16;
 
