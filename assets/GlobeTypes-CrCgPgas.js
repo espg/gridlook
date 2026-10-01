@@ -1,0 +1,2 @@
+var e={V2:2,V3:3,ICECHUNK:-1,NETCDF:-2},t={BLACK:`black`,WHITE:`white`,TRANSPARENT:`transparent`},n={background:t.BLACK,resolutionScale:1,showDatasetInfo:!0,showColormap:!0};export{t as n,e as r,n as t};
+//# sourceMappingURL=GlobeTypes-CrCgPgas.js.map

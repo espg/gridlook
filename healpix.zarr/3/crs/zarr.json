@@ -1,0 +1,37 @@
+{
+  "shape": [],
+  "data_type": "int8",
+  "chunk_grid": {
+    "name": "regular",
+    "configuration": {
+      "chunk_shape": []
+    }
+  },
+  "chunk_key_encoding": {
+    "name": "default",
+    "configuration": {
+      "separator": "/"
+    }
+  },
+  "fill_value": 0,
+  "codecs": [
+    {
+      "name": "bytes"
+    },
+    {
+      "name": "zstd",
+      "configuration": {
+        "level": 0,
+        "checksum": false
+      }
+    }
+  ],
+  "attributes": {
+    "grid_mapping_name": "healpix",
+    "healpix_nside": 8,
+    "healpix_order": "nest"
+  },
+  "zarr_format": 3,
+  "node_type": "array",
+  "storage_transformers": []
+}
