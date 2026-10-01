@@ -35,6 +35,14 @@ export const DEFAULT_HYSTERESIS_ORDERS = 0.35;
  */
 export const DEFAULT_MAX_LEVEL_CELLS = 12 * 4 ** 10;
 
+/**
+ * Cells a grid that loads only the view keeps on screen at once. A level
+ * with more cells than this is loaded as a window around the view, reloaded
+ * as the camera moves; the window is shrunk to this many cells when a level
+ * picked by hand is too fine for the view.
+ */
+export const DEFAULT_MAX_VIEW_CELLS = 12 * 4 ** 8;
+
 export type TLevelSelectionCamera = {
   /** Height of the camera above the globe's surface, metres. */
   altitudeMeters: number;

@@ -30,7 +30,7 @@ const options = computed(() =>
     index,
     label: `${level.name ?? index}${formatResolution(level.resolution)}`,
     // still selectable by hand; the camera never picks these
-    tooManyCells: exceedsCellCap(level),
+    tooManyCells: !store.loadsLevelByView() && exceedsCellCap(level),
   }))
 );
 

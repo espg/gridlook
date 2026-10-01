@@ -65,7 +65,9 @@ export function useLevelSelection(
         viewportHeightPx: viewport.height,
       },
       levels,
-      store.selectedLevel
+      store.selectedLevel,
+      // no level is too large for a grid that loads only the view
+      { maxCells: store.loadsLevelByView() ? Infinity : undefined }
     );
     store.selectLevel(next, false);
   }
@@ -73,14 +75,7 @@ export function useLevelSelection(
   watchThrottled(() => store.cameraAltitude, pickLevel, {
     throttle: LEVEL_PICK_INTERVAL_MS,
   });
-  watch(
-    () => store.levelAuto,
-    (auto) => {
-      if (auto) {
-        pickLevel();
-      }
-    }
-  );
+  watch(() => [store.levelAuto, store.loadsLevelByView()], pickLevel);
 
   return { pickLevel };
 }

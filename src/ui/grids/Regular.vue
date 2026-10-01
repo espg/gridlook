@@ -3,7 +3,7 @@ import { storeToRefs } from "pinia";
 import proj4, { type Converter as TProjectionConverter } from "proj4";
 import * as THREE from "three";
 import { onBeforeMount, onBeforeUnmount, ref } from "vue";
-import type * as zarr from "zarrita";
+import * as zarr from "zarrita";
 
 import { useGridHoverLookup } from "./composables/gridHoverUtils.ts";
 import type {
@@ -28,7 +28,11 @@ import {
 } from "@/lib/data/coordinateVariables.ts";
 import { downsampleDataTexture } from "@/lib/data/dataTexture.ts";
 import { buildDimensionRangesAndIndices } from "@/lib/data/dimensionHandling.ts";
-import { currentLevel } from "@/lib/data/levels.ts";
+import {
+  currentLevel,
+  DEFAULT_MAX_LEVEL_CELLS,
+  DEFAULT_MAX_VIEW_CELLS,
+} from "@/lib/data/levels.ts";
 import { loadVectorComponents } from "@/lib/data/streamlineData.ts";
 import {
   castDataVarToFloat32,
@@ -43,6 +47,11 @@ import {
   createVectorMagnitudeData,
   type TVectorMagnitudeData,
 } from "@/lib/data/vectorMagnitude.ts";
+import {
+  regularWindow,
+  windowCovers,
+  type TRegularWindow,
+} from "@/lib/data/viewWindow.ts";
 import { ZarrDataManager } from "@/lib/data/ZarrDataManager.ts";
 import {
   getGridVariableData,
@@ -114,8 +123,14 @@ const {
 const { setHoverLookupFromIndex, clearHoverLookup } =
   useGridHoverLookup(hoveredGeoPoint);
 
+// The axes of the cells that are loaded: the whole level, or its view window.
 const longitudes = ref<Float32Array>(new Float32Array());
 const latitudes = ref<Float32Array>(new Float32Array());
+let levelLongitudes: Float32Array = new Float32Array();
+let levelLatitudes: Float32Array = new Float32Array();
+// The loaded part of a level too large to load whole; null when the view
+// holds none of it, undefined when the whole level is loaded.
+let gridWindow: TRegularWindow | null | undefined;
 const isProjectedGrid = ref(false);
 let projectedGrid: TProjectedVolumeGrid | undefined;
 let rotatedProjection: TProjectionConverter | undefined;
@@ -127,6 +142,8 @@ let cachedStreamlineKey: string | undefined;
 
 const BATCH_SIZE = 60;
 const MAX_GEO_RESOLUTION = 512;
+// A view window reaches this fraction of the view's size past every edge.
+const VIEW_WINDOW_MARGIN = 0.5;
 
 let meshes: THREE.Mesh[] = [];
 let geometryPending = false;
@@ -177,13 +194,16 @@ const { datasourceUpdate } = useGridDataLoader({
   clearHoverLookup,
   prepareDatasource: async () => {
     await getDims();
-    // On a level swap the meshes still show the previous level: rebuild them
-    // together with the data instead.
+    applyViewWindow();
+    // On a level or window swap the meshes still show the previous grid:
+    // rebuild them together with the data instead.
     geometryPending = meshes.length > 0;
     if (!geometryPending) {
       makeGeometry();
     }
   },
+  canLoadByView,
+  viewWindowStale,
   updateLandSeaMask,
   updateColormap: () => updateColormap(meshes),
   refreshStreamlines: async (reuseCached) => {
@@ -199,6 +219,74 @@ const { datasourceUpdate } = useGridDataLoader({
 });
 
 const isLatOnly = ref(false);
+
+function canLoadByView() {
+  return (
+    props.datasources!.levels.length > 1 &&
+    !isLatOnly.value &&
+    !isProjectedGrid.value &&
+    !props.isRotated
+  );
+}
+
+/** Streamlines and volumes read the whole level, up to the whole-level cap. */
+function loadsByView() {
+  const wholeLevelLayers =
+    store.isStreamlineLayerEnabled() || store.isVolumeLayerEnabled();
+  return (
+    canLoadByView() &&
+    levelLatitudes.length * levelLongitudes.length >
+      (wholeLevelLayers ? DEFAULT_MAX_LEVEL_CELLS : DEFAULT_MAX_VIEW_CELLS)
+  );
+}
+
+function viewWindow(margin: number) {
+  return store.viewFootprint
+    ? regularWindow(levelLatitudes, levelLongitudes, store.viewFootprint, {
+        margin,
+        // only the window that gets loaded is held to the budget
+        maxCells: margin > 0 ? DEFAULT_MAX_VIEW_CELLS : undefined,
+      })
+    : null;
+}
+
+function viewWindowStale() {
+  if (!loadsByView()) {
+    return gridWindow !== undefined && levelLatitudes.length > 0;
+  }
+  if (gridWindow === undefined) {
+    return false;
+  }
+  const needed = viewWindow(0);
+  return (
+    needed !== null &&
+    (gridWindow === null || !windowCovers(gridWindow, needed))
+  );
+}
+
+/** Narrow the loaded axes from the whole level to the window in view. */
+function applyViewWindow() {
+  levelLatitudes = latitudes.value;
+  levelLongitudes = longitudes.value;
+  gridWindow = loadsByView() ? viewWindow(VIEW_WINDOW_MARGIN) : undefined;
+  if (gridWindow === undefined) {
+    return;
+  }
+  const { lat, lon, lonStep } = gridWindow ?? {
+    lat: { start: 0, end: 0 },
+    lon: [],
+    lonStep: 1,
+  };
+  latitudes.value = levelLatitudes.subarray(lat.start, lat.end);
+  // Columns east of the seam follow those west of it, one turn further on.
+  const columns: number[] = [];
+  for (const [part, range] of lon.entries()) {
+    for (let index = range.start; index < range.end; index += lonStep) {
+      columns.push(levelLongitudes[index] + 360 * part);
+    }
+  }
+  longitudes.value = Float32Array.from(columns);
+}
 
 function getDimensionData(
   grid: TSources["levels"][0]["grid"],
@@ -809,6 +897,46 @@ function fetchRegularGridVariableData(
   });
 }
 
+/** The loaded cells of the selected slice, row by row. */
+async function fetchLoadedData(indices: (number | null | zarr.Slice)[]) {
+  if (gridWindow === undefined) {
+    return castDataVarToFloat32(await fetchRegularGridVariableData(indices));
+  }
+  if (gridWindow === null) {
+    return new Float32Array();
+  }
+  const { lat, lon, lonStep } = gridWindow;
+  const parts = await Promise.all(
+    lon.map(async (range) =>
+      castDataVarToFloat32(
+        await fetchRegularGridVariableData([
+          ...indices.slice(0, -2),
+          zarr.slice(lat.start, lat.end),
+          zarr.slice(range.start, range.end, lonStep),
+        ])
+      )
+    )
+  );
+  if (parts.length === 1) {
+    return parts[0];
+  }
+  const rows = lat.end - lat.start;
+  const columns = longitudes.value.length;
+  const stitched = new Float32Array(rows * columns);
+  let offset = 0;
+  for (const [part, range] of lon.entries()) {
+    const width = Math.ceil((range.end - range.start) / lonStep);
+    for (let row = 0; row < rows; row++) {
+      stitched.set(
+        parts[part].subarray(row * width, (row + 1) * width),
+        row * columns + offset
+      );
+    }
+    offset += width;
+  }
+  return stitched;
+}
+
 function setMeshMaterials(material: THREE.ShaderMaterial) {
   if (meshes.length === 0) {
     disposeMaterial(material);
@@ -894,7 +1022,12 @@ async function updateStreamlines(
 ) {
   const requestRevision = ++streamlineRequestRevision;
   const pair = selectedVectorPair();
-  if (!pair || isLatOnly.value || !props.datasources) {
+  if (
+    !pair ||
+    isLatOnly.value ||
+    !props.datasources ||
+    gridWindow !== undefined
+  ) {
     cachedMagnitude = undefined;
     cachedStreamlineKey = undefined;
     store.setStreamlineMagnitudeInfo(undefined);
@@ -1009,8 +1142,7 @@ async function fetchAndRenderData(
 ) {
   const { dimensionRanges, indices } = await buildDimensionConfig(datavar);
 
-  const variableData = await fetchRegularGridVariableData(indices);
-  const rawData = castDataVarToFloat32(variableData);
+  const rawData = await fetchLoadedData(indices);
 
   if (!isCurrent()) {
     return;
@@ -1049,15 +1181,17 @@ async function fetchAndRenderData(
     setHoverLookupFromIndex(hoverIndex, fillValue, missingValue);
   };
   const volumeGrid =
-    isProjectedGrid.value || props.isRotated
-      ? projectedGrid
-      : !isLatOnly.value
-        ? {
-            kind: VOLUME_GRID_TYPES.REGULAR,
-            latitudes: latitudes.value,
-            longitudes: longitudes.value,
-          }
-        : undefined;
+    gridWindow !== undefined
+      ? undefined
+      : isProjectedGrid.value || props.isRotated
+        ? projectedGrid
+        : !isLatOnly.value
+          ? {
+              kind: VOLUME_GRID_TYPES.REGULAR,
+              latitudes: latitudes.value,
+              longitudes: longitudes.value,
+            }
+          : undefined;
   if (!isCurrent()) {
     return;
   }

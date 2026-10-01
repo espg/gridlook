@@ -236,6 +236,8 @@ export const useGlobeControlStore = defineStore("globeControl", {
       cameraAltitude: undefined as number | undefined,
       // lat/lon box of what the camera sees, refreshed while it moves
       viewFootprint: null as TViewFootprint | null,
+      // the mounted grid loads only the part of a large level that is in view
+      viewLoading: false,
       catalogUrl: undefined as string | undefined,
       catalogData: undefined as TCatalog | undefined,
       // multi-resolution datasets: the level every consumer reads, and
@@ -493,6 +495,15 @@ export const useGlobeControlStore = defineStore("globeControl", {
           this.setStreamlineMagnitudeDisplayed(false);
         }
       }
+    },
+    // Whether a large level is loaded as the part in view rather than whole.
+    // Streamlines and volumes read the whole level.
+    loadsLevelByView() {
+      return (
+        this.viewLoading &&
+        !this.isStreamlineLayerEnabled() &&
+        !this.isVolumeLayerEnabled()
+      );
     },
     isVolumeLayerEnabled() {
       return Boolean(

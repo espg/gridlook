@@ -125,6 +125,43 @@ it("reloads a swapped level in place and stages its display", async () => {
   scope.stop();
 });
 
+it("reloads the view window once it no longer covers the view", async () => {
+  const sources = {} as TSources;
+  const store = useGlobeControlStore();
+  const prepareDatasource = vi.fn();
+  const fetchAndRenderData = vi.fn().mockResolvedValue(undefined);
+  const viewWindowStale = vi.fn().mockReturnValue(false);
+  const scope = effectScope();
+  const loader = scope.run(() =>
+    useGridDataLoader({
+      getDatasources: () => sources,
+      getDataVar: vi.fn().mockResolvedValue({}),
+      fetchAndRenderData,
+      clearHoverLookup: vi.fn(),
+      prepareDatasource,
+      canLoadByView: () => true,
+      viewWindowStale,
+      updateLandSeaMask: vi.fn(),
+      updateColormap: vi.fn(),
+    })
+  )!;
+  await loader.datasourceUpdate();
+  expect(store.viewLoading).toBe(true);
+  expect(prepareDatasource).toHaveBeenCalledTimes(1);
+
+  // a move inside the loaded window fetches nothing
+  store.viewFootprint = { latMin: 0, latMax: 1, lonStart: 0, lonSpan: 1 };
+  await nextTick();
+  expect(fetchAndRenderData).toHaveBeenCalledTimes(1);
+
+  viewWindowStale.mockReturnValue(true);
+  store.viewFootprint = { latMin: 5, latMax: 6, lonStart: 0, lonSpan: 1 };
+  await vi.waitFor(() => expect(fetchAndRenderData).toHaveBeenCalledTimes(2));
+  expect(prepareDatasource).toHaveBeenCalledTimes(2);
+  expect(fetchAndRenderData.mock.calls[1][2]).toBe(true);
+  scope.stop();
+});
+
 // eslint-disable-next-line max-lines-per-function
 it("commits only the latest complete timestep and preserves its derived variable name", async () => {
   const sources = {} as TSources;
