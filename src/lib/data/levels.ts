@@ -50,8 +50,8 @@ export const DEFAULT_PIXELS_PER_CELL = 16;
 export const DEFAULT_HYSTERESIS_ORDERS = 0.35;
 
 /**
- * Finest level the camera may pick, as the number of cells one horizontal
- * slice of the level holds (`cellCount`: the length of a HEALPix level's
+ * Finest level the camera may pick on a grid that loads its levels whole, as
+ * the number of cells one horizontal slice of the level holds (`cellCount`: the length of a HEALPix level's
  * `cell` dimension, however sparse, or `nlat · nlon` on a regular grid). Every
  * timestep of a variable fetches and decodes that many values into Float32
  * (about 50 MB at this cap), and a dense global HEALPix level builds textures

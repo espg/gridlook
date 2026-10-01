@@ -47,17 +47,47 @@ A level switch keeps the view: the level on screen stays until the next one
 has loaded and then replaces it in one frame. Triangular grids rebuild their
 mesh first and are blank while the next level loads.
 
-Every timestep of a variable fetches and decodes as many values as the level
-has cells, so the cell count bounds the download and the memory a level
-holds (a dense global HEALPix level also builds textures of that size).
-Automatic selection therefore never picks a level with more than
+## Loading only what is in view
+
+Regular lat/lon grids (one-dimensional `lat` and `lon` axes, not rotated or
+projected) and nested HEALPix grids do not fetch a large level whole. A level
+with more than **12 · 4^8 ≈ 786 000 cells** is loaded as the part the camera
+sees plus a margin of half the view on every side:
+
+- **Regular lat/lon:** an index window on both axes, requested as a slice.
+  Zarr fetches only the chunks the slice touches. A window across the seam of
+  a global longitude axis is fetched as two slices and stitched; around a
+  pole the window takes every longitude and reads every n-th column.
+- **HEALPix:** blocks of 4^6 cells, six orders above the level, which are
+  contiguous in nested order and a square on their face. A dense level reads
+  them by index. A level with a `cell` coordinate must store it in ascending
+  nested order; the coordinate is then searched chunk by chunk and never read
+  whole.
+
+The window is reloaded in place once the view leaves it; moving inside it
+fetches nothing. With a level picked by hand that is too fine for the view,
+the window is cut down to the budget around the view centre.
+
+On these grids the coarsest level is also loaded whole. It is drawn under a
+finer level wherever that level has no cells on screen (outside its window,
+or outside the region it covers), and the colour range and histogram are
+taken from it, so colours do not shift as the view moves or the level
+changes.
+
+Such a grid can hold a level of any size, so automatic selection has no cap
+there. Streamlines and the volume layer read the whole level: while either
+is on, the cap below applies and levels up to it are loaded whole.
+
+HEALPix levels in ring order or with an unsorted `cell` coordinate, rotated
+and projected regular grids, and the other grid types load every level whole.
+Every timestep then fetches and decodes as many values as the level has
+cells, so automatic selection never picks a level with more than
 **12 · 4^10 ≈ 12.6 million cells** (about 50 MB of Float32 per timestep); a
-sparse regional level counts only the cells it stores, so a deep regional
-pyramid is picked all the way down. A level whose cell count is unknown is
-counted as a square grid as wide and as tall as the equator at its
-resolution, `(2πR / resolution)²`, which is never less than a global grid of
-that resolution holds. Finer levels remain available through the
-manual picker.
+sparse regional level counts only the cells it stores. A level whose cell
+count is unknown is counted as a square grid as wide and as tall as the
+equator at its resolution, `(2πR / resolution)²`, which is never less than a
+global grid of that resolution holds. Finer levels remain available through
+the manual picker.
 
 Choosing a level in the **Variable** card turns automatic selection off; the
 "Pick the level from the zoom" checkbox turns it back on. The selected level
