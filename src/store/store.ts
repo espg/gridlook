@@ -17,6 +17,7 @@ import {
   type TProjectionCenter,
   type TProjectionType,
 } from "@/lib/projection/projectionUtils.ts";
+import type { TViewFootprint } from "@/lib/projection/viewFootprint.ts";
 import type { TColorMap } from "@/lib/shaders/colormapShaders.ts";
 import type { TVarInfo, TBounds } from "@/lib/types/GlobeTypes.ts";
 import type { TCatalog } from "@/utils/catalog.ts";
@@ -233,6 +234,8 @@ export const useGlobeControlStore = defineStore("globeControl", {
       distanceScale: null as TDistanceScale | null,
       // height of the camera above the surface in metres, as last rendered
       cameraAltitude: undefined as number | undefined,
+      // lat/lon box of what the camera sees, refreshed while it moves
+      viewFootprint: null as TViewFootprint | null,
       catalogUrl: undefined as string | undefined,
       catalogData: undefined as TCatalog | undefined,
       // multi-resolution datasets: the level every consumer reads, and

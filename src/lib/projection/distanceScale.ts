@@ -10,7 +10,7 @@ import {
 } from "./projectionUtils.ts";
 
 export type TDistanceScale = { distanceMeters: number; widthPx: number };
-type TViewport = Pick<DOMRect, "left" | "top" | "width" | "height">;
+export type TViewport = Pick<DOMRect, "left" | "top" | "width" | "height">;
 
 function invertMapPoint(helper: ProjectionHelper, point: Vector3) {
   const projection = helper.getD3Projection();
@@ -42,7 +42,7 @@ function invertMapPoint(helper: ProjectionHelper, point: Vector3) {
   return geo;
 }
 
-function screenToGeo(
+export function screenToGeo(
   camera: Camera,
   helper: ProjectionHelper,
   rect: TViewport,

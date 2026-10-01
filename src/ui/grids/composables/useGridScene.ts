@@ -2,6 +2,7 @@ import {
   useDebounceFn,
   useEventListener,
   useResizeObserver,
+  useThrottleFn,
 } from "@vueuse/core";
 import * as d3 from "d3-geo";
 import * as THREE from "three";
@@ -46,6 +47,7 @@ import {
   ProjectionHelper,
   type TProjectionCenter,
 } from "@/lib/projection/projectionUtils.ts";
+import { viewFootprint } from "@/lib/projection/viewFootprint.ts";
 import { useUrlParameterStore } from "@/store/paramStore.ts";
 import { useGlobeControlStore } from "@/store/store.ts";
 import { isDisplayMode, isPresenterActive } from "@/store/usePresenterSync.ts";
@@ -131,6 +133,7 @@ export function useGridScene(options: UseGridSceneOptions) {
   let idleFrameCount = 0;
   const IDLE_FRAMES_BEFORE_STOP = 30; // ~500 ms at 60 fps – outlasts any realistic damping
   const WHEEL_END_DELAY_MS = 120;
+  const VIEW_FOOTPRINT_INTERVAL_MS = 200;
   const debouncedEndWheelInteraction = useDebounceFn(() => {
     wheelActive = false;
     animationLoop();
@@ -228,8 +231,28 @@ export function useGridScene(options: UseGridSceneOptions) {
     }
     getRenderer()?.render(getScene()!, getCamera()!);
     refreshDistanceScale();
+    refreshViewFootprint();
     return controlsUpdated;
   }
+
+  // Grids that load only the view follow this; a few times a second is enough.
+  const refreshViewFootprint = useThrottleFn(
+    () => {
+      if (!camera || !canvas.value) {
+        return;
+      }
+      const next = viewFootprint(
+        camera,
+        projectionHelper.value,
+        canvas.value.getBoundingClientRect()
+      );
+      if (JSON.stringify(next) !== JSON.stringify(store.viewFootprint)) {
+        store.viewFootprint = next;
+      }
+    },
+    VIEW_FOOTPRINT_INTERVAL_MS,
+    true
+  );
 
   function refreshDistanceScale() {
     store.distanceScale =
