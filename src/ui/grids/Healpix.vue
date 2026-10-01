@@ -897,11 +897,7 @@ function createHealpixMesh(
   );
   mesh.frustumCulled = false;
   if (target === backdropMeshes) {
-    // Both surfaces lie on the globe: let the finer one win the depth test.
-    material.polygonOffset = true;
-    material.polygonOffsetFactor = 1;
-    material.polygonOffsetUnits = 1;
-    mesh.renderOrder = -1;
+    mesh.renderOrder = -2;
   }
   target[batchIndex] = mesh;
   getScene()?.add(mesh);
@@ -1100,6 +1096,21 @@ function showBackdrop(frame: TBackdropFrame | undefined) {
   wanted?.batches.forEach((batch) => updateHealpixBatch(batch, backdropMeshes));
 }
 
+/**
+ * A level is drawn after its backdrop and over it whatever the depth says:
+ * up close the two surfaces are nearer than float32 positions can order.
+ */
+function drawOverBackdrop() {
+  for (const mesh of mainMeshes) {
+    if (mesh) {
+      (mesh.material as THREE.ShaderMaterial).depthFunc = backdropKey
+        ? THREE.AlwaysDepth
+        : THREE.LessEqualDepth;
+      mesh.renderOrder = backdropKey ? -1 : 0;
+    }
+  }
+}
+
 function healpixHoverLookup(
   lat: number,
   lon: number
@@ -1231,6 +1242,7 @@ async function fetchAndRenderData(
     } else {
       textures.forEach((texture) => updateHealpixTexture(texture));
     }
+    drawOverBackdrop();
     setHoverLookup(healpixHoverLookup);
   };
   if (!isCurrent()) {

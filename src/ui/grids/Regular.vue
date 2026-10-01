@@ -994,6 +994,12 @@ function setMeshMaterials(material: THREE.ShaderMaterial) {
 function updateMeshMaterials(rawData: Float32Array) {
   const material = makeMaterial(rawData);
   updateProjectionUniforms(material, projectionHelper.value);
+  // A level is drawn after its backdrop and over it whatever the depth says:
+  // up close the two surfaces are nearer than float32 positions can order.
+  material.depthFunc = backdrop ? THREE.AlwaysDepth : THREE.LessEqualDepth;
+  for (const mesh of meshes) {
+    mesh.renderOrder = backdrop ? -1 : 0;
+  }
   setMeshMaterials(material);
   updateColormap(drawnMeshes());
 }
@@ -1065,10 +1071,6 @@ function showBackdrop(frame: TBackdropFrame | undefined) {
     wanted.latitudes,
     wanted.longitudes
   );
-  // Both surfaces lie on the globe: let the finer one win the depth test.
-  material.polygonOffset = true;
-  material.polygonOffsetFactor = 1;
-  material.polygonOffsetUnits = 1;
   updateProjectionUniforms(material, projectionHelper.value);
   backdrop = createWrappedProjectionMesh(
     geometry,
@@ -1076,7 +1078,7 @@ function showBackdrop(frame: TBackdropFrame | undefined) {
     projectionHelper.value.type
   );
   backdrop.frustumCulled = false;
-  backdrop.renderOrder = -1;
+  backdrop.renderOrder = -2;
   backdrop.userData.key = wanted.key;
   getScene()?.add(backdrop);
 }
