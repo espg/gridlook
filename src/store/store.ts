@@ -231,6 +231,8 @@ export const useGlobeControlStore = defineStore("globeControl", {
       hoverEnabled: false,
       hoveredGridPoint: undefined as THoveredGridPoint | undefined,
       distanceScale: null as TDistanceScale | null,
+      // height of the camera above the surface in metres, as last rendered
+      cameraAltitude: undefined as number | undefined,
       catalogUrl: undefined as string | undefined,
       catalogData: undefined as TCatalog | undefined,
       // multi-resolution datasets: the level every consumer reads, and

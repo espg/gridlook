@@ -36,12 +36,16 @@ than two usable levels is opened as a single-level dataset.
 
 ## How the level is picked
 
-On the globe, once the camera comes to rest, Gridlook computes the ground
+On the globe, also while the camera is moving, Gridlook computes the ground
 distance one screen pixel covers at the point below the camera and picks the
 level whose cells come nearest to **2 pixels** on screen (nearest in log2 of
 the cell size). The active level is kept unless another level fits better by
 more than **0.35 orders**, so panning along a boundary does not flip back and
 forth. Flat projections have no camera height and keep the loaded level.
+
+A level switch keeps the view: the level on screen stays until the next one
+has loaded and then replaces it in one frame. Triangular grids rebuild their
+mesh first and are blank while the next level loads.
 
 Every timestep of a variable fetches and decodes as many values as the level
 has cells, so the cell count bounds the download and the memory a level

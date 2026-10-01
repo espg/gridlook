@@ -16,7 +16,7 @@ vi.stubGlobal("localStorage", {
 });
 
 const { createPinia, setActivePinia } = await import("pinia");
-const { effectScope, nextTick } = await import("vue");
+const { effectScope, nextTick, reactive } = await import("vue");
 const { useGlobeControlStore } = await import("@/store/store.ts");
 const { useGridDataLoader } =
   await import("@/ui/grids/composables/useGridDataLoader.ts");
@@ -93,6 +93,35 @@ it("reports a fetch failure when no newer update is queued", async () => {
     "Could not fetch data"
   );
   expect(useGlobeControlStore().loading).toBe(false);
+  scope.stop();
+});
+
+it("reloads a swapped level in place and stages its display", async () => {
+  const sources = reactive({ selectedLevel: 0 }) as TSources;
+  const prepareDatasource = vi.fn();
+  const fetchAndRenderData = vi.fn().mockResolvedValue(undefined);
+  const scope = effectScope();
+  const loader = scope.run(() =>
+    useGridDataLoader({
+      getDatasources: () => sources,
+      getDataVar: vi.fn().mockResolvedValue({}),
+      fetchAndRenderData,
+      clearHoverLookup: vi.fn(),
+      prepareDatasource,
+      updateLandSeaMask: vi.fn(),
+      updateColormap: vi.fn(),
+    })
+  )!;
+
+  sources.selectedLevel = 1;
+  await vi.waitFor(() => expect(fetchAndRenderData).toHaveBeenCalledTimes(1));
+  expect(prepareDatasource).toHaveBeenCalledTimes(1);
+  expect(fetchAndRenderData.mock.calls[0][2]).toBe(true);
+
+  // Once the level is on screen, a timestep change replaces it directly.
+  await loader.getData();
+  expect(prepareDatasource).toHaveBeenCalledTimes(1);
+  expect(fetchAndRenderData.mock.calls[1][2]).toBe(false);
   scope.stop();
 });
 

@@ -14,6 +14,8 @@ type TLoaderState = {
   requestRevision: number;
   pendingUpdate: Ref<boolean>;
   updatingData: Ref<boolean>;
+  // The selected level changed and its data has not been displayed yet.
+  levelSwap: boolean;
 };
 
 type TGridDataLoaderOptions = {
@@ -24,7 +26,9 @@ type TGridDataLoaderOptions = {
   ) => Promise<TDataVar | undefined>;
   fetchAndRenderData: (
     datavar: TDataVar,
-    isCurrent: () => boolean
+    isCurrent: () => boolean,
+    // Keep the frame on screen until the complete replacement is ready.
+    stageDisplay: boolean
   ) => Promise<void>;
   clearHoverLookup: () => void;
   updateLandSeaMask: () => void | Promise<void>;
@@ -75,6 +79,15 @@ function createGetData(
           revision === state.requestRevision &&
           datasources === options.getDatasources();
         try {
+          if (state.levelSwap) {
+            // The grid stays mounted across a level swap: read the new
+            // level's grid while the previous level stays on screen.
+            options.clearHoverLookup();
+            await options.prepareDatasource?.();
+            if (!isCurrent()) {
+              continue;
+            }
+          }
           const requestVarname = store.varnameSelector;
           const datavar = await options.getDataVar(requestVarname, datasources);
           if (state.disposed || datasources !== options.getDatasources()) {
@@ -86,7 +99,14 @@ function createGetData(
             continue;
           }
           if (datavar !== undefined && isCurrent()) {
-            await options.fetchAndRenderData(datavar, isCurrent);
+            await options.fetchAndRenderData(
+              datavar,
+              isCurrent,
+              state.levelSwap
+            );
+            if (isCurrent()) {
+              state.levelSwap = false;
+            }
           }
         } catch (error) {
           // A live source may roll over while an older timestep is loading.
@@ -143,6 +163,14 @@ function registerGridDataLoaderWatches(
         store.isInitializingVariable = false;
         return;
       }
+      await getData();
+      options.updateColormap();
+    }
+  );
+  watch(
+    () => options.getDatasources()?.selectedLevel,
+    async () => {
+      state.levelSwap = true;
       await getData();
       options.updateColormap();
     }
@@ -221,6 +249,7 @@ export function useGridDataLoader(options: TGridDataLoaderOptions) {
     requestRevision: 0,
     pendingUpdate: ref(false),
     updatingData: ref(false),
+    levelSwap: false,
   };
   const getData = createGetData(options, store, state, logError);
   const datasourceUpdate = createDatasourceUpdate(options, getData);

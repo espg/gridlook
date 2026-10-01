@@ -12,7 +12,7 @@ const { PROJECTION_TYPES } =
 const { ZARR_FORMAT } = await import("@/lib/types/GlobeTypes.ts");
 const { useUrlParameterStore } = await import("@/store/paramStore.ts");
 const { useGlobeControlStore } = await import("@/store/store.ts");
-const { LEVEL_SWAP_SETTLE_MS, useLevelSelection } =
+const { LEVEL_PICK_INTERVAL_MS, useLevelSelection } =
   await import("@/store/useLevelSelection.ts");
 
 const VIEWPORT = { width: 1000, height: 1000 };
@@ -23,9 +23,9 @@ function resolution(order: number) {
 
 function altitudeFor(order: number) {
   const halfFov = (CAMERA_VERTICAL_FOV_DEGREES * Math.PI) / 360;
-  return String(
+  return (
     (resolution(order) * VIEWPORT.height) /
-      (2 * DEFAULT_PIXELS_PER_CELL * Math.tan(halfFov))
+    (2 * DEFAULT_PIXELS_PER_CELL * Math.tan(halfFov))
   );
 }
 
@@ -43,9 +43,9 @@ function pyramid(orders: number[]) {
   });
 }
 
-async function settle() {
+async function nextPick() {
   await nextTick();
-  vi.advanceTimersByTime(LEVEL_SWAP_SETTLE_MS);
+  vi.advanceTimersByTime(LEVEL_PICK_INTERVAL_MS);
   await nextTick();
 }
 
@@ -58,37 +58,39 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-it("picks the level from the settled camera altitude", async () => {
+it("picks the level from the rendered camera altitude", async () => {
   const store = useGlobeControlStore();
-  const params = useUrlParameterStore();
   const scope = effectScope();
   scope.run(() => useLevelSelection(pyramid([10, 8, 6]), () => VIEWPORT));
   try {
-    params.paramCameraAlt = altitudeFor(8);
-    await settle();
+    store.cameraAltitude = altitudeFor(8);
+    await nextPick();
     expect(store.selectedLevel).toBe(1);
     expect(store.levelAuto).toBe(true);
 
-    params.paramCameraAlt = altitudeFor(6);
-    await settle();
+    store.cameraAltitude = altitudeFor(6);
+    await nextPick();
     expect(store.selectedLevel).toBe(2);
   } finally {
     scope.stop();
   }
 });
 
-it("waits for the camera to rest before switching", async () => {
+it("switches while the camera keeps moving, once per interval", async () => {
   const store = useGlobeControlStore();
-  const params = useUrlParameterStore();
   const scope = effectScope();
   scope.run(() => useLevelSelection(pyramid([10, 8, 6]), () => VIEWPORT));
   try {
-    params.paramCameraAlt = altitudeFor(8);
+    store.cameraAltitude = altitudeFor(8);
     await nextTick();
-    vi.advanceTimersByTime(LEVEL_SWAP_SETTLE_MS / 2);
-    expect(store.selectedLevel).toBe(0);
-    vi.advanceTimersByTime(LEVEL_SWAP_SETTLE_MS / 2);
     expect(store.selectedLevel).toBe(1);
+
+    store.cameraAltitude = altitudeFor(6);
+    await nextTick();
+    vi.advanceTimersByTime(LEVEL_PICK_INTERVAL_MS / 2);
+    expect(store.selectedLevel).toBe(1);
+    vi.advanceTimersByTime(LEVEL_PICK_INTERVAL_MS / 2);
+    expect(store.selectedLevel).toBe(2);
   } finally {
     scope.stop();
   }
@@ -96,13 +98,12 @@ it("waits for the camera to rest before switching", async () => {
 
 it("keeps a manual pick until automatic selection is re-enabled", async () => {
   const store = useGlobeControlStore();
-  const params = useUrlParameterStore();
   const scope = effectScope();
   scope.run(() => useLevelSelection(pyramid([10, 8, 6]), () => VIEWPORT));
   try {
     store.selectLevel(0);
-    params.paramCameraAlt = altitudeFor(6);
-    await settle();
+    store.cameraAltitude = altitudeFor(6);
+    await nextPick();
     expect(store.selectedLevel).toBe(0);
 
     store.setLevelAuto(true);
@@ -115,15 +116,14 @@ it("keeps a manual pick until automatic selection is re-enabled", async () => {
 
 it("leaves the level alone on flat projections and single-level datasets", async () => {
   const store = useGlobeControlStore();
-  const params = useUrlParameterStore();
   const scope = effectScope();
   const { pickLevel } = scope.run(() =>
     useLevelSelection(pyramid([10, 8, 6]), () => VIEWPORT)
   )!;
   try {
     store.projectionMode = PROJECTION_TYPES.MERCATOR;
-    params.paramCameraAlt = altitudeFor(6);
-    await settle();
+    store.cameraAltitude = altitudeFor(6);
+    await nextPick();
     expect(store.selectedLevel).toBe(0);
     pickLevel();
     expect(store.selectedLevel).toBe(0);
@@ -141,6 +141,21 @@ it("leaves the level alone on flat projections and single-level datasets", async
     expect(store.selectedLevel).toBe(0);
   } finally {
     single.stop();
+  }
+});
+
+it("picks from the URL camera before the first frame is rendered", () => {
+  const store = useGlobeControlStore();
+  useUrlParameterStore().paramCameraAlt = String(altitudeFor(6));
+  const scope = effectScope();
+  const { pickLevel } = scope.run(() =>
+    useLevelSelection(pyramid([10, 8, 6]), () => VIEWPORT)
+  )!;
+  try {
+    pickLevel();
+    expect(store.selectedLevel).toBe(2);
+  } finally {
+    scope.stop();
   }
 });
 

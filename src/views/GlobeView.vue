@@ -254,9 +254,10 @@ watch(
   }
 );
 
-// A level switch swaps the datasource the grid reads and re-renders it the
-// way a variable change does: the grid remounts and restores the camera the
-// pick was made for from the URL state.
+// A level switch swaps the datasource the grid reads. The grid stays mounted
+// and reloads the level in place (see useGridDataLoader), so the camera keeps
+// moving and the previous level stays on screen until the next one is ready.
+// Only a level on another grid type remounts.
 watch(
   () => store.selectedLevel,
   async (level) => {
@@ -266,9 +267,7 @@ watch(
     if (!isInitialized.value) {
       return;
     }
-    store.startLoading();
-    detectedGridType.value = undefined;
-    await setGridType(true);
+    await setGridType();
   }
 );
 

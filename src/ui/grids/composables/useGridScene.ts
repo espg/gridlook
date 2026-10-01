@@ -224,6 +224,7 @@ export function useGridScene(options: UseGridSceneOptions) {
         camera.near = near;
         camera.updateProjectionMatrix();
       }
+      store.cameraAltitude = altitude * EARTH_RADIUS_METERS;
     }
     getRenderer()?.render(getScene()!, getCamera()!);
     refreshDistanceScale();

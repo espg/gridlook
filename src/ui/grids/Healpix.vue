@@ -198,6 +198,9 @@ const { datasourceUpdate } = useGridDataLoader({
   fetchAndRenderData,
   scalarCache,
   clearHoverLookup,
+  prepareDatasource: async () => {
+    healpixGrid.value = await getHealpixGridParameters();
+  },
   updateLandSeaMask,
   updateColormap: () => updateColormap(mainMeshes),
   refreshStreamlines: async (reuseCached) => {
@@ -900,9 +903,10 @@ function healpixHoverLookup(
 // eslint-disable-next-line max-lines-per-function
 async function fetchAndRenderData(
   datavar: zarr.Array<zarr.DataType, zarr.AsyncReadable>,
-  isCurrent: () => boolean
+  isCurrent: () => boolean,
+  stageDisplay: boolean
 ) {
-  const deferDisplay = store.isStreamlineLayerEnabled();
+  const deferDisplay = store.isStreamlineLayerEnabled() || stageDisplay;
   const grid = unpackGrid();
 
   const cellCoord = await getCells();
@@ -981,11 +985,6 @@ async function fetchAndRenderData(
 }
 
 onBeforeMount(async () => {
-  const grid = await getHealpixGridParameters();
-  if (disposed) {
-    return;
-  }
-  healpixGrid.value = grid;
   await datasourceUpdate();
   gridPrepared.value = true;
 });

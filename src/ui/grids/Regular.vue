@@ -129,6 +129,7 @@ const BATCH_SIZE = 60;
 const MAX_GEO_RESOLUTION = 512;
 
 let meshes: THREE.Mesh[] = [];
+let geometryPending = false;
 
 onColormapChange(() => updateColormap(meshes));
 
@@ -176,7 +177,12 @@ const { datasourceUpdate } = useGridDataLoader({
   clearHoverLookup,
   prepareDatasource: async () => {
     await getDims();
-    await makeGeometry();
+    // On a level swap the meshes still show the previous level: rebuild them
+    // together with the data instead.
+    geometryPending = meshes.length > 0;
+    if (!geometryPending) {
+      makeGeometry();
+    }
   },
   updateLandSeaMask,
   updateColormap: () => updateColormap(meshes),
@@ -557,7 +563,7 @@ function applyBatchGeometry(
   }
 }
 
-async function makeGeometry() {
+function makeGeometry() {
   try {
     const gridParams = getRegularGridParameters();
     const totalBatches = Math.ceil((gridParams.geoLatCount - 1) / BATCH_SIZE);
@@ -1035,6 +1041,10 @@ async function fetchAndRenderData(
     dimRanges: dimensionRanges,
   };
   const renderScalar = () => {
+    if (geometryPending) {
+      makeGeometry();
+      geometryPending = false;
+    }
     updateMeshMaterials(rawData);
     setHoverLookupFromIndex(hoverIndex, fillValue, missingValue);
   };
