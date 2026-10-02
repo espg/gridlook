@@ -41,9 +41,11 @@ ground distance one screen pixel covers at the point below the camera and
 picks the level whose cells come nearest to **16 pixels** on screen (nearest
 in log2 of the cell size). The active level is kept unless another level fits
 better by more than **0.35 orders**, so panning along a boundary does not flip
-back and forth. A flat projection stretches the map unevenly, so away from
-the point below the camera the cells can be larger or smaller on screen than
-the target.
+back and forth. Where a projection stretches the map more one way than the
+other, the coarser of the two directions counts, so cells are never smaller
+than the target. A flat projection also stretches the map unevenly from place
+to place, so away from the point below the camera the cells can be larger or
+smaller on screen than the target.
 
 A level switch keeps the view: the level on screen stays until the next one
 has loaded and then replaces it in one frame. Triangular grids rebuild their
@@ -64,26 +66,30 @@ sees plus a margin of half the view on every side:
   contiguous in nested order and a square on their face. A dense level reads
   them by index. A level with a `cell` coordinate must store it in ascending
   nested order; the coordinate is then searched chunk by chunk and never read
-  whole.
+  whole. Every chunk is checked as it is read, and a coordinate found out of
+  order makes the level load whole.
 
 The window is reloaded in place once the view leaves it; moving inside it
-fetches nothing. With a level picked by hand that is too fine for the view,
-the window is cut down to the budget around the view centre.
+fetches nothing. While the camera keeps moving, a window that is already
+loading is shown before the next one is requested. With a level picked by
+hand that is too fine for the view, the window is cut down to the budget
+around the point below the camera.
 
-On these grids the coarsest level is also loaded whole. It is drawn under a
-finer level wherever that level has no cells on screen (outside its window,
-or outside the region it covers), and the colour range and histogram are
-taken from it, so colours do not shift as the view moves or the level
-changes.
+The coarsest level is the exception: it is always loaded whole. It is drawn
+under a finer level wherever that level has no cells on screen (outside its
+window, or outside the region it covers), and the colour range and histogram
+are taken from it, so colours do not shift as the view moves or the level
+changes. A pyramid whose levels do not state their resolution has no known
+coarsest level, and loads every level whole.
 
-Such a grid can hold a level of any size, so automatic selection has no cap
-there. Streamlines and the volume layer read the whole level: while either
-is on, the cap below applies and levels up to it are loaded whole.
+A level that is loaded by view can be of any size, so automatic selection has
+no cap for it. Streamlines and the volume layer read the whole level: while
+either is on, the cap below applies and levels up to it are loaded whole.
 
 HEALPix levels in ring order or with an unsorted `cell` coordinate, rotated
 and projected regular grids, and the other grid types load every level whole.
 Every timestep then fetches and decodes as many values as the level has
-cells, so automatic selection never picks a level with more than
+cells, so automatic selection never picks such a level with more than
 **12 · 4^10 ≈ 12.6 million cells** (about 50 MB of Float32 per timestep); a
 sparse regional level counts only the cells it stores. A level whose cell
 count is unknown is counted as a square grid as wide and as tall as the
