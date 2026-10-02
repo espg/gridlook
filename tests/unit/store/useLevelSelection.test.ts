@@ -43,6 +43,11 @@ function pyramid(orders: number[]) {
   });
 }
 
+/** The measured scale at which one cell of `order` spans the target pixels. */
+function scaleFor(order: number) {
+  return resolution(order) / DEFAULT_PIXELS_PER_CELL;
+}
+
 async function nextPick() {
   await nextTick();
   vi.advanceTimersByTime(LEVEL_PICK_INTERVAL_MS);
@@ -58,17 +63,17 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-it("picks the level from the rendered camera altitude", async () => {
+it("picks the level from the rendered ground scale", async () => {
   const store = useGlobeControlStore();
   const scope = effectScope();
   scope.run(() => useLevelSelection(pyramid([10, 8, 6]), () => VIEWPORT));
   try {
-    store.cameraAltitude = altitudeFor(8);
+    store.metersPerPixel = scaleFor(8);
     await nextPick();
     expect(store.selectedLevel).toBe(1);
     expect(store.levelAuto).toBe(true);
 
-    store.cameraAltitude = altitudeFor(6);
+    store.metersPerPixel = scaleFor(6);
     await nextPick();
     expect(store.selectedLevel).toBe(2);
   } finally {
@@ -81,11 +86,11 @@ it("switches while the camera keeps moving, once per interval", async () => {
   const scope = effectScope();
   scope.run(() => useLevelSelection(pyramid([10, 8, 6]), () => VIEWPORT));
   try {
-    store.cameraAltitude = altitudeFor(8);
+    store.metersPerPixel = scaleFor(8);
     await nextTick();
     expect(store.selectedLevel).toBe(1);
 
-    store.cameraAltitude = altitudeFor(6);
+    store.metersPerPixel = scaleFor(6);
     await nextTick();
     vi.advanceTimersByTime(LEVEL_PICK_INTERVAL_MS / 2);
     expect(store.selectedLevel).toBe(1);
@@ -102,7 +107,7 @@ it("keeps a manual pick until automatic selection is re-enabled", async () => {
   scope.run(() => useLevelSelection(pyramid([10, 8, 6]), () => VIEWPORT));
   try {
     store.selectLevel(0);
-    store.cameraAltitude = altitudeFor(6);
+    store.metersPerPixel = scaleFor(6);
     await nextPick();
     expect(store.selectedLevel).toBe(0);
 
@@ -114,19 +119,15 @@ it("keeps a manual pick until automatic selection is re-enabled", async () => {
   }
 });
 
-it("leaves the level alone on flat projections and single-level datasets", async () => {
+it("picks on flat projections too, and leaves single-level datasets alone", async () => {
   const store = useGlobeControlStore();
   const scope = effectScope();
-  const { pickLevel } = scope.run(() =>
-    useLevelSelection(pyramid([10, 8, 6]), () => VIEWPORT)
-  )!;
+  scope.run(() => useLevelSelection(pyramid([10, 8, 6]), () => VIEWPORT));
   try {
-    store.projectionMode = PROJECTION_TYPES.MERCATOR;
-    store.cameraAltitude = altitudeFor(6);
+    store.projectionMode = PROJECTION_TYPES.ROBINSON;
+    store.metersPerPixel = scaleFor(6);
     await nextPick();
-    expect(store.selectedLevel).toBe(0);
-    pickLevel();
-    expect(store.selectedLevel).toBe(0);
+    expect(store.selectedLevel).toBe(2);
   } finally {
     scope.stop();
   }
@@ -136,7 +137,7 @@ it("leaves the level alone on flat projections and single-level datasets", async
     useLevelSelection(pyramid([10]), () => VIEWPORT)
   )!;
   try {
-    store.projectionMode = PROJECTION_TYPES.NEARSIDE_PERSPECTIVE;
+    store.selectLevel(0, false);
     singleLevel.pickLevel();
     expect(store.selectedLevel).toBe(0);
   } finally {

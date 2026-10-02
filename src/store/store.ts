@@ -232,8 +232,8 @@ export const useGlobeControlStore = defineStore("globeControl", {
       hoverEnabled: false,
       hoveredGridPoint: undefined as THoveredGridPoint | undefined,
       distanceScale: null as TDistanceScale | null,
-      // height of the camera above the surface in metres, as last rendered
-      cameraAltitude: undefined as number | undefined,
+      // ground metres one screen pixel covers below the camera, as rendered
+      metersPerPixel: undefined as number | undefined,
       // lat/lon box of what the camera sees, refreshed while it moves
       viewFootprint: null as TViewFootprint | null,
       // the mounted grid loads only the part of a large level that is in view

@@ -109,6 +109,10 @@ describe("groundMetersPerPixel", () => {
 describe("selectLevel", () => {
   it("picks the level nearest the target in log2 cell size", () => {
     expect(selectLevel(cameraFor(resolution(8)), LADDER, 0)).toBe(ORDER_8);
+    // the same pick from a measured ground scale instead of a camera
+    expect(
+      selectLevel(resolution(8) / DEFAULT_PIXELS_PER_CELL, LADDER, 0)
+    ).toBe(ORDER_8);
     // Slightly finer than the geometric midpoint rounds to the finer level.
     expect(selectLevel(cameraFor(resolution(7.6)), LADDER, 0)).toBe(ORDER_8);
     expect(selectLevel(cameraFor(resolution(7.4)), LADDER, 0)).toBe(ORDER_7);

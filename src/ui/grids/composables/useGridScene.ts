@@ -39,7 +39,10 @@ import {
   useSurfaceZoom,
 } from "@/lib/camera/OrbitControlsAddOn.ts";
 import { getRegionalCameraPosition } from "@/lib/camera/regionalCamera.ts";
-import { getDistanceScale } from "@/lib/projection/distanceScale.ts";
+import {
+  getDistanceScale,
+  metersPerPixelAt,
+} from "@/lib/projection/distanceScale.ts";
 import {
   isAzimuthalProjectionType,
   MERCATOR_LAT_LIMIT,
@@ -227,7 +230,6 @@ export function useGridScene(options: UseGridSceneOptions) {
         camera.near = near;
         camera.updateProjectionMatrix();
       }
-      store.cameraAltitude = altitude * EARTH_RADIUS_METERS;
     }
     getRenderer()?.render(getScene()!, getCamera()!);
     refreshDistanceScale();
@@ -235,19 +237,33 @@ export function useGridScene(options: UseGridSceneOptions) {
     return controlsUpdated;
   }
 
-  // Grids that load only the view follow this; a few times a second is enough.
+  // What the camera sees and at what scale: level selection and grids that
+  // load only the view follow this; a few times a second is enough.
   const refreshViewFootprint = useThrottleFn(
     () => {
       if (!camera || !canvas.value) {
         return;
       }
-      const next = viewFootprint(
-        camera,
-        projectionHelper.value,
-        canvas.value.getBoundingClientRect()
-      );
+      const rect = canvas.value.getBoundingClientRect();
+      const next = viewFootprint(camera, projectionHelper.value, rect);
       if (JSON.stringify(next) !== JSON.stringify(store.viewFootprint)) {
         store.viewFootprint = next;
+      }
+      // The scale is taken at the point of the surface below the camera.
+      const below = projectionHelper.value.isFlat
+        ? new THREE.Vector3(camera.position.x, camera.position.y, 0)
+        : camera.position.clone().normalize();
+      below.project(camera);
+      const scale = metersPerPixelAt(
+        camera,
+        projectionHelper.value,
+        rect,
+        rect.left + ((below.x + 1) * rect.width) / 2,
+        rect.top + ((1 - below.y) * rect.height) / 2,
+        EARTH_RADIUS_METERS
+      );
+      if (scale !== null) {
+        store.metersPerPixel = scale;
       }
     },
     VIEW_FOOTPRINT_INTERVAL_MS,

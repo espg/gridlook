@@ -85,14 +85,15 @@ export function screenToGeo(
   ];
 }
 
-export function getDistanceScale(
+/** Ground metres one screen pixel covers at a screen point, in any projection. */
+export function metersPerPixelAt(
   camera: Camera,
   helper: ProjectionHelper,
   rect: TViewport,
   x: number,
   y: number,
   earthRadiusMeters: number
-): TDistanceScale | null {
+): number | null {
   if (!screenToGeo(camera, helper, rect, x, y)) {
     return null;
   }
@@ -104,7 +105,28 @@ export function getDistanceScale(
   // ponytail: one-pixel sampling estimates local horizontal scale, not distance
   // across the whole bar. A measuring tool would need to integrate along its path.
   const metersPerPixel = geoDistance(left, right) * earthRadiusMeters;
-  if (!Number.isFinite(metersPerPixel) || metersPerPixel <= 0) {
+  return Number.isFinite(metersPerPixel) && metersPerPixel > 0
+    ? metersPerPixel
+    : null;
+}
+
+export function getDistanceScale(
+  camera: Camera,
+  helper: ProjectionHelper,
+  rect: TViewport,
+  x: number,
+  y: number,
+  earthRadiusMeters: number
+): TDistanceScale | null {
+  const metersPerPixel = metersPerPixelAt(
+    camera,
+    helper,
+    rect,
+    x,
+    y,
+    earthRadiusMeters
+  );
+  if (metersPerPixel === null) {
     return null;
   }
   const maxDistance = metersPerPixel * 150;

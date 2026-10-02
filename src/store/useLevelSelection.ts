@@ -10,7 +10,6 @@ import {
   getGlobeFitCameraDistance,
 } from "@/lib/camera/cameraSettings.ts";
 import { selectLevel } from "@/lib/data/levels.ts";
-import { PROJECTION_TYPES } from "@/lib/projection/projectionUtils.ts";
 import type { TSources } from "@/lib/types/GlobeTypes.ts";
 
 /**
@@ -24,13 +23,13 @@ export type TViewportSize = { width: number; height: number };
 /**
  * Camera-driven level selection for multi-resolution datasets.
  *
- * The scene writes the altitude of every rendered frame into the store; this
- * watches it and, on the globe with auto-selection on, writes the level whose
- * cells best fit the screen into the store, also while the camera is moving.
- * Flat projections have no camera height and keep the loaded level.
- * `pickLevel` runs the same choice on demand — before the first render, from
- * the URL camera or else the fitted one — so a pyramid never opens on a level
- * the renderer cannot hold.
+ * The scene writes the ground metres one pixel covers below the camera into
+ * the store, in whatever projection is shown; this watches it and, with
+ * auto-selection on, writes the level whose cells best fit the screen into
+ * the store, also while the camera is moving. `pickLevel` runs the same
+ * choice on demand — before the first render, from the URL camera or else
+ * the globe's fitted one — so a pyramid never opens on a level the renderer
+ * cannot hold.
  */
 export function useLevelSelection(
   datasources: Ref<TSources | undefined>,
@@ -40,7 +39,7 @@ export function useLevelSelection(
   const { paramCameraAlt } = storeToRefs(useUrlParameterStore());
 
   function altitudeMeters(viewport: TViewportSize) {
-    const altitude = store.cameraAltitude ?? Number(paramCameraAlt.value);
+    const altitude = Number(paramCameraAlt.value);
     if (Number.isFinite(altitude)) {
       return altitude;
     }
@@ -50,17 +49,12 @@ export function useLevelSelection(
 
   function pickLevel() {
     const levels = datasources.value?.levels;
-    if (
-      !levels ||
-      levels.length < 2 ||
-      !store.levelAuto ||
-      store.projectionMode !== PROJECTION_TYPES.NEARSIDE_PERSPECTIVE
-    ) {
+    if (!levels || levels.length < 2 || !store.levelAuto) {
       return;
     }
     const viewport = getViewport();
     const next = selectLevel(
-      {
+      store.metersPerPixel ?? {
         altitudeMeters: altitudeMeters(viewport),
         viewportHeightPx: viewport.height,
       },
@@ -72,7 +66,7 @@ export function useLevelSelection(
     store.selectLevel(next, false);
   }
 
-  watchThrottled(() => store.cameraAltitude, pickLevel, {
+  watchThrottled(() => store.metersPerPixel, pickLevel, {
     throttle: LEVEL_PICK_INTERVAL_MS,
   });
   watch(() => [store.levelAuto, store.loadsLevelByView()], pickLevel);

@@ -125,13 +125,14 @@ export function exceedsCellCap(
 /**
  * The level a camera should render: the level whose cells come nearest to
  * `pixelsPerCell` pixels at the sub-camera point (nearest in log2 cell size),
+ * from the camera, or from the ground metres per pixel measured there,
  * skipping levels with more cells than `maxCells`, and keeping the active
  * level unless another fits better by more than `hysteresisOrders`. Returns
  * the index into `levels`; `active` when there is nothing to choose from
  * (fewer than two levels, or levels without a resolution).
  */
 export function selectLevel(
-  camera: TLevelSelectionCamera,
+  camera: TLevelSelectionCamera | number,
   levels: readonly Pick<TSourceLevel, "resolution" | "cellCount">[],
   active: number,
   options: TLevelSelectionOptions = {}
@@ -147,7 +148,7 @@ export function selectLevel(
   }
   const target =
     (options.pixelsPerCell ?? DEFAULT_PIXELS_PER_CELL) *
-    groundMetersPerPixel(camera);
+    (typeof camera === "number" ? camera : groundMetersPerPixel(camera));
   const mismatch = (index: number) =>
     Math.abs(Math.log2(levels[index].resolution!) - Math.log2(target));
   const eligible = candidates.filter(
