@@ -58,10 +58,11 @@ export function useLevelSelection(
         altitudeMeters: altitudeMeters(viewport),
         viewportHeightPx: viewport.height,
       },
-      levels,
-      store.selectedLevel,
-      // no level is too large for a grid that loads only the view
-      { maxCells: store.loadsLevelByView() ? Infinity : undefined }
+      // no level is too large where the grid loads only the view of it
+      levels.map((level, index) =>
+        store.loadsLevelByView(index) ? { ...level, cellCount: 0 } : level
+      ),
+      store.selectedLevel
     );
     store.selectLevel(next, false);
   }
@@ -69,7 +70,15 @@ export function useLevelSelection(
   watchThrottled(() => store.metersPerPixel, pickLevel, {
     throttle: LEVEL_PICK_INTERVAL_MS,
   });
-  watch(() => [store.levelAuto, store.loadsLevelByView()], pickLevel);
+  watch(
+    () => [
+      store.levelAuto,
+      ...(datasources.value?.levels ?? []).map((_, index) =>
+        store.loadsLevelByView(index)
+      ),
+    ],
+    pickLevel
+  );
 
   return { pickLevel };
 }

@@ -37,6 +37,10 @@ export function coarsestLevel(
   return coarsest;
 }
 
+/** Shown in place of streamlines on a level that cannot be loaded whole. */
+export const STREAMLINES_NEED_WHOLE_LEVEL =
+  "Streamlines read a whole level, and this one is too large to load whole. Pick a coarser level.";
+
 /** Target on-screen size of one cell, in pixels, at the sub-camera point. */
 export const DEFAULT_PIXELS_PER_CELL = 16;
 

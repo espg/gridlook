@@ -175,3 +175,31 @@ it("picks from the globe's fitted framing before the URL has a camera", () => {
     scope.stop();
   }
 });
+
+it("lifts the cap for levels loaded by view, not for one that is loaded whole", async () => {
+  const store = useGlobeControlStore();
+  const scope = effectScope();
+  // order 12 holds 201M cells: far over the whole-level cap
+  scope.run(() => useLevelSelection(pyramid([12, 10, 8]), () => VIEWPORT));
+  try {
+    store.metersPerPixel = scaleFor(12);
+    await nextPick();
+    expect(store.selectedLevel).toBe(1);
+
+    // the grid reports that it loads only the view: order 12 is in reach
+    store.viewLoading = true;
+    await nextTick();
+    expect(store.selectedLevel).toBe(0);
+
+    // order 12 turns out to need loading whole: the pick settles on order 10
+    // and does not return while the grid still loads the others by view
+    store.wholeLevels = [0];
+    await nextTick();
+    expect(store.selectedLevel).toBe(1);
+    store.metersPerPixel = scaleFor(12) * 1.01;
+    await nextPick();
+    expect(store.selectedLevel).toBe(1);
+  } finally {
+    scope.stop();
+  }
+});

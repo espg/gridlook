@@ -95,3 +95,38 @@ it("boxes flat projections and reports nothing off the map", () => {
   camera.updateMatrixWorld();
   expect(viewFootprint(camera, flat, rect)).toBeNull();
 });
+
+it("finds the edge of a flat map that does not fill the screen", () => {
+  const flat = new ProjectionHelper(PROJECTION_TYPES.EQUIRECTANGULAR, {
+    lat: 0,
+    lon: 0,
+  });
+  const camera = new PerspectiveCamera(
+    7.5,
+    rect.width / rect.height,
+    0.001,
+    1000
+  );
+  // far enough that the whole map is a small part of the screen
+  camera.position.set(0, 0, 150);
+  camera.updateMatrixWorld();
+  const small = viewFootprint(camera, flat, rect)!;
+  expect(small.lonSpan).toBe(360);
+  expect(small.latMin).toBeLessThan(-89);
+  expect(small.latMax).toBeGreaterThan(89);
+
+  // only the map's eastern edge is on screen, at its left
+  camera.position.set(Math.PI + 0.05, 0, 1);
+  camera.updateMatrixWorld();
+  const edge = viewFootprint(camera, flat, rect)!;
+  expect(edge.lonStart + edge.lonSpan).toBeGreaterThan(179.9);
+  expect(edge.lonSpan).toBeGreaterThan(0.5);
+  expect(edge.lonSpan).toBeLessThan(10);
+});
+
+it("reports the point below the camera as the centre of the view", () => {
+  const box = viewFootprint(globeCamera(88.5, 120, 1.5), globe, rect)!;
+  expect(box.lonSpan).toBe(360);
+  expect(box.centreLat).toBeCloseTo(88.5, 5);
+  expect(box.centreLon).toBeCloseTo(120, 5);
+});

@@ -33,6 +33,7 @@ import {
   currentLevel,
   DEFAULT_MAX_LEVEL_CELLS,
   DEFAULT_MAX_VIEW_CELLS,
+  STREAMLINES_NEED_WHOLE_LEVEL,
 } from "@/lib/data/levels.ts";
 import { loadVectorComponents } from "@/lib/data/streamlineData.ts";
 import {
@@ -239,21 +240,31 @@ const { datasourceUpdate } = useGridDataLoader({
 
 const isLatOnly = ref(false);
 
+/**
+ * A plain lat/lon grid of a pyramid with a coarsest level to draw beneath
+ * can be loaded by view.
+ */
 function canLoadByView() {
   return (
-    props.datasources!.levels.length > 1 &&
+    coarsestLevel(props.datasources!.levels) !== undefined &&
     !isLatOnly.value &&
     !isProjectedGrid.value &&
     !props.isRotated
   );
 }
 
-/** Streamlines and volumes read the whole level, up to the whole-level cap. */
+/**
+ * Whether the selected level is loaded by view: a large level other than the
+ * coarsest, which is the backdrop of the others and is always loaded whole.
+ * Streamlines and volumes read the whole level, up to the whole-level cap.
+ */
 function loadsByView() {
+  const sources = props.datasources!;
   const wholeLevelLayers =
     store.isStreamlineLayerEnabled() || store.isVolumeLayerEnabled();
   return (
     canLoadByView() &&
+    (sources.selectedLevel ?? 0) !== coarsestLevel(sources.levels) &&
     levelLatitudes.length * levelLongitudes.length >
       (wholeLevelLayers ? DEFAULT_MAX_LEVEL_CELLS : DEFAULT_MAX_VIEW_CELLS)
   );
@@ -263,18 +274,24 @@ function viewWindow(margin: number) {
   return store.viewFootprint
     ? regularWindow(levelLatitudes, levelLongitudes, store.viewFootprint, {
         margin,
-        // only the window that gets loaded is held to the budget
-        maxCells: margin > 0 ? DEFAULT_MAX_VIEW_CELLS : undefined,
+        // The loaded window is held to the budget. The view it has to cover
+        // is held to half of that, so that a view too large for the budget
+        // still counts as covered and does not reload on every move.
+        maxCells:
+          margin > 0 ? DEFAULT_MAX_VIEW_CELLS : DEFAULT_MAX_VIEW_CELLS / 2,
       })
     : null;
 }
 
 function viewWindowStale() {
+  if (levelLatitudes.length === 0) {
+    return false;
+  }
   if (!loadsByView()) {
-    return gridWindow !== undefined && levelLatitudes.length > 0;
+    return gridWindow !== undefined;
   }
   if (gridWindow === undefined) {
-    return false;
+    return true;
   }
   const needed = viewWindow(0);
   return (
@@ -805,6 +822,11 @@ function buildHoverSamples(rawData: Float32Array): TGeoSampleIndex {
   const lons = longitudes.value;
   const latCount = lats.length;
   const lonCount = lons.length;
+  // Outside a view window only the backdrop is drawn: there is no cell of
+  // this level to report further than one cell from the loaded axes.
+  const windowed = gridWindow !== undefined;
+  const latReach = latCount > 1 ? Math.abs(lats[1] - lats[0]) : Infinity;
+  const lonReach = lonCount > 1 ? Math.abs(lons[1] - lons[0]) : Infinity;
 
   // For regular grids, use direct index lookup instead of building a
   // 37M-entry spatial index. The grid is regular so we can binary-search
@@ -827,6 +849,13 @@ function buildHoverSamples(rawData: Float32Array): TGeoSampleIndex {
 
       // Find nearest longitude index (accounting for wrapping)
       const lonIdx = nearestLonIndex(lons, nativeLon);
+      if (
+        windowed &&
+        (Math.abs(lats[latIdx] - nativeLat) > latReach ||
+          Math.abs(((lons[lonIdx] - nativeLon + 540) % 360) - 180) > lonReach)
+      ) {
+        return null;
+      }
 
       const rawLat = lats[latIdx];
       const rawLon = lons[lonIdx];
@@ -997,9 +1026,6 @@ function updateMeshMaterials(rawData: Float32Array) {
   // A level is drawn after its backdrop and over it whatever the depth says:
   // up close the two surfaces are nearer than float32 positions can order.
   material.depthFunc = backdrop ? THREE.AlwaysDepth : THREE.LessEqualDepth;
-  for (const mesh of meshes) {
-    mesh.renderOrder = backdrop ? -1 : 0;
-  }
   setMeshMaterials(material);
   updateColormap(drawnMeshes());
 }
@@ -1064,7 +1090,8 @@ function showBackdrop(frame: TBackdropFrame | undefined) {
   }
   const params = getRegularGridParameters(wanted.latitudes, wanted.longitudes);
   const geometry = createBatchGeometry(params, 0, params.geoLatCount - 1);
-  // Only the level on screen is exported.
+  // With two grids on screen a texture export renders them: it must not
+  // take the backdrop for the one grid whose texture it can copy.
   delete geometry.userData[GridTextureExportUserDataKey.METADATA];
   const material = makeMaterial(
     wanted.data,
@@ -1078,7 +1105,8 @@ function showBackdrop(frame: TBackdropFrame | undefined) {
     projectionHelper.value.type
   );
   backdrop.frustumCulled = false;
-  backdrop.renderOrder = -2;
+  // after the layers stacked below the grid (-1 and down), before the grid
+  backdrop.renderOrder = -0.5;
   backdrop.userData.key = wanted.key;
   getScene()?.add(backdrop);
 }
@@ -1145,12 +1173,7 @@ async function updateStreamlines(
 ) {
   const requestRevision = ++streamlineRequestRevision;
   const pair = selectedVectorPair();
-  if (
-    !pair ||
-    isLatOnly.value ||
-    !props.datasources ||
-    gridWindow !== undefined
-  ) {
+  if (!pair || isLatOnly.value || !props.datasources) {
     cachedMagnitude = undefined;
     cachedStreamlineKey = undefined;
     store.setStreamlineMagnitudeInfo(undefined);
@@ -1181,6 +1204,14 @@ async function updateStreamlines(
       store.setStreamlineMagnitudeInfo(undefined);
       streamlines.setAvailablePair(pair);
     }
+    return;
+  }
+  if (gridWindow !== undefined) {
+    // only a level picked by hand that is over the whole-level cap gets here
+    cachedMagnitude = undefined;
+    cachedStreamlineKey = undefined;
+    store.setStreamlineMagnitudeInfo(undefined);
+    streamlines.clear(STREAMLINES_NEED_WHOLE_LEVEL);
     return;
   }
 

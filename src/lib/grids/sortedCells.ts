@@ -2,7 +2,9 @@ type TCellChunk = ArrayLike<number | bigint>;
 
 /**
  * An ascending `cell` coordinate read chunk by chunk, so that a deep sparse
- * level is searched and sliced without holding its whole coordinate.
+ * level is searched and sliced without holding its whole coordinate. Every
+ * chunk is checked as it is read: once one is found out of order, searches
+ * throw and `isAscending` answers false.
  */
 // ponytail: decoded chunks are kept for as long as the reader lives. Give
 // the map an LRU bound if coordinates with very many chunks get panned over.
@@ -13,13 +15,38 @@ export function createSortedCells(
   readChunk: (start: number, end: number) => Promise<TCellChunk>
 ) {
   const chunks = new Map<number, Promise<Float64Array>>();
+  // first and last id of every chunk read so far
+  const bounds = new Map<number, [number, number]>();
+  let ascending = true;
+
+  /** Ascending within itself, and against every chunk already read. */
+  function check(index: number, values: Float64Array) {
+    for (let at = 1; at < values.length; at++) {
+      if (values[at] <= values[at - 1]) {
+        return false;
+      }
+    }
+    const first = values[0];
+    const last = values[values.length - 1];
+    for (const [other, [otherFirst, otherLast]] of bounds) {
+      if (other < index ? otherLast >= first : otherFirst <= last) {
+        return false;
+      }
+    }
+    bounds.set(index, [first, last]);
+    return true;
+  }
 
   function chunk(index: number) {
     let loaded = chunks.get(index);
     if (!loaded) {
       const start = index * chunkLength;
       loaded = readChunk(start, Math.min(start + chunkLength, length)).then(
-        (values) => Float64Array.from(values as ArrayLike<number>, Number)
+        (values) => {
+          const cells = Float64Array.from(values as ArrayLike<number>, Number);
+          ascending &&= check(index, cells);
+          return cells;
+        }
       );
       chunks.set(index, loaded);
     }
@@ -28,6 +55,9 @@ export function createSortedCells(
 
   async function valueAt(index: number) {
     const values = await chunk(Math.floor(index / chunkLength));
+    if (!ascending) {
+      throw new Error("The cell coordinate is not in ascending order.");
+    }
     return values[index % chunkLength];
   }
 
@@ -57,24 +87,22 @@ export function createSortedCells(
         cells.push(values[index % chunkLength]);
       }
     }
+    if (!ascending) {
+      throw new Error("The cell coordinate is not in ascending order.");
+    }
     return cells;
   }
 
-  /** Whether the first and the last chunk are ascending, one after the other. */
+  /**
+   * Whether the coordinate is ascending as far as it has been read; reads the
+   * first and the last chunk if nothing has been read yet.
+   */
   async function isAscending() {
-    if (length === 0) {
-      return true;
+    if (length > 0) {
+      await chunk(0);
+      await chunk(Math.floor((length - 1) / chunkLength));
     }
-    const first = await chunk(0);
-    const last = await chunk(Math.floor((length - 1) / chunkLength));
-    for (const values of [first, last]) {
-      for (let index = 1; index < values.length; index++) {
-        if (values[index] <= values[index - 1]) {
-          return false;
-        }
-      }
-    }
-    return first[0] <= last[0];
+    return ascending;
   }
 
   return { lowerBound, slice, isAscending };

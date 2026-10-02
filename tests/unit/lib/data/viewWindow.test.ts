@@ -11,9 +11,10 @@ function axis(start: number, end: number, step: number) {
 }
 
 // one-degree global grid, latitude stored north to south
+const centre = { centreLat: 0, centreLon: 0 };
 const lats = axis(-90, 90, 1).reverse();
 const lons = axis(-180, 180, 1);
-const box = { latMin: 40, latMax: 45, lonStart: -100, lonSpan: 10 };
+const box = { latMin: 40, latMax: 45, lonStart: -100, lonSpan: 10, ...centre };
 
 it("windows the cells in view plus one neighbour on every side", () => {
   const window = regularWindow(lats, lons, box)!;
@@ -35,7 +36,7 @@ it("grows by the margin on every side", () => {
 });
 
 it("splits a window over the seam of a global axis, west part first", () => {
-  const seam = { latMin: -5, latMax: 5, lonStart: 175, lonSpan: 10 };
+  const seam = { latMin: -5, latMax: 5, lonStart: 175, lonSpan: 10, ...centre };
   const window = regularWindow(lats, lons, seam)!;
   expect(window.lon).toEqual([
     { start: 354, end: 360 },
@@ -47,14 +48,26 @@ it("splits a window over the seam of a global axis, west part first", () => {
 });
 
 it("takes every longitude when the view holds them all", () => {
-  const polar = { latMin: 80, latMax: 90, lonStart: -180, lonSpan: 360 };
+  const polar = {
+    latMin: 80,
+    latMax: 90,
+    lonStart: -180,
+    lonSpan: 360,
+    ...centre,
+  };
   const window = regularWindow(lats, lons, polar)!;
   expect(window.lon).toEqual([{ start: 0, end: 360 }]);
   expect(window.lat).toEqual({ start: 0, end: 11 });
 });
 
 it("thins the columns of a polar window over the cell budget", () => {
-  const polar = { latMin: 80, latMax: 90, lonStart: -180, lonSpan: 360 };
+  const polar = {
+    latMin: 80,
+    latMax: 90,
+    lonStart: -180,
+    lonSpan: 360,
+    ...centre,
+  };
   const window = regularWindow(lats, lons, polar, { maxCells: 1000 })!;
   // 11 rows of 360 columns: every fourth column keeps all rows in budget
   expect(window).toEqual({
@@ -64,7 +77,13 @@ it("thins the columns of a polar window over the cell budget", () => {
   });
   // the thinned window serves the polar view, not one beside the pole
   expect(windowCovers(window, regularWindow(lats, lons, polar)!)).toBe(true);
-  const beside = { latMin: 82, latMax: 86, lonStart: 0, lonSpan: 40 };
+  const beside = {
+    latMin: 82,
+    latMax: 86,
+    lonStart: 0,
+    lonSpan: 40,
+    ...centre,
+  };
   expect(windowCovers(window, regularWindow(lats, lons, beside)!)).toBe(false);
 });
 
@@ -74,12 +93,24 @@ it("returns the part a regional level holds, or nothing", () => {
   const partly = regularWindow(regionalLats, regionalLons, box)!;
   expect(partly.lat).toEqual({ start: 19, end: 31 });
   expect(partly.lon).toEqual([{ start: 15, end: 37 }]);
-  const elsewhere = { latMin: 0, latMax: 5, lonStart: 10, lonSpan: 10 };
+  const elsewhere = {
+    latMin: 0,
+    latMax: 5,
+    lonStart: 10,
+    lonSpan: 10,
+    ...centre,
+  };
   expect(regularWindow(regionalLats, regionalLons, elsewhere)).toBeNull();
 });
 
 it("shrinks a window over the cell budget around its centre", () => {
-  const wide = { latMin: -40, latMax: 40, lonStart: -80, lonSpan: 160 };
+  const wide = {
+    latMin: -40,
+    latMax: 40,
+    lonStart: -80,
+    lonSpan: 160,
+    ...centre,
+  };
   const window = regularWindow(lats, lons, wide, { maxCells: 800 })!;
   const rows = window.lat.end - window.lat.start;
   const columns = window.lon[0].end - window.lon[0].start;
@@ -87,6 +118,29 @@ it("shrinks a window over the cell budget around its centre", () => {
   expect(Math.abs(window.lat.start + rows / 2 - 90)).toBeLessThanOrEqual(1);
   expect(Math.abs(window.lon[0].start + columns / 2 - 180)).toBeLessThanOrEqual(
     1
+  );
+});
+
+it("shrinks a window split over the seam towards the seam", () => {
+  // a view over Greenwich on a 0..360 axis: the seam is its middle
+  const overSeam = {
+    latMin: -20,
+    latMax: 20,
+    lonStart: -20,
+    lonSpan: 40,
+    ...centre,
+  };
+  const window = regularWindow(lats, axis(0, 360, 1), overSeam, {
+    maxCells: 400,
+  })!;
+  expect(window.lon).toHaveLength(2);
+  const [west, east] = window.lon;
+  // the west part ends at the seam and the east part starts there
+  expect(west.end).toBe(360);
+  expect(east.start).toBe(0);
+  const columns = west.end - west.start + east.end - east.start;
+  expect((window.lat.end - window.lat.start) * columns).toBeLessThanOrEqual(
+    400
   );
 });
 

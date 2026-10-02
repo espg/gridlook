@@ -74,6 +74,30 @@ function shrink(range: TAxisRange, factor: number): TAxisRange {
   return { start, end: start + length };
 }
 
+/**
+ * Shrink the columns of a window around their middle. The parts of a window
+ * split over the seam are neighbours there, so they shrink as one run: the
+ * west part keeps its east end and the east part its west end.
+ */
+function shrinkColumns(lon: TAxisRange[], factor: number): TAxisRange[] {
+  let total = 0;
+  for (const range of lon) {
+    total += range.end - range.start;
+  }
+  const kept = shrink({ start: 0, end: total }, factor);
+  const ranges: TAxisRange[] = [];
+  let offset = 0;
+  for (const range of lon) {
+    const start = Math.max(kept.start - offset, 0);
+    const end = Math.min(kept.end - offset, range.end - range.start);
+    if (end > start) {
+      ranges.push({ start: range.start + start, end: range.start + end });
+    }
+    offset += range.end - range.start;
+  }
+  return ranges;
+}
+
 /** Whether an ascending longitude axis closes on itself around the globe. */
 function isGlobalLongitudeAxis(lons: TAxis) {
   return lons.length > 1 && lons[0] < lons[lons.length - 1]
@@ -157,12 +181,10 @@ export function regularWindow(
   if (lon[0].end - lon[0].start === lons.length) {
     return { lat, lon, lonStep: Math.ceil(cells / options.maxCells) };
   }
-  // ponytail: a window split over the seam is shrunk part by part, which
-  // keeps the seam rather than the view centre in the middle.
   const factor = Math.sqrt(options.maxCells / cells);
   return {
     lat: shrink(lat, factor),
-    lon: lon.map((range) => shrink(range, factor)),
+    lon: shrinkColumns(lon, factor),
     lonStep: 1,
   };
 }

@@ -57,7 +57,7 @@ function nearestBlocks(
  * by `margin` (a fraction of the footprint's size) on every side, ascending.
  * At most `maxBlocks` are returned, those nearest the centre of the view.
  */
-
+// eslint-disable-next-line max-lines-per-function
 export function healpixViewBlocks(
   grid: Grid,
   footprint: TViewFootprint,
@@ -70,21 +70,31 @@ export function healpixViewBlocks(
   let south = Math.max(footprint.latMin - latMargin, -90);
   let north = Math.min(footprint.latMax + latMargin, 90);
   let span = Math.min(footprint.lonSpan * (1 + 2 * margin), 360);
-  const lonCentre = footprint.lonStart + footprint.lonSpan / 2;
-  const latCentre = (south + north) / 2;
-  // Blocks the box holds, by area; sample no more of it than the budget.
-  const estimate =
-    (span * (Math.sin(north * RADIANS) - Math.sin(south * RADIANS))) /
-    RADIANS /
-    side ** 2;
-  if (estimate > maxBlocks) {
+  let west = footprint.lonStart - (span - footprint.lonSpan) / 2;
+  // Over the budget, sample only around the point below the camera. A band
+  // that still reaches a pole keeps every longitude: the cells on the other
+  // side of the pole are among the nearest.
+  for (let pass = 0; pass < 3; pass++) {
+    // blocks the box holds, by area
+    const estimate =
+      (span * (Math.sin(north * RADIANS) - Math.sin(south * RADIANS))) /
+      RADIANS /
+      side ** 2;
+    if (estimate <= maxBlocks) {
+      break;
+    }
     const factor = Math.sqrt(maxBlocks / estimate);
-    south = latCentre - ((north - south) / 2) * factor;
-    north = 2 * latCentre - south;
-    span *= factor;
+    const half = ((north - south) / 2) * factor;
+    south = Math.max(footprint.centreLat - half, -90);
+    north = Math.min(footprint.centreLat + half, 90);
+    if (south > -90 && north < 90) {
+      span *= factor;
+      west = footprint.centreLon - span / 2;
+    }
   }
-  // Two samples per block side cannot step over a block.
-  const spacing = side / 2;
+  // Four samples per block side: a block is only missed where less than a
+  // quarter of its side reaches into the box, and the margin covers that.
+  const spacing = side / 4;
   const rows = Math.ceil((north - south) / spacing) + 1;
   const coordinates: number[] = [];
   for (let row = 0; row < rows; row++) {
@@ -92,14 +102,20 @@ export function healpixViewBlocks(
     const columns = Math.ceil((span * Math.cos(lat * RADIANS)) / spacing) + 1;
     for (let column = 0; column < columns; column++) {
       const offset = columns > 1 ? (span * column) / (columns - 1) : span / 2;
-      coordinates.push(normalizeLon(lonCentre - span / 2 + offset), lat);
+      coordinates.push(normalizeLon(west + offset), lat);
     }
   }
   using blockGrid = grid.replace({ level: blockLevel, scheme: "nested" });
   const sampled = blockGrid.lonLatToHealpix(Float64Array.from(coordinates));
   let blocks = [...new Set(Array.from(sampled, Number))];
   if (blocks.length > maxBlocks) {
-    blocks = nearestBlocks(blockGrid, blocks, lonCentre, latCentre, maxBlocks);
+    blocks = nearestBlocks(
+      blockGrid,
+      blocks,
+      footprint.centreLon,
+      footprint.centreLat,
+      maxBlocks
+    );
   }
   return blocks.sort((a, b) => a - b);
 }

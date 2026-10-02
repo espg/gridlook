@@ -85,20 +85,27 @@ export function screenToGeo(
   ];
 }
 
-/** Ground metres one screen pixel covers at a screen point, in any projection. */
+/**
+ * Ground metres one screen pixel covers at a screen point, in any projection,
+ * along the screen's horizontal or its vertical. The two differ wherever a
+ * projection stretches the map more one way than the other.
+ */
 export function metersPerPixelAt(
   camera: Camera,
   helper: ProjectionHelper,
   rect: TViewport,
   x: number,
   y: number,
-  earthRadiusMeters: number
+  earthRadiusMeters: number,
+  vertical = false
 ): number | null {
   if (!screenToGeo(camera, helper, rect, x, y)) {
     return null;
   }
-  const left = screenToGeo(camera, helper, rect, x - 0.5, y);
-  const right = screenToGeo(camera, helper, rect, x + 0.5, y);
+  const dx = vertical ? 0 : 0.5;
+  const dy = vertical ? 0.5 : 0;
+  const left = screenToGeo(camera, helper, rect, x - dx, y - dy);
+  const right = screenToGeo(camera, helper, rect, x + dx, y + dy);
   if (!left || !right) {
     return null;
   }
