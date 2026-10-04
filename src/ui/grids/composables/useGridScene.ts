@@ -144,9 +144,11 @@ export function useGridScene(options: UseGridSceneOptions) {
   const FLAT_CROP_RENDER_ORDER = 5;
   const FLAT_BOUNDARY_STEP_DEGREES = 0.25;
   const TOUCH_PICK_TAP_MAX_DISTANCE_PX = 10;
-  // Keep ~6.4 km clearance for the tessellated globe; closer views
-  // need finer surface geometry (or analytic sphere rendering).
-  const GLOBE_MIN_CAMERA_DISTANCE = 1.001;
+  // Keep ~1.3 km clearance: close enough for automatic level selection to
+  // reach cells of a few metres. Float32 positions resolve about half a
+  // metre on the globe, so cell edges get ragged this close; closer views
+  // need camera-relative positions (or analytic sphere rendering).
+  const GLOBE_MIN_CAMERA_DISTANCE = 1.0002;
   let targetOffset = 0;
   let isInMotion = false;
   let updatingProjectionCenterFromCamera = false;

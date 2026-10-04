@@ -306,9 +306,9 @@ it.each([
       await vi.advanceTimersByTimeAsync(1200);
       expect(useUrlParameterStore().paramCameraAlt).not.toBe(previousAltitude);
       expect(useUrlParameterStore().paramCameraAlt).toBe(
-        String(Math.round(0.001 * EARTH_RADIUS_METERS))
+        String(Math.round(0.0002 * EARTH_RADIUS_METERS))
       );
-      expect(camera.near).toBeCloseTo(0.0005);
+      expect(camera.near).toBeCloseTo(0.0001);
       const surfacePoint = camera.position.clone().normalize();
       camera.updateMatrixWorld();
       const surfaceDepth = surfacePoint.project(camera).z;
