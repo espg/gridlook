@@ -119,6 +119,22 @@ describe("parseMultiscales for GeoZarr", () => {
   });
 });
 
+describe("parseMultiscales for a zarr-conventions layout", () => {
+  it("lists the layout's assets as declared, without a resolution", () => {
+    const levels = parseMultiscales({
+      multiscales: {
+        layout: [
+          { asset: "0" },
+          { asset: "1", derived_from: "0", transform: { scale: [2, 2] } },
+          { derived_from: "1" },
+        ],
+        resampling_method: "mean",
+      },
+    });
+    expect(levels).toEqual([{ path: "0" }, { path: "1" }]);
+  });
+});
+
 describe("parseMultiscales for inline GeoZarr tile matrix sets", () => {
   it("reads the cell size of an inline tile matrix set", () => {
     const tileMatrixSet = (crs: string) => ({

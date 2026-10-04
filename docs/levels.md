@@ -9,11 +9,16 @@ behave as before.
 
 - **`multiscales` attribute.** When the root group (or the group a URL points
   at) carries a `multiscales` attribute, each entry it declares becomes one
-  level, read from the named child group. Two layouts are understood:
+  level, read from the named child group. Three layouts are understood:
   - OME-NGFF: `multiscales[0].datasets[].path` (0.4), or the same under
     `ome.multiscales` (0.5), listed finest first. A `scale` coordinate
     transformation together with `axes` that carry a length unit (`degree`,
     `metre`, `km`) gives the level's ground resolution.
+  - [zarr-conventions `multiscales`](https://github.com/zarr-conventions/multiscales):
+    `multiscales.layout[].asset`, taken in the order declared, which has to be
+    finest first. The `transform.scale` of a layout entry is relative to
+    another level, so the resolution comes from the level's grid (below). An
+    asset that is an array and not a group is not a level.
   - GeoZarr: `multiscales[0].tile_matrix_limits` keyed by tile matrix (child
     group) id, or the `tileMatrices` of an inline `tile_matrix_set`. A tile
     matrix's `cellSize` is its resolution (degrees for a CRS84/EPSG:4326 set,

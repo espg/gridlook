@@ -105,6 +105,26 @@ function omeEntries(multiscale: Record<string, unknown>): TMultiscaleEntry[] {
     }));
 }
 
+/**
+ * The zarr-conventions `multiscales` layout: one level per `layout[].asset`,
+ * kept as declared. Its `transform.scale` is relative to another level, not a
+ * ground size, so the resolution is left to the level's grid.
+ */
+function layoutEntries(
+  multiscale: Record<string, unknown>
+): TMultiscaleEntry[] {
+  const layout = multiscale.layout;
+  if (!Array.isArray(layout)) {
+    return [];
+  }
+  return layout
+    .filter(
+      (level): level is Record<string, unknown> =>
+        isRecord(level) && typeof level.asset === "string"
+    )
+    .map((level) => ({ path: level.asset as string }));
+}
+
 // Geographic CRSs whose tile matrix `cellSize` is in degrees.
 const GEOGRAPHIC_CRS = /(CRS84|EPSG\W*(0\W*)?4326)$/i;
 
@@ -165,7 +185,8 @@ function geoZarrEntries(
 
 /**
  * The levels a group's `multiscales` attribute declares, finest first (OME-NGFF
- * orders its datasets that way; GeoZarr tile matrices are sorted by size).
+ * orders its datasets that way, a zarr-conventions layout is taken as
+ * declared; GeoZarr tile matrices are sorted by size).
  * OME-NGFF 0.5 nests the attribute under `ome`. Groups without the attribute
  * have no levels to declare.
  */
@@ -178,8 +199,12 @@ export function parseMultiscales(
   if (!isRecord(multiscale)) {
     return [];
   }
-  const entries = omeEntries(multiscale);
-  return entries.length > 0 ? entries : geoZarrEntries(multiscale);
+  for (const entries of [omeEntries(multiscale), layoutEntries(multiscale)]) {
+    if (entries.length > 0) {
+      return entries;
+    }
+  }
+  return geoZarrEntries(multiscale);
 }
 
 function healpixResolution(nside: number) {
