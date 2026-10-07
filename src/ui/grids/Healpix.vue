@@ -548,16 +548,17 @@ async function fetchCellRange(
   }
   const selection = indices.slice();
   selection[selection.length - 1] = zarr.slice(start, end);
-  const cells = sortedCells
-    ? await sortedCells.slice(start, end)
-    : Array.from({ length: end - start }, (_, index) => start + index);
+  // the ids and the values are fetched together
+  const [cells, values] = await Promise.all([
+    sortedCells
+      ? sortedCells.slice(start, end)
+      : Array.from({ length: end - start }, (_, index) => start + index),
+    fetchHealpixVariableData(selection),
+  ]);
   if (cells[0] < range.start || cells[cells.length - 1] >= range.end) {
     throw new Error("The cell coordinate is not in ascending order.");
   }
-  return {
-    data: castDataVarToFloat32(await fetchHealpixVariableData(selection)),
-    cells,
-  };
+  return { data: castDataVarToFloat32(values), cells };
 }
 
 /** The cells of one face that the loaded blocks hold, and their values. */
