@@ -8,9 +8,11 @@ import {
   type TZarrFormat,
 } from "../types/GlobeTypes.ts";
 
+import { createHiveStore, isHiveStorePath } from "./hiveStore.ts";
 import {
   createListableIcechunkStore,
   isIcechunkStorePath,
+  parseStorePath,
   splitIcechunkStoreAndGroup,
 } from "./icechunkStore.ts";
 import {
@@ -516,7 +518,17 @@ async function indexFromIcechunk(src: string): Promise<TSources> {
   );
 }
 
+async function indexFromHive(src: string): Promise<TSources> {
+  const store = await createHiveStore(parseStorePath(src).url);
+  const root = await zarr.open.v3(store, { kind: "group" });
+  const datasources = await processZarrVariables(store, root, src);
+  return createIndex(root.attrs, datasources, src, ZARR_FORMAT.V3);
+}
+
 export async function indexFromZarr(src: string): Promise<TSources> {
+  if (isHiveStorePath(src)) {
+    return indexFromHive(src);
+  }
   if (isIcechunkStorePath(src)) {
     return indexFromIcechunk(src);
   }

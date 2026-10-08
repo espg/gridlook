@@ -2,7 +2,7 @@ import QuickLRU from "quick-lru";
 import * as zarr from "zarrita";
 
 import "./codecs.ts";
-
+import { createHiveStore } from "./hiveStore.ts";
 import {
   createIcechunkStore,
   isIcechunkStorePath,
@@ -86,6 +86,8 @@ export class ZarrDataManager {
       isIcechunkStorePath(storePath)
     ) {
       store = await createIcechunkStore(storePath);
+    } else if (parsed.backend === "hive") {
+      store = await createHiveStore(parsed.url);
     } else {
       store = new zarr.FetchStore(parsed.url, { useSuffixRequest: true });
     }

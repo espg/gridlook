@@ -1,6 +1,8 @@
 import { IcechunkStore } from "icechunk-js";
 import * as zarr from "zarrita";
 
+import { HIVE_PREFIX } from "./hiveStore.ts";
+
 const ICECHUNK_PREFIX = "icechunk+";
 
 type TIcechunkStore = zarr.AsyncReadable & Pick<IcechunkStore, "listNodes">;
@@ -16,10 +18,16 @@ function toIcechunkStorePath(storeUrl: string) {
 }
 
 export function parseStorePath(storePath: string): {
-  backend: "fetch" | "icechunk";
+  backend: "fetch" | "icechunk" | "hive";
   url: string;
 } {
   const normalizedStorePath = normalizeStorePath(storePath);
+  if (normalizedStorePath.startsWith(HIVE_PREFIX)) {
+    return {
+      backend: "hive",
+      url: normalizedStorePath.slice(HIVE_PREFIX.length),
+    };
+  }
   if (normalizedStorePath.startsWith(ICECHUNK_PREFIX)) {
     return {
       backend: "icechunk",

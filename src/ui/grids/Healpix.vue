@@ -65,6 +65,10 @@ import {
 import type { THealpixBatch } from "@/lib/grids/healpixWorkerProtocol.ts";
 import { createSortedCells } from "@/lib/grids/sortedCells.ts";
 import {
+  MORTON_DGGS,
+  MORTON_STORE_ELLIPSOID,
+} from "@/lib/morton/convention.ts";
+import {
   createTriangleWrapProjectionGeometry,
   createWrappedProjectionMesh,
   setupProjectionGeometryWrap,
@@ -323,8 +327,15 @@ async function gridFromDggsConvention(
   );
   if (metadata !== null) {
     const level = coerceInteger(metadata["refinement_level"]);
-    const scheme = coerceScheme(metadata["indexing_scheme"]);
-    const ellipsoid = coerceEllipsoid(metadata["ellipsoid"]);
+    // A morton group is nested by construction and spells its ellipsoid in
+    // its own keys; the stores pin WGS84 (see convention.ts).
+    const morton = metadata["name"] === MORTON_DGGS;
+    const scheme = morton
+      ? "nested"
+      : coerceScheme(metadata["indexing_scheme"]);
+    const ellipsoid = morton
+      ? MORTON_STORE_ELLIPSOID
+      : coerceEllipsoid(metadata["ellipsoid"]);
 
     if (level !== null && scheme !== null) {
       // ellipsoid is optional

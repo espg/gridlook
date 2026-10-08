@@ -81,6 +81,12 @@ model (ESM) output on native grids.
 
 - Use a publicly reachable Zarr or Icechunk URI that allows browser requests
   through CORS. Icechunk repositories can use an `icechunk+https://` URI.
+  A zagg morton-hive store (a `morton_hive.json` manifest and a `coverage.moc`
+  at its root) can use a `hive+https://` URI: Gridlook then reads the hive as
+  one zarr hierarchy, one group per level named by its cell order, the way the
+  store's Icechunk companion repository lays it out, computing every leaf and
+  overview path from the manifest and reading leaf chunks as byte ranges of
+  their shard objects. Time-windowed hives are not supported yet.
 - Open multiple related datasets through a [Gridlook catalog](catalogs.md).
 - Follow a changing dataset by adding `::live=true`; see
   [Live datasets](live-datasets.md).
