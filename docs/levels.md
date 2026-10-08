@@ -9,7 +9,7 @@ behave as before.
 
 - **`multiscales` attribute.** When the root group (or the group a URL points
   at) carries a `multiscales` attribute, each entry it declares becomes one
-  level, read from the named child group. Three layouts are understood:
+  level, read from the named child group. Four layouts are understood:
   - OME-NGFF: `multiscales[0].datasets[].path` (0.4), or the same under
     `ome.multiscales` (0.5), listed finest first. A `scale` coordinate
     transformation together with `axes` that carry a length unit (`degree`,
@@ -24,6 +24,11 @@ behave as before.
     matrix's `cellSize` is its resolution (degrees for a CRS84/EPSG:4326 set,
     the CRS unit, taken as metres, otherwise); with the `WebMercatorQuad` tile
     matrix set it follows from the zoom. Levels are sorted finest first.
+  - zagg (`multiscales[0].spec` of `zagg-multiscales/1`): `base` is the
+    finest level, followed by `datasets` as declared. A level's child group is
+    named by its cell order, `cells[0]`; its `order` is the HEALPix node order
+    the level was built at and is not a path. The cell order gives the
+    resolution, the HEALPix cell size at `nside = 2^cellOrder`.
 - **Grid metadata.** A level whose attributes do not state a resolution gets
   one from its grid where possible: the HEALPix `nside` (from the CRS
   variable's `healpix_nside`, the level group's DGGS `refinement_level`, or a

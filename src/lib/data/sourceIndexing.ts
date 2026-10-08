@@ -364,7 +364,7 @@ async function indexLevel(
   );
   return {
     ...createLevel(groupAttrs, datasources, src, path),
-    name: entry.path,
+    name: entry.name ?? entry.path,
     resolution: entry.resolution ?? geometry.resolution,
     cellCount: geometry.cellCount,
   };

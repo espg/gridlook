@@ -9,6 +9,7 @@ import type { TDataSource } from "@/lib/types/GlobeTypes.ts";
  */
 export type TMultiscaleEntry = {
   path: string;
+  name?: string;
   resolution?: number;
 };
 
@@ -18,6 +19,7 @@ export type TLevelGeometry = {
 };
 
 const WEB_MERCATOR_QUAD = "WebMercatorQuad";
+const ZAGG_MULTISCALES_SPEC = "zagg-multiscales/1";
 // Ground size of one 256 px WebMercatorQuad tile pixel at zoom 0 (equator).
 const WEB_MERCATOR_ZOOM0_METERS_PER_PIXEL = 156543.03392804097;
 const METERS_PER_DEGREE = (Math.PI / 180) * EARTH_RADIUS_METERS;
@@ -184,9 +186,36 @@ function geoZarrEntries(
 }
 
 /**
+ * zagg: `base` (the leaves) and then `datasets`, finest first as declared. A
+ * level's group is named by its cell order, `cells[0]`, never by `order`,
+ * which is the HEALPix node order the sweep built it at. The cell order also
+ * gives the resolution: the HEALPix cell size at nside 2^cellOrder.
+ */
+function zaggEntries(multiscale: Record<string, unknown>): TMultiscaleEntry[] {
+  const datasets = Array.isArray(multiscale.datasets)
+    ? multiscale.datasets
+    : [];
+  return [multiscale.base, ...datasets].flatMap((dataset) => {
+    const cellOrder = Number(
+      isRecord(dataset) && Array.isArray(dataset.cells) ? dataset.cells[0] : NaN
+    );
+    if (!Number.isInteger(cellOrder) || cellOrder < 0) {
+      return [];
+    }
+    return [
+      {
+        path: String(cellOrder),
+        name: `order ${cellOrder}`,
+        resolution: healpixResolution(2 ** cellOrder),
+      },
+    ];
+  });
+}
+
+/**
  * The levels a group's `multiscales` attribute declares, finest first (OME-NGFF
- * orders its datasets that way, a zarr-conventions layout is taken as
- * declared; GeoZarr tile matrices are sorted by size).
+ * orders its datasets that way, a zarr-conventions layout and a zagg block are
+ * taken as declared; GeoZarr tile matrices are sorted by size).
  * OME-NGFF 0.5 nests the attribute under `ome`. Groups without the attribute
  * have no levels to declare.
  */
@@ -198,6 +227,9 @@ export function parseMultiscales(
   const multiscale = Array.isArray(multiscales) ? multiscales[0] : multiscales;
   if (!isRecord(multiscale)) {
     return [];
+  }
+  if (multiscale.spec === ZAGG_MULTISCALES_SPEC) {
+    return zaggEntries(multiscale);
   }
   for (const entries of [omeEntries(multiscale), layoutEntries(multiscale)]) {
     if (entries.length > 0) {

@@ -135,6 +135,113 @@ describe("parseMultiscales for a zarr-conventions layout", () => {
   });
 });
 
+// The `multiscales` attribute of
+// https://data.source.coop/englacial/zagg/demo/serc_atl03_v2.zarr/morton_hive.json
+const zagg = {
+  spec: "zagg-multiscales/1",
+  name: "ATL03",
+  base: { order: 9, cells: [19] },
+  datasets: [
+    { order: 9, cells: [13], artifact: "column" },
+    { order: 8, cells: [12], artifact: "overview" },
+    { order: 7, cells: [11], artifact: "overview" },
+    { order: 6, cells: [10], artifact: "overview" },
+    { order: 5, cells: [9], artifact: "overview" },
+    { order: 4, cells: [8], artifact: "overview" },
+    { order: 3, cells: [7], artifact: "overview" },
+    { order: 2, cells: [6], artifact: "overview" },
+    { order: 1, cells: [5], artifact: "overview" },
+    { order: 0, cells: [4], artifact: "overview" },
+  ],
+  order2res: {
+    "9": [13],
+    "8": [12],
+    "7": [11],
+    "6": [10],
+    "5": [9],
+    "4": [8],
+    "3": [7],
+    "2": [6],
+    "1": [5],
+    "0": [4],
+  },
+  fields: {
+    count: "exact",
+    h_tdigest_signal: "approximate",
+    h_tdigest_noise: "approximate",
+    composition: "packed",
+  },
+  fold: { fold_source: "cascade", exact_levels: 1 },
+};
+
+describe("parseMultiscales for zagg-multiscales/1", () => {
+  it("names the level groups by cell order, the base first", () => {
+    const levels = parseMultiscales({ multiscales: [zagg] });
+    expect(levels).toHaveLength(11);
+    expect(levels.map((level) => level.path)).toEqual([
+      "19",
+      "13",
+      "12",
+      "11",
+      "10",
+      "9",
+      "8",
+      "7",
+      "6",
+      "5",
+      "4",
+    ]);
+    expect(levels[0].name).toBe("order 19");
+  });
+
+  it("sizes the cells by the cell order and never paths by the node order", () => {
+    const levels = parseMultiscales({ multiscales: [zagg] });
+    const significant = (path: string) =>
+      Number(
+        levels.find((level) => level.path === path)!.resolution!.toPrecision(3)
+      );
+    expect(significant("19")).toBe(12.4);
+    expect(significant("13")).toBe(796);
+    expect(significant("4")).toBe(407_000);
+    // Node orders 0-3 name no group ("9" and "8" are cell orders here).
+    const paths = levels.map((level) => level.path);
+    expect(paths).not.toContain("0");
+    expect(paths).not.toContain("3");
+    expect(new Set(paths).size).toBe(11);
+  });
+});
+
+describe("parseMultiscales for malformed zagg-multiscales/1", () => {
+  it("skips levels without a cell order", () => {
+    const { datasets, ...rest } = zagg;
+    expect(
+      parseMultiscales({
+        multiscales: [
+          {
+            ...rest,
+            base: { order: 9 },
+            datasets: datasets.map(({ order, artifact }) => ({
+              order,
+              artifact,
+            })),
+          },
+        ],
+      })
+    ).toEqual([]);
+    expect(
+      parseMultiscales({
+        multiscales: [
+          {
+            ...rest,
+            base: { order: 9, cells: ["x"] },
+            datasets: [datasets[0]],
+          },
+        ],
+      }).map((level) => level.path)
+    ).toEqual(["13"]);
+  });
+});
+
 describe("parseMultiscales for inline GeoZarr tile matrix sets", () => {
   it("reads the cell size of an inline tile matrix set", () => {
     const tileMatrixSet = (crs: string) => ({
