@@ -485,6 +485,32 @@ function viewWindowStale() {
 }
 
 /**
+ * The path of a level's cell coordinate and, when the level is not dense,
+ * the coordinate itself: a level with every cell of its order is read by
+ * index, and its coordinate, if it stores one, is never bisected (a zagg
+ * level's holds packed morton words, not nested ids).
+ */
+async function searchedCoordinate(
+  sources: TSources,
+  variable: string,
+  grid: healpixGeo.Grid,
+  cellCount: number
+) {
+  const cellPath = ZarrDataManager.resolveVariablePath(
+    variable,
+    await getCellCoordinateName(sources)
+  );
+  const coordinate =
+    cellCount === 12 * grid.nside ** 2
+      ? undefined
+      : await ZarrDataManager.getVariableInfoByDatasetSources(
+          sources,
+          cellPath
+        ).catch(() => undefined);
+  return { cellPath, coordinate };
+}
+
+/**
  * Read what the stored level allows: its grid, its size, and whether it can
  * be loaded by view (nested, in a pyramid with a coarsest level to draw
  * beneath, and either dense or with an ascending `cell` coordinate). Then
@@ -502,14 +528,12 @@ async function prepareLevel() {
   let windowable = false;
   let cells: ReturnType<typeof createSortedCells> | undefined;
   if (coarsestLevel(sources.levels) !== undefined && grid.scheme === "nested") {
-    const cellPath = ZarrDataManager.resolveVariablePath(
-      variable,
-      await getCellCoordinateName()
-    );
-    const coordinate = await ZarrDataManager.getVariableInfoByDatasetSources(
+    const { cellPath, coordinate } = await searchedCoordinate(
       sources,
-      cellPath
-    ).catch(() => undefined);
+      variable,
+      grid,
+      cellCount
+    );
     if (coordinate) {
       const key = `${sources.selectedLevel ?? 0}:${cellPath}`;
       if (cellsReader?.key !== key) {
