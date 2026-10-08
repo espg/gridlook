@@ -521,6 +521,10 @@ async function indexFromIcechunk(src: string): Promise<TSources> {
 async function indexFromHive(src: string): Promise<TSources> {
   const store = await createHiveStore(parseStorePath(src).url);
   const root = await zarr.open.v3(store, { kind: "group" });
+  const levels = await indexLevels(store, root, src, ZARR_FORMAT.V3);
+  if (levels) {
+    return levels;
+  }
   const datasources = await processZarrVariables(store, root, src);
   return createIndex(root.attrs, datasources, src, ZARR_FORMAT.V3);
 }
