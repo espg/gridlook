@@ -12,6 +12,7 @@ import {
 import { getTriangularMesh } from "./triangularMesh.ts";
 import { ZarrDataManager } from "./ZarrDataManager.ts";
 
+import { MORTON_DGGS } from "@/lib/morton/convention.ts";
 import type { TSources, TZarrDggsMetadata } from "@/lib/types/GlobeTypes.ts";
 
 export const GRID_TYPES = {
@@ -190,7 +191,7 @@ async function determineGridTypeFromCRS(
 function determineGridTypeFromDGGSZarrConvention(
   metadata: TZarrDggsMetadata
 ): T_GRID_TYPES | null {
-  if (metadata["name"] !== "healpix") {
+  if (metadata["name"] !== "healpix" && metadata["name"] !== MORTON_DGGS) {
     // unsupported DGGS, for now
     return GRID_TYPES.ERROR;
   }
