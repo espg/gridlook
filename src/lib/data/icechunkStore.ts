@@ -47,7 +47,12 @@ export function isIcechunkStorePath(storePath: string) {
 export async function createIcechunkStore(
   storePath: string
 ): Promise<TIcechunkStore> {
-  return await IcechunkStore.open(parseStorePath(storePath).url);
+  return await IcechunkStore.open(parseStorePath(storePath).url, {
+    // Concurrent reads of virtual chunks that share one backing object are
+    // merged into one range request below the manifest, where the
+    // coalescer wrapped around this store cannot see them.
+    withRangeCoalescing: zarr.withRangeCoalescing,
+  });
 }
 
 export async function createListableIcechunkStore(storePath: string) {
