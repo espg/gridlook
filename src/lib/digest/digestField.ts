@@ -24,7 +24,7 @@ export type TDigestCell = {
 };
 
 /** A derived variable's value for one cell; NaN for a cell without data. */
-export function digestValue(
+function digestValue(
   variable: Pick<TDigestVariable, "product">,
   params: TDigestParams,
   chunk: TDigestChunk,

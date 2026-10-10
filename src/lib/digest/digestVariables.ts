@@ -9,8 +9,7 @@ export const DIGEST_PRODUCTS = {
   PERCENTILE: "percentile",
   RANGE: "range",
 } as const;
-export type TDigestProduct =
-  (typeof DIGEST_PRODUCTS)[keyof typeof DIGEST_PRODUCTS];
+type TDigestProduct = (typeof DIGEST_PRODUCTS)[keyof typeof DIGEST_PRODUCTS];
 
 /** The `digest` attribute of a derived variable. */
 export type TDigestVariable = {
@@ -21,7 +20,7 @@ export type TDigestVariable = {
   stratum?: string;
 };
 
-export const DIGEST_ATTRIBUTE = "digest";
+const DIGEST_ATTRIBUTE = "digest";
 /** The default percentile, and the default bounds of a percentile range. */
 export const DEFAULT_PERCENTILE = 50;
 export const DEFAULT_PERCENTILE_LOW = 2;

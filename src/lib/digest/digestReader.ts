@@ -34,7 +34,7 @@ export type TDigestArray = {
 const VLEN_BYTES = "vlen-bytes";
 /** Charged for a chunk that does not exist, so that it is remembered. */
 const ABSENT_BYTES = 64;
-export const DEFAULT_DIGEST_CACHE_BYTES = 256 * 2 ** 20;
+const DEFAULT_DIGEST_CACHE_BYTES = 256 * 2 ** 20;
 
 function chunkBytes(chunk: TDigestChunk | null) {
   return chunk
