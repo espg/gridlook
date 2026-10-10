@@ -110,3 +110,34 @@ the manual picker.
 Choosing a level in the **Variable** card turns automatic selection off; the
 "Pick the level from the zoom" checkbox turns it back on. The selected level
 is not part of the shareable URL.
+
+## Variables derived from t-digests
+
+A zagg morton-hive store (`hive+https://…`) keeps, per cell, a t-digest of its
+observations: a ragged array of `(mean, weight)` centroids such as
+`h_tdigest_signal`. Gridlook lists two variables per digest, computed in the
+browser from the centroids and not stored:
+
+- `h_percentile_<stratum>`: the height at one percentile (default 50), set
+  with the slider under the variable.
+- `h_range_<stratum>`: the difference between two percentiles (default
+  p98 − p2).
+
+Heights are shown as stored, in metres above the WGS84 ellipsoid. Quantiles
+follow zagg's `quantile_from_tdigest`, so a value is the one the Python reader
+gives. The percentiles are part of the shareable URL (`percentile`,
+`percentilelow`, `percentilehigh`).
+
+Such a variable is loaded like any other, by level and by view, but a cell's
+digest is a few kilobytes where a stored value is a few bytes: a view reads
+tens of megabytes. Decoded digests are kept in memory (up to 256 MB, least
+recently used first out), so moving a percentile slider recomputes the field
+without reading anything.
+
+Clicking a cell pins it in the **Height distribution** panel: the photons per
+metre of height of the signal and, muted, of the noise, with the selected
+percentiles marked. The pinned place is looked up again at every level that
+comes on screen. With the Data Picker on and a derived variable displayed, the
+panel follows the cursor from the digests already in memory; hovering never
+reads the store, so over a stored variable such as `count` only a click opens
+the panel.

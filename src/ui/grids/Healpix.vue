@@ -12,6 +12,7 @@ import {
   type TGridHoverLookupResult,
 } from "./composables/gridHoverUtils.ts";
 import { useDigestField } from "./composables/useDigestField.ts";
+import { useDigestProbe } from "./composables/useDigestProbe.ts";
 import { useGridDataLoader } from "./composables/useGridDataLoader.ts";
 import { useScalarFieldCache } from "./composables/useScalarFieldCache.ts";
 import { useSharedGridLogic } from "./composables/useSharedGridLogic.ts";
@@ -142,6 +143,7 @@ const {
   canvas,
   box,
   hoveredGeoPoint,
+  clickedGeoPoint,
 } = useSharedGridLogic();
 
 const { setHoverLookup, clearHoverLookup } =
@@ -274,6 +276,11 @@ const digestFields = useDigestField({
     await getData();
     updateColormap(drawnMeshes());
   },
+});
+useDigestProbe({
+  getDatasources: () => props.datasources,
+  getGrid: () => healpixGrid.value as healpixGeo.Grid | null,
+  clickedGeoPoint,
 });
 
 function coerceInteger(value: unknown): number | null {
