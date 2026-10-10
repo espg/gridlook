@@ -79,6 +79,32 @@ function ancestorId(shardId: string, order: number) {
 }
 
 /**
+ * A level group's `zarr.json`: the artifact's own, with `dggs.coordinate`
+ * dropped. The artifact names its `morton` array as the cell coordinate, but
+ * a level re-rooted on the sphere is dense — a cell IS its index — and that
+ * array holds 64-bit morton words where a node has data and fill where it
+ * does not, so a reader that followed the token (gridlook's whole-level load
+ * does) would index every cell into face 0. The hierarchy never lists
+ * `morton`, and now never points at it.
+ */
+function levelGroup(bytes: Uint8Array): Uint8Array {
+  const meta = JSON.parse(new TextDecoder().decode(bytes)) as Record<
+    string,
+    unknown
+  >;
+  const attrs = isRecord(meta.attributes) ? meta.attributes : undefined;
+  const dggs = attrs && isRecord(attrs.dggs) ? attrs.dggs : undefined;
+  if (!attrs || !dggs || !("coordinate" in dggs)) {
+    return bytes;
+  }
+  const rest = { ...dggs };
+  delete rest.coordinate;
+  return new TextEncoder().encode(
+    JSON.stringify({ ...meta, attributes: { ...attrs, dggs: rest } })
+  );
+}
+
+/**
  * The root `multiscales`: the zarr-conventions object the Icechunk companion
  * root carries since zagg 0.59.0 (englacial/zagg#618) — the
  * `zagg-multiscales/1` block's own keys plus a `layout` naming one level group
@@ -342,9 +368,11 @@ function createHiveReader(
     if (group) {
       const target = level(Number(group[1]));
       const dir = target && (await templateDir(target));
-      return dir === undefined
-        ? undefined
-        : await inner.get(`/${dir}/${target!.cellOrder}/zarr.json`);
+      const bytes =
+        dir === undefined
+          ? undefined
+          : await inner.get(`/${dir}/${target!.cellOrder}/zarr.json`);
+      return bytes && levelGroup(bytes);
     }
     const array = ARRAY_KEY.exec(key);
     if (array) {

@@ -137,7 +137,9 @@ function hive(leafDir = LEAF, stamp: object = {}) {
     "morton_hive.json": manifest,
     "coverage.moc": coverage,
     [`${LEAF}/zarr.json`]: group({ morton_hive_commit: stamp }), // eslint-disable-line camelcase
-    [`${leafDir}/19/zarr.json`]: group({ dggs: { name: "morton" } }),
+    [`${leafDir}/19/zarr.json`]: group({
+      dggs: { name: "morton", coordinate: "morton" },
+    }),
     [`${leafDir}/19/count/zarr.json`]: sharded,
     [`${leafDir}/19/count/c/0`]: shardObject(new Map([[1, int32s(INNER)]])),
     [`${COLUMN}/13/zarr.json`]: group({ role: "column" }),
