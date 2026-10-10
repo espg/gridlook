@@ -141,3 +141,33 @@ comes on screen. With the Data Picker on and a derived variable displayed, the
 panel follows the cursor from the digests already in memory; hovering never
 reads the store, so over a stored variable such as `count` only a click opens
 the panel.
+
+## Levels derived from the leaves
+
+A zagg store holds its leaves (cell order 19 in the stores so far) and then
+levels from the leaf column down (order 13 and coarser). The orders in
+between are not stored. Gridlook lists them as levels of their own, named
+"order 15 (derived)", and computes them in the browser from the leaf chunks:
+
+- One chunk of a leaf array holds the 4096 leaf cells below one order-13
+  cell, in nested order. Chunk `n` therefore is chunk `n` of every derived
+  level: at order `k` it holds the cells `[n · 4^(k−13), (n + 1) · 4^(k−13))`,
+  and leaf cell `j` of the chunk lies below derived cell `j >> 2 · (19 − k)`.
+- `count` is the sum of the leaf counts. A height variable is computed from
+  the pooled digest of the cell: the centroids of its leaf cells, sorted
+  together, read with the same quantile law. Nothing is compressed, so where
+  the leaves are lossless (one photon per centroid, all but about one cell in
+  100 000) the pooled digest is the exact sample. Only the variable shown is
+  read: `count` reads `count`, a signal height reads `h_tdigest_signal`.
+- A derived level is always loaded by view, one leaf chunk per block, and at
+  most 2048 chunks per window (a level picked by hand from far out is cut
+  down around the point below the camera). It is never the backdrop, and
+  with streamlines or a volume on it is left out of automatic selection.
+- A leaf chunk is read once. Its decoded digests stay in memory, and so do
+  the pooled ones (128 MB), so changing the percentile, or going from one
+  derived order to another over the same ground, reads nothing.
+- A chunk costs the same bytes whatever the order derived from it, so a
+  derived level is picked at 32 pixels per cell for every variable, `count`
+  included (a stored level keeps 16 for `count`).
+
+The distribution panel shows the pooled digest of a derived cell.

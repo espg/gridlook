@@ -88,6 +88,10 @@ export type TSourceLevel = {
   // cells one horizontal slice of the level holds (the values one timestep
   // of a variable fetches), when known; caps automatic selection
   cellCount?: number;
+  // a level the store does not hold, computed in the browser from the
+  // arrays of the group `dataset`, whose cells are `refinement` orders
+  // finer; it is never loaded whole
+  derived?: { dataset: string; refinement: number };
 };
 
 export type TSources = {

@@ -31,6 +31,11 @@ import { wordToNested } from "@/lib/morton/word.ts";
  * variables a viewer derives from it, as float32 arrays without chunks: the
  * digests themselves are read by `digestReader.ts` from the same keys.
  *
+ * The orders between the leaf chunk's and the leaves' that the store does
+ * not hold are listed too, as levels without chunks (`derived_levels` in
+ * the root attributes): a viewer computes them from the leaf chunks, chunk
+ * `n` of a derived level being chunk `n` of the leaves (`derivedLevel.ts`).
+ *
  * Nothing is listed: the manifest plus the root coverage name every node.
  * The per-cell `morton` coordinate is never read (a windowed leaf has none:
  * the cell is the nested index).
@@ -72,6 +77,8 @@ type TIndexEntry = { offset: number; length: number } | undefined;
 type TContents = { path: zarr.AbsolutePath; kind: "array" | "group" }[];
 // a derived variable's name -> the digest array beside it and its attributes
 type TDerived = Map<string, { array: string; attributes: TJson }>;
+// the orders computed from the leaves, finest first, and their arrays
+type TPooled = { orders: number[]; names: string[] };
 
 export type THiveStore = zarr.Listable<zarr.AsyncReadable>;
 
@@ -225,6 +232,7 @@ function createHiveReader(
   const decoder = new TextDecoder();
   const cache = new Map<string, Promise<unknown>>();
   const derived: TDerived = new Map();
+  const pooled: TPooled = { orders: [], names: [] };
   // Every derived fact is computed once per key, however many chunks ask.
   function once<T>(key: string, compute: () => Promise<T>): Promise<T> {
     let pending = cache.get(key) as Promise<T> | undefined;
@@ -270,6 +278,49 @@ function createHiveReader(
       return meta && viewArrayMetadata(meta, target.cellOrder, rows);
     });
   }
+  /** A leaf array on the grid of a derived level: chunk for chunk. */
+  async function pooledView(order: number, name: string) {
+    if (!pooled.orders.includes(order) || !pooled.names.includes(name)) {
+      return undefined;
+    }
+    const view = await arrayView(levels[0], derived.get(name)?.array ?? name);
+    const group = 4 ** (levels[0].cellOrder - order);
+    return (
+      view && {
+        ...view.metadata,
+        shape: [rows, 12 * 4 ** order],
+        // eslint-disable-next-line camelcase
+        chunk_grid: {
+          name: "regular",
+          configuration: { chunk_shape: [1, view.innerChunk / group] }, // eslint-disable-line camelcase
+        },
+      }
+    );
+  }
+  /** The leaf group's metadata at the order of a derived level. */
+  async function pooledGroup(order: number) {
+    const meta = await once("group:leaf", async () => {
+      const dir = await templateDir(levels[0]);
+      return dir === undefined
+        ? undefined
+        : await json(`${dir}/${levels[0].cellOrder}/zarr.json`);
+    });
+    const attributes = isRecord(meta?.attributes) ? meta.attributes : {};
+    return (
+      meta &&
+      encoder.encode(
+        JSON.stringify({
+          ...meta,
+          attributes: {
+            ...attributes,
+            ...(isRecord(attributes.dggs)
+              ? { dggs: { ...attributes.dggs, refinement_level: order } } // eslint-disable-line camelcase
+              : {}),
+          },
+        })
+      )
+    );
+  }
   function shardIndex(objectKey: string, chunks: number) {
     return once(`index:${objectKey}`, async () => {
       const bytes = await inner.getRange!(`/${objectKey}`, {
@@ -303,24 +354,39 @@ function createHiveReader(
     ];
     return entry && (await inner.getRange!(`/${objectKey}`, entry));
   }
+  function rootMetadata() {
+    return encoder.encode(
+      JSON.stringify({
+        // eslint-disable-next-line camelcase
+        zarr_format: 3,
+        // eslint-disable-next-line camelcase
+        node_type: "group",
+        attributes: {
+          multiscales: manifest.raw.multiscales,
+          ...(pooled.orders.length
+            ? {
+                // eslint-disable-next-line camelcase
+                derived_levels: {
+                  dataset: String(levels[0].cellOrder),
+                  cells: pooled.orders,
+                },
+              }
+            : {}),
+          // eslint-disable-next-line camelcase
+          morton_hive: manifest.raw,
+        },
+      })
+    );
+  }
   async function get(key: zarr.AbsolutePath) {
     if (key === "/zarr.json") {
-      return encoder.encode(
-        JSON.stringify({
-          // eslint-disable-next-line camelcase
-          zarr_format: 3,
-          // eslint-disable-next-line camelcase
-          node_type: "group",
-          attributes: {
-            multiscales: manifest.raw.multiscales,
-            // eslint-disable-next-line camelcase
-            morton_hive: manifest.raw,
-          },
-        })
-      );
+      return rootMetadata();
     }
     const group = GROUP_KEY.exec(key);
     if (group) {
+      if (pooled.orders.includes(Number(group[1]))) {
+        return await pooledGroup(Number(group[1]));
+      }
       const target = level(Number(group[1]));
       const dir = target && (await templateDir(target));
       return dir === undefined
@@ -331,15 +397,16 @@ function createHiveReader(
     if (array) {
       const target = level(Number(array[1]));
       const variable = derived.get(array[2]);
-      const view =
-        target && (await arrayView(target, variable?.array ?? array[2]));
+      const metadata = target
+        ? (await arrayView(target, variable?.array ?? array[2]))?.metadata
+        : await pooledView(Number(array[1]), array[2]);
       return (
-        view &&
+        metadata &&
         encoder.encode(
           JSON.stringify(
             variable
-              ? digestVariableMetadata(view.metadata, variable.attributes)
-              : view.metadata
+              ? digestVariableMetadata(metadata, variable.attributes)
+              : metadata
           )
         )
       );
@@ -347,7 +414,7 @@ function createHiveReader(
     const match = CHUNK_KEY.exec(key);
     return match ? await chunk(match) : undefined;
   }
-  return { get, arrayView, derived };
+  return { get, arrayView, derived, pooled };
 }
 
 /**
@@ -388,12 +455,53 @@ async function arrayNames(
   return [...names];
 }
 
-function listContents(levels: THiveLevel[], names: string[]): TContents {
+/**
+ * The levels computed from the leaves: every order the store does not hold
+ * from the leaf chunk's (one chunk, one cell) up to the leaves', and only
+ * under a stored level, which is what a viewer loads whole. Their arrays
+ * are the fields that sum exactly (`count`) and the digest variables.
+ */
+async function pooledLevels(
+  reader: ReturnType<typeof createHiveReader>,
+  manifest: HiveManifest,
+  levels: THiveLevel[]
+): Promise<TPooled> {
+  const multiscales = manifest.raw.multiscales;
+  const block = Array.isArray(multiscales) ? multiscales[0] : undefined;
+  const fields = isRecord(block) && isRecord(block.fields) ? block.fields : {};
+  const sums = Object.keys(fields).filter((name) => fields[name] === "exact");
+  const [leaf, ...stored] = levels;
+  const inner = sums.length
+    ? (await reader.arrayView(leaf, sums[0]))?.innerChunk
+    : undefined;
+  const chunkOrder = leaf.cellOrder - Math.log2(inner ?? NaN) / 2;
+  if (stored.length === 0 || !Number.isInteger(chunkOrder)) {
+    return { orders: [], names: [] };
+  }
+  const held = Math.max(...stored.map(({ cellOrder }) => cellOrder));
+  const orders: number[] = [];
+  for (let order = leaf.cellOrder - 1; order >= chunkOrder; order--) {
+    if (order > held) {
+      orders.push(order);
+    }
+  }
+  return { orders, names: [...sums, ...reader.derived.keys()] };
+}
+
+function listContents(
+  levels: THiveLevel[],
+  names: string[],
+  pooled: TPooled
+): TContents {
   const contents: TContents = [{ path: "/", kind: "group" }];
-  for (const level of levels) {
-    contents.push({ path: `/${level.cellOrder}`, kind: "group" });
-    for (const name of names) {
-      contents.push({ path: `/${level.cellOrder}/${name}`, kind: "array" });
+  const groups = [
+    ...levels.map(({ cellOrder }) => ({ cellOrder, names })),
+    ...pooled.orders.map((cellOrder) => ({ cellOrder, names: pooled.names })),
+  ];
+  for (const group of groups) {
+    contents.push({ path: `/${group.cellOrder}`, kind: "group" });
+    for (const name of group.names) {
+      contents.push({ path: `/${group.cellOrder}/${name}`, kind: "array" });
     }
   }
   return contents;
@@ -451,10 +559,9 @@ export async function createHiveStore(
   const levels = manifestLevels(manifest);
   placeNodes(levels, rangesShardIds(coverage), manifest);
   const reader = createHiveReader(store, manifest, levels, 1);
-  const contents = listContents(
-    levels,
-    await arrayNames(reader, manifest, levels[0])
-  );
+  const names = await arrayNames(reader, manifest, levels[0]);
+  Object.assign(reader.pooled, await pooledLevels(reader, manifest, levels));
+  const contents = listContents(levels, names, reader.pooled);
   return {
     get: reader.get,
     async getRange(key, range) {

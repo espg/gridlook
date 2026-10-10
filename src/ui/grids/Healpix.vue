@@ -25,6 +25,7 @@ import {
   currentLevel,
   DEFAULT_MAX_LEVEL_CELLS,
   DEFAULT_MAX_VIEW_CELLS,
+  DEFAULT_MAX_VIEW_CHUNKS,
   STREAMLINES_NEED_WHOLE_LEVEL,
 } from "@/lib/data/levels.ts";
 import { loadVectorComponents } from "@/lib/data/streamlineData.ts";
@@ -173,6 +174,9 @@ const VIEW_WINDOW_MARGIN = 0.5;
 // (nested, and either dense or with an ascending `cell` coordinate).
 let levelCellCount = 0;
 let levelWindowable = false;
+// A level derived from leaf chunks is windowed by chunk: the orders between
+// its cells and a chunk's. Undefined for a stored level.
+let chunkDepth: number | undefined;
 let sortedCells: ReturnType<typeof createSortedCells> | undefined;
 // The coordinate reader of a sparse level, kept while the level stays the
 // same so that its chunks are read once.
@@ -270,12 +274,13 @@ const { datasourceUpdate, getData } = useGridDataLoader({
 });
 
 // Variables derived from a t-digest are computed here, not read.
+async function recompute() {
+  await getData();
+  updateColormap(drawnMeshes());
+}
 const digestFields = useDigestField({
   getDatasources: () => props.datasources,
-  reload: async () => {
-    await getData();
-    updateColormap(drawnMeshes());
-  },
+  reload: recompute,
 });
 useDigestProbe({
   getDatasources: () => props.datasources,
@@ -474,9 +479,13 @@ async function getCells(sources = props.datasources!) {
  * Whether the selected level is loaded by view: a large level other than the
  * coarsest, which is the backdrop of the others and is always loaded whole.
  * Streamlines and volumes read the whole level, up to the whole-level cap.
+ * A level derived from the leaves is never loaded whole.
  */
 function loadsByView() {
   const sources = props.datasources!;
+  if (currentLevel(sources).derived) {
+    return true;
+  }
   const wholeLevelLayers =
     store.isStreamlineLayerEnabled() || store.isVolumeLayerEnabled();
   return (
@@ -489,15 +498,19 @@ function loadsByView() {
 
 function viewBlocks(margin: number) {
   const grid = unpackGrid();
+  const maxBlocks = Math.floor(
+    DEFAULT_MAX_VIEW_CELLS /
+      4 ** (grid.level - healpixBlockLevel(grid.level, chunkDepth))
+  );
   return store.viewFootprint
     ? healpixViewBlocks(
         grid,
         store.viewFootprint,
         margin,
-        Math.floor(
-          DEFAULT_MAX_VIEW_CELLS /
-            4 ** (grid.level - healpixBlockLevel(grid.level))
-        )
+        chunkDepth === undefined
+          ? maxBlocks
+          : Math.min(maxBlocks, DEFAULT_MAX_VIEW_CHUNKS),
+        chunkDepth
       )
     : [];
 }
@@ -594,6 +607,8 @@ async function prepareLevel() {
   levelCellCount = cellCount;
   levelWindowable = windowable;
   sortedCells = cells;
+  const derived = currentLevel(sources).derived;
+  chunkDepth = derived && Math.log2(datavar.chunks.at(-1)!) / 2;
   loadedBlocks = loadsByView() ? viewBlocks(VIEW_WINDOW_MARGIN) : undefined;
 }
 
@@ -631,7 +646,7 @@ async function fetchFaceBlocks(
   grid: healpixGeo.Grid,
   indices: (number | zarr.Slice | null)[]
 ) {
-  const blockLevel = healpixBlockLevel(grid.level);
+  const blockLevel = healpixBlockLevel(grid.level, chunkDepth);
   const ranges = healpixBlockRanges(
     loadedBlocks!.filter(
       (block) => Math.floor(block / 4 ** blockLevel) === faceIndex

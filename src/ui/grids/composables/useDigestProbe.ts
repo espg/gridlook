@@ -5,7 +5,7 @@ import { watch, type ShallowRef } from "vue";
 import type { THoverGeoPoint } from "./gridHoverUtils.ts";
 
 import { currentLevel } from "@/lib/data/levels.ts";
-import { digestCell, digestReaderFor } from "@/lib/digest/digestField.ts";
+import { digestCell, levelSource } from "@/lib/digest/digestField.ts";
 import { digestStrata } from "@/lib/digest/digestProbe.ts";
 import { digestVariableOf } from "@/lib/digest/digestVariables.ts";
 import { ProjectionHelper } from "@/lib/projection/projectionUtils.ts";
@@ -21,7 +21,8 @@ const HOVER_THROTTLE_MS = 80;
  * stratum, cached) and resolved again at every level that comes on screen.
  * Without a pin, while a variable derived from a digest is displayed, the
  * panel follows the hovered cell from the chunks already decoded; a hover
- * never reads the store.
+ * never reads the store. A cell of a derived level shows the pooled digests
+ * of its leaf cells.
  */
 // eslint-disable-next-line max-lines-per-function
 export function useDigestProbe(options: {
@@ -40,11 +41,11 @@ export function useDigestProbe(options: {
     if (!sources || !grid || grid.scheme !== "nested") {
       return undefined;
     }
-    const datasources = currentLevel(sources).datasources;
-    const strata = digestStrata(datasources);
-    const storePath = Object.values(datasources)[0]?.store;
-    const reader = storePath && strata.length > 0 && digestReaderFor(storePath);
-    return reader ? { grid, strata, reader } : undefined;
+    const current = currentLevel(sources);
+    const strata = digestStrata(current.datasources, current.derived?.dataset);
+    const source = Object.values(current.datasources)[0];
+    const from = source && strata.length > 0 && levelSource(current, source);
+    return from ? { grid, strata, reader: from.digests } : undefined;
   }
 
   /** Show the cell at a place; `cachedOnly` reads nothing. */
