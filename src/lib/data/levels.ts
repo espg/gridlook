@@ -17,15 +17,19 @@ export function currentLevel(datasources: TSources): TSourceLevel {
  * Index of the level with the largest cells. Grids that load only the view
  * draw it whole under a finer level and take the colour range from it, so
  * neither changes as the view moves. Undefined for a single level, or when a
- * level does not state its resolution.
+ * level does not state its resolution. Never a derived level.
  */
 export function coarsestLevel(
-  levels: readonly Pick<TSourceLevel, "resolution">[]
+  levels: readonly Pick<TSourceLevel, "resolution" | "derived">[]
 ) {
   let coarsest: number | undefined;
   for (const [index, level] of levels.entries()) {
     if (levels.length < 2 || !(level.resolution! > 0)) {
       return undefined;
+    }
+    if (level.derived) {
+      // computed from the leaves: never loaded whole
+      continue;
     }
     if (
       coarsest === undefined ||
@@ -78,6 +82,29 @@ export const DEFAULT_MAX_LEVEL_CELLS = 12 * 4 ** 10;
  * picked by hand is too fine for the view.
  */
 export const DEFAULT_MAX_VIEW_CELLS = 12 * 4 ** 8;
+
+/**
+ * Leaf chunks one window of a derived level reads at most. Such a level is
+ * priced by the chunks under its cells, not by its cells: a chunk is about
+ * 34 KB of signal digest (120 KB of noise) whatever the order derived.
+ */
+export const DEFAULT_MAX_VIEW_CHUNKS = 2048;
+
+/**
+ * The cell size a level is picked at, in pixels, when a level stored and a
+ * level derived from it differ: `derived` for the levels computed from leaf
+ * chunks, which cost as a digest does whatever the variable. The size is a
+ * property of the level, not of the level on screen, so the pick is the
+ * same from either side of a boundary.
+ */
+export function pickResolution(
+  level: Pick<TSourceLevel, "resolution" | "derived">,
+  pixelsPerCell: number
+) {
+  return level.derived && level.resolution !== undefined
+    ? (level.resolution * pixelsPerCell) / DIGEST_PIXELS_PER_CELL
+    : level.resolution;
+}
 
 export type TLevelSelectionCamera = {
   /** Height of the camera above the globe's surface, metres. */

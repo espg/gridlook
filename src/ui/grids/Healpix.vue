@@ -13,6 +13,7 @@ import {
 } from "./composables/gridHoverUtils.ts";
 import { useDigestField } from "./composables/useDigestField.ts";
 import { useDigestProbe } from "./composables/useDigestProbe.ts";
+import { useGapFill } from "./composables/useGapFill.ts";
 import { useGridDataLoader } from "./composables/useGridDataLoader.ts";
 import { useScalarFieldCache } from "./composables/useScalarFieldCache.ts";
 import { useSharedGridLogic } from "./composables/useSharedGridLogic.ts";
@@ -25,6 +26,7 @@ import {
   currentLevel,
   DEFAULT_MAX_LEVEL_CELLS,
   DEFAULT_MAX_VIEW_CELLS,
+  DEFAULT_MAX_VIEW_CHUNKS,
   STREAMLINES_NEED_WHOLE_LEVEL,
 } from "@/lib/data/levels.ts";
 import { loadVectorComponents } from "@/lib/data/streamlineData.ts";
@@ -173,6 +175,9 @@ const VIEW_WINDOW_MARGIN = 0.5;
 // (nested, and either dense or with an ascending `cell` coordinate).
 let levelCellCount = 0;
 let levelWindowable = false;
+// A level derived from leaf chunks is windowed by chunk: the orders between
+// its cells and a chunk's. Undefined for a stored level.
+let chunkDepth: number | undefined;
 let sortedCells: ReturnType<typeof createSortedCells> | undefined;
 // The coordinate reader of a sparse level, kept while the level stays the
 // same so that its chunks are read once.
@@ -270,17 +275,24 @@ const { datasourceUpdate, getData } = useGridDataLoader({
 });
 
 // Variables derived from a t-digest are computed here, not read.
+async function recompute() {
+  await getData();
+  updateColormap(drawnMeshes());
+}
 const digestFields = useDigestField({
   getDatasources: () => props.datasources,
-  reload: async () => {
-    await getData();
-    updateColormap(drawnMeshes());
-  },
+  reload: recompute,
+});
+const gapFill = useGapFill({
+  getDatasources: () => props.datasources,
+  reload: recompute,
 });
 useDigestProbe({
   getDatasources: () => props.datasources,
   getGrid: () => healpixGrid.value as healpixGeo.Grid | null,
   clickedGeoPoint,
+  getInterpolated: gapFill.interpolated,
+  filledRevision: gapFill.revision,
 });
 
 function coerceInteger(value: unknown): number | null {
@@ -474,9 +486,13 @@ async function getCells(sources = props.datasources!) {
  * Whether the selected level is loaded by view: a large level other than the
  * coarsest, which is the backdrop of the others and is always loaded whole.
  * Streamlines and volumes read the whole level, up to the whole-level cap.
+ * A level derived from the leaves is never loaded whole.
  */
 function loadsByView() {
   const sources = props.datasources!;
+  if (currentLevel(sources).derived) {
+    return true;
+  }
   const wholeLevelLayers =
     store.isStreamlineLayerEnabled() || store.isVolumeLayerEnabled();
   return (
@@ -489,15 +505,19 @@ function loadsByView() {
 
 function viewBlocks(margin: number) {
   const grid = unpackGrid();
+  const maxBlocks = Math.floor(
+    DEFAULT_MAX_VIEW_CELLS /
+      4 ** (grid.level - healpixBlockLevel(grid.level, chunkDepth))
+  );
   return store.viewFootprint
     ? healpixViewBlocks(
         grid,
         store.viewFootprint,
         margin,
-        Math.floor(
-          DEFAULT_MAX_VIEW_CELLS /
-            4 ** (grid.level - healpixBlockLevel(grid.level))
-        )
+        chunkDepth === undefined
+          ? maxBlocks
+          : Math.min(maxBlocks, DEFAULT_MAX_VIEW_CHUNKS),
+        chunkDepth
       )
     : [];
 }
@@ -594,13 +614,16 @@ async function prepareLevel() {
   levelCellCount = cellCount;
   levelWindowable = windowable;
   sortedCells = cells;
+  const derived = currentLevel(sources).derived;
+  chunkDepth = derived && Math.log2(datavar.chunks.at(-1)!) / 2;
   loadedBlocks = loadsByView() ? viewBlocks(VIEW_WINDOW_MARGIN) : undefined;
 }
 
 /** The stored cells with ids in a nested range, and their values. */
 async function fetchCellRange(
   range: { start: number; end: number },
-  indices: (number | zarr.Slice | null)[]
+  indices: (number | zarr.Slice | null)[],
+  percentile?: number
 ) {
   // Dense levels store cell `n` at index `n`; sparse ones are searched.
   const start = sortedCells
@@ -617,7 +640,7 @@ async function fetchCellRange(
     sortedCells
       ? sortedCells.slice(start, end)
       : Array.from({ length: end - start }, (_, index) => start + index),
-    fetchHealpixVariableData(selection),
+    fetchHealpixVariableData(selection, undefined, undefined, percentile),
   ]);
   if (cells[0] < range.start || cells[cells.length - 1] >= range.end) {
     throw new Error("The cell coordinate is not in ascending order.");
@@ -629,9 +652,10 @@ async function fetchCellRange(
 async function fetchFaceBlocks(
   faceIndex: number,
   grid: healpixGeo.Grid,
-  indices: (number | zarr.Slice | null)[]
+  indices: (number | zarr.Slice | null)[],
+  percentile?: number
 ) {
-  const blockLevel = healpixBlockLevel(grid.level);
+  const blockLevel = healpixBlockLevel(grid.level, chunkDepth);
   const ranges = healpixBlockRanges(
     loadedBlocks!.filter(
       (block) => Math.floor(block / 4 ** blockLevel) === faceIndex
@@ -639,7 +663,7 @@ async function fetchFaceBlocks(
     4 ** (grid.level - blockLevel)
   );
   const parts = await Promise.all(
-    ranges.map((range) => fetchCellRange(range, indices))
+    ranges.map((range) => fetchCellRange(range, indices, percentile))
   );
   let length = 0;
   for (const part of parts) {
@@ -659,9 +683,11 @@ async function fetchFaceBlocks(
 function fetchHealpixVariableData(
   selection: (number | zarr.Slice | null)[],
   variable = varnameSelector.value,
-  sources = props.datasources!
+  sources = props.datasources!,
+  // the height at one percentile, whatever the digest variable shows
+  percentile?: number
 ) {
-  const derived = digestFields.fetch(selection, variable, sources);
+  const derived = digestFields.fetch(selection, variable, sources, percentile);
   if (derived) {
     return derived;
   }
@@ -1117,22 +1143,45 @@ async function processHealpixChunks(
     const range = getHealpixFaceRange(faceIndex, grid.nside, cells);
     const selection = indices.slice();
     selection[selection.length - 1] = zarr.slice(range.start, range.end);
-    const face = byView
-      ? await fetchFaceBlocks(faceIndex, grid, indices)
-      : {
-          data:
-            range.start === range.end
-              ? new Float32Array()
-              : castDataVarToFloat32(
-                  await fetchHealpixVariableData(selection, undefined, sources)
-                ),
-          cells: range.cells,
-        };
+    const readFace = async (percentile?: number) =>
+      byView
+        ? await fetchFaceBlocks(faceIndex, grid, indices, percentile)
+        : {
+            data:
+              range.start === range.end
+                ? new Float32Array()
+                : castDataVarToFloat32(
+                    await fetchHealpixVariableData(
+                      selection,
+                      undefined,
+                      sources,
+                      percentile
+                    )
+                  ),
+            cells: range.cells,
+          };
+    const face = await readFace();
+    // the backdrop is drawn as read
+    const shown =
+      sources === props.datasources
+        ? await gapFill.fill(
+            faceIndex,
+            grid.nside,
+            face,
+            async (percentile) => (await readFace(percentile)).data
+          )
+        : { data: face.data, histogramSummary: undefined };
     if (disposed || !isCurrent()) {
       return;
     }
-    const batch = await buildHealpixFace({ ...options, faceIndex, ...face });
-    const summary = batch.histogramSummary;
+    const batch = await buildHealpixFace({
+      ...options,
+      faceIndex,
+      ...face,
+      data: shown.data,
+    });
+    // filled cells are drawn, not counted
+    const summary = shown.histogramSummary ?? batch.histogramSummary;
     histogramSummaries.push(summary);
     dataMin = dataMin > summary.min ? summary.min : dataMin;
     dataMax = dataMax < summary.max ? summary.max : dataMax;
@@ -1277,6 +1326,7 @@ function healpixHoverLookup(
     lat: pixelAngles[1],
     lon: ProjectionHelper.normalizeLongitude(pixelAngles[0]),
     value: isMissing ? null : value,
+    interpolated: gapFill.interpolated(pixel, grid) !== undefined,
     status: isMissing
       ? HOVERED_GRID_POINT_STATUS.MISSING
       : HOVERED_GRID_POINT_STATUS.VALUE,

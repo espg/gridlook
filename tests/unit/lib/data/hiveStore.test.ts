@@ -152,10 +152,13 @@ function hive(leafDir = LEAF, stamp: object = {}) {
 const decode = (bytes: Uint8Array | undefined) =>
   JSON.parse(new TextDecoder().decode(bytes));
 
+// the levels computed from the leaves, between the column and the leaves
+const DERIVED = /^\/1[4-8](\/|$)/;
+
 describe("createHiveStore", () => {
   it("lists one group per level with the leaf's arrays", async () => {
     const store = await createHiveStore("mem://hive", hive());
-    expect(store.contents()).toEqual([
+    expect(store.contents().filter(({ path }) => !DERIVED.test(path))).toEqual([
       { path: "/", kind: "group" },
       { path: "/19", kind: "group" },
       { path: "/19/count", kind: "array" },
@@ -245,6 +248,17 @@ describe("createHiveStore with a t-digest field", () => {
       "/12/h_range_signal",
       "/12/h_tdigest_signal_locations",
     ]);
+    // a derived level: what sums exactly and the digest variables only
+    expect(
+      store
+        .contents()
+        .filter(({ path }) => path.startsWith("/16/"))
+        .map(({ path }) => path)
+    ).toEqual(["/16/count", "/16/h_percentile_signal", "/16/h_range_signal"]);
+    const derived = decode(await store.get("/16/h_range_signal/zarr.json"));
+    expect(derived.data_type).toBe("float32");
+    expect(derived.shape).toEqual([1, 12 * 4 ** 16]);
+    expect(derived.attributes.digest.array).toBe("h_tdigest_signal");
   });
 
   it("opens a derived variable as float32 on the digest's grid, without chunks", async () => {
@@ -274,6 +288,76 @@ describe("createHiveStore with a t-digest field", () => {
     expect(await store.get(`/12/h_tdigest_signal/c/0/${r8}`)).toEqual(
       Uint8Array.of(1, 2, 3)
     );
+  });
+});
+
+// eslint-disable-next-line max-lines-per-function
+describe("createHiveStore levels derived from the leaves", () => {
+  it("lists the orders between the leaf chunk's and the leaves'", async () => {
+    const store = await createHiveStore("mem://hive", hive());
+    expect(
+      store
+        .contents()
+        .filter(({ path }) => DERIVED.test(path))
+        .map(({ path }) => path)
+    ).toEqual(
+      [18, 17, 16, 15, 14].flatMap((order) => [`/${order}`, `/${order}/count`])
+    );
+    expect(
+      decode(await store.get("/zarr.json")).attributes.derived_levels
+    ).toEqual({ dataset: "19", cells: [18, 17, 16, 15, 14] });
+  });
+
+  it("grids a derived array chunk for chunk on the leaves'", async () => {
+    const store = await createHiveStore("mem://hive", hive());
+    for (const order of [14, 15, 16, 17, 18]) {
+      const count = decode(await store.get(`/${order}/count/zarr.json`));
+      expect(count.shape).toEqual([1, 12 * 4 ** order]);
+      // one chunk is one order-13 cell, as a leaf chunk is
+      expect(count.chunk_grid.configuration.chunk_shape).toEqual([
+        1,
+        4 ** (order - 13),
+      ]);
+      expect(
+        count.shape[1] / count.chunk_grid.configuration.chunk_shape[1]
+      ).toBe((12 * 4 ** 19) / INNER);
+    }
+    expect(decode(await store.get("/15/zarr.json")).attributes.dggs).toEqual({
+      name: "morton",
+      refinement_level: 15, // eslint-disable-line camelcase
+    });
+    expect(await store.get("/15/morton/zarr.json")).toBeUndefined();
+  });
+
+  it("serves no chunk of a derived level and reads nothing for one", async () => {
+    const inner = hive();
+    const store = await createHiveStore("mem://hive", inner);
+    const before = inner.log.length;
+    expect(await store.get(`/15/count/c/0/${r9 * CHUNKS + 1}`)).toBeUndefined();
+    expect(inner.log).toHaveLength(before);
+  });
+
+  it("derives nothing without a stored level beneath the leaves", async () => {
+    const inner = hive();
+    const leafOnly = {
+      ...manifest,
+      multiscales: [{ ...manifest.multiscales[0], datasets: [] }],
+    };
+    const store = await createHiveStore("mem://hive", {
+      ...inner,
+      get: async (key) =>
+        key === "/morton_hive.json"
+          ? new TextEncoder().encode(JSON.stringify(leafOnly))
+          : inner.get(key),
+    });
+    expect(store.contents().map(({ path }) => path)).toEqual([
+      "/",
+      "/19",
+      "/19/count",
+    ]);
+    expect(
+      decode(await store.get("/zarr.json")).attributes.derived_levels
+    ).toBeUndefined();
   });
 });
 

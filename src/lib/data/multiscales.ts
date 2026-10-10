@@ -11,6 +11,8 @@ export type TMultiscaleEntry = {
   path: string;
   name?: string;
   resolution?: number;
+  /** Computed from the arrays of another group, this many orders finer. */
+  derived?: { dataset: string; refinement: number };
 };
 
 export type TLevelGeometry = {
@@ -190,26 +192,56 @@ function geoZarrEntries(
  * level's group is named by its cell order, `cells[0]`, never by `order`,
  * which is the HEALPix node order the sweep built it at. The cell order also
  * gives the resolution: the HEALPix cell size at nside 2^cellOrder.
+ *
+ * `derived` (the `derived_levels` attribute a hive store view adds) names
+ * the orders a viewer computes from the group `dataset`, the leaves',
+ * finest first; they are listed after it.
  */
-function zaggEntries(multiscale: Record<string, unknown>): TMultiscaleEntry[] {
+function zaggEntries(
+  multiscale: Record<string, unknown>,
+  derived: unknown
+): TMultiscaleEntry[] {
   const datasets = Array.isArray(multiscale.datasets)
     ? multiscale.datasets
     : [];
-  return [multiscale.base, ...datasets].flatMap((dataset) => {
-    const cellOrder = Number(
+  const cellOrder = (dataset: unknown) =>
+    Number(
       isRecord(dataset) && Array.isArray(dataset.cells) ? dataset.cells[0] : NaN
     );
-    if (!Number.isInteger(cellOrder) || cellOrder < 0) {
-      return [];
-    }
-    return [
-      {
-        path: String(cellOrder),
-        name: `order ${cellOrder}`,
-        resolution: healpixResolution(2 ** cellOrder),
-      },
-    ];
-  });
+  const source = isRecord(derived) ? Number(derived.dataset) : NaN;
+  const cells =
+    isRecord(derived) && Array.isArray(derived.cells) ? derived.cells : [];
+  return [
+    ...zaggEntry(cellOrder(multiscale.base)),
+    // between the leaves and the first level the store holds
+    ...cells.flatMap((order) =>
+      zaggEntry(Number(order), {
+        dataset: String(source),
+        refinement: source - Number(order),
+      })
+    ),
+    ...datasets.flatMap((dataset) => zaggEntry(cellOrder(dataset))),
+  ];
+}
+
+function zaggEntry(
+  cellOrder: number,
+  derived?: TMultiscaleEntry["derived"]
+): TMultiscaleEntry[] {
+  if (!Number.isInteger(cellOrder) || cellOrder < 0) {
+    return [];
+  }
+  if (derived && !(derived.refinement > 0)) {
+    return [];
+  }
+  return [
+    {
+      path: String(cellOrder),
+      name: `order ${cellOrder}${derived ? " (derived)" : ""}`,
+      resolution: healpixResolution(2 ** cellOrder),
+      ...(derived ? { derived } : {}),
+    },
+  ];
 }
 
 /**
@@ -229,7 +261,7 @@ export function parseMultiscales(
     return [];
   }
   if (multiscale.spec === ZAGG_MULTISCALES_SPEC) {
-    return zaggEntries(multiscale);
+    return zaggEntries(multiscale, attrs.derived_levels);
   }
   for (const entries of [omeEntries(multiscale), layoutEntries(multiscale)]) {
     if (entries.length > 0) {

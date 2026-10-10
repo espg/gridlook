@@ -7,6 +7,9 @@ import {
 import {
   coarsestLevel,
   currentLevel,
+  DEFAULT_MAX_VIEW_CELLS,
+  DIGEST_PIXELS_PER_CELL,
+  pickResolution,
   DEFAULT_HYSTERESIS_ORDERS,
   DEFAULT_MAX_LEVEL_CELLS,
   DEFAULT_PIXELS_PER_CELL,
@@ -232,4 +235,58 @@ it("names the coarsest level, when every level states its resolution", () => {
   ).toBe(1);
   expect(coarsestLevel([{ resolution: 100 }])).toBeUndefined();
   expect(coarsestLevel([{ resolution: 100 }, {}])).toBeUndefined();
+});
+
+describe("a level derived from the leaves", () => {
+  const derived = (order: number) => ({
+    ...healpixLevel(order),
+    derived: { dataset: "19", refinement: 19 - order },
+  });
+  const ORDERS = [14, 15, 16, 17, 18];
+
+  it.each(ORDERS)("is never whole-loadable at order %i", (order) => {
+    const level = derived(order);
+    // over the cap of a level loaded whole, and of a view: always a window
+    expect(exceedsCellCap(level)).toBe(true);
+    expect(exceedsCellCap(level, DEFAULT_MAX_VIEW_CELLS)).toBe(true);
+    // never the backdrop, the one level that is always loaded whole
+    expect(coarsestLevel([healpixLevel(19), level])).toBe(0);
+    expect(coarsestLevel([level, derived(order - 1)])).toBeUndefined();
+    expect(coarsestLevel([healpixLevel(19), level, healpixLevel(13)])).toBe(2);
+  });
+
+  it("is kept out of automatic selection while it would be loaded whole", () => {
+    const levels = [healpixLevel(19), ...ORDERS.map(derived), healpixLevel(8)];
+    for (const order of ORDERS) {
+      expect(selectLevel(cameraFor(resolution(order)), levels, 6)).toBe(6);
+    }
+  });
+
+  it("is picked at the digest cell size whatever the variable", () => {
+    const stored = healpixLevel(13);
+    const level = derived(14);
+    expect(pickResolution(stored, DEFAULT_PIXELS_PER_CELL)).toBe(
+      stored.resolution
+    );
+    expect(pickResolution(level, DIGEST_PIXELS_PER_CELL)).toBe(
+      level.resolution
+    );
+    // at 16 px per cell a derived level is picked as if it were twice as fine
+    expect(pickResolution(level, DEFAULT_PIXELS_PER_CELL)).toBe(
+      level.resolution / 2
+    );
+    // loaded by view (no cell cap): order 14 comes on where its cells are 32 px
+    const levels = [stored, level].map((candidate) => ({
+      resolution: pickResolution(candidate, DEFAULT_PIXELS_PER_CELL),
+      cellCount: 0,
+    }));
+    const metersPerPixel = (pixels: number) => level.resolution / pixels;
+    // (16 px is the boundary: either side keeps the level it is on)
+    expect(selectLevel(metersPerPixel(12), levels, 0)).toBe(0);
+    expect(selectLevel(metersPerPixel(32), levels, 0)).toBe(1);
+    expect(selectLevel(metersPerPixel(12), levels, 1)).toBe(0);
+    expect(selectLevel(metersPerPixel(32), levels, 1)).toBe(1);
+    expect(selectLevel(metersPerPixel(16), levels, 0)).toBe(0);
+    expect(selectLevel(metersPerPixel(16), levels, 1)).toBe(1);
+  });
 });
