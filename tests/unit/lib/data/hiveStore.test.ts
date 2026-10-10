@@ -185,6 +185,98 @@ describe("createHiveStore", () => {
   });
 });
 
+// eslint-disable-next-line max-lines-per-function
+describe("createHiveStore with a t-digest field", () => {
+  const digest = {
+    ...array([256], [{ name: "vlen-bytes" }, { name: "zstd" }]),
+    data_type: "variable_length_bytes", // eslint-disable-line camelcase
+    fill_value: "", // eslint-disable-line camelcase
+    attributes: {
+      ragged: {
+        spec: "zagg-ragged/1",
+        element: { dtype: "float32", shape: [-1, 2] },
+        locations: "h_tdigest_signal_locations",
+      },
+    },
+  };
+  const withDigest = () => {
+    const inner = hive();
+    const objects: Record<string, object | Uint8Array> = {
+      "morton_hive.json": {
+        ...manifest,
+        multiscales: [
+          {
+            ...manifest.multiscales[0],
+            fields: { count: "exact", h_tdigest_signal: "approximate" }, // eslint-disable-line camelcase
+          },
+        ],
+      },
+      [`${LEAF}/19/h_tdigest_signal/zarr.json`]: digest,
+      [`${OVERVIEW}/12/h_tdigest_signal/zarr.json`]: digest,
+      [`${OVERVIEW}/12/h_tdigest_signal/c/0`]: Uint8Array.of(1, 2, 3),
+    };
+    const encoder = new TextEncoder();
+    return {
+      ...inner,
+      async get(key: zarr.AbsolutePath) {
+        const value = objects[key.slice(1)];
+        if (value === undefined) {
+          return inner.get(key);
+        }
+        inner.log.push(`get ${key}`);
+        return value instanceof Uint8Array
+          ? value
+          : encoder.encode(JSON.stringify(value));
+      },
+    };
+  };
+
+  it("lists the variables derived from it beside it", async () => {
+    const store = await createHiveStore("mem://hive", withDigest());
+    expect(
+      store
+        .contents()
+        .filter(({ path }) => path.startsWith("/12/"))
+        .map(({ path }) => path)
+    ).toEqual([
+      "/12/count",
+      "/12/h_tdigest_signal",
+      "/12/h_percentile_signal",
+      "/12/h_range_signal",
+      "/12/h_tdigest_signal_locations",
+    ]);
+  });
+
+  it("opens a derived variable as float32 on the digest's grid, without chunks", async () => {
+    const inner = withDigest();
+    const store = await createHiveStore("mem://hive", inner);
+    const root = await zarr.open.v3(store, { kind: "group" });
+    const percentile = await zarr.open.v3(
+      root.resolve("/12/h_percentile_signal"),
+      { kind: "array" }
+    );
+    expect(percentile.dtype).toBe("float32");
+    expect(percentile.shape).toEqual([1, 12 * 4 ** 12]);
+    expect(percentile.chunks).toEqual([1, 256]);
+    expect(percentile.attrs).toMatchObject({
+      long_name: "height percentile (signal)", // eslint-disable-line camelcase
+      digest: { array: "h_tdigest_signal", product: "percentile" },
+    });
+    const before = inner.log.length;
+    expect(
+      await store.get(`/12/h_percentile_signal/c/0/${r8}`)
+    ).toBeUndefined();
+    expect(inner.log).toHaveLength(before);
+    // zarrita cannot open the digest itself; its chunks are served as stored
+    await expect(
+      zarr.open.v3(root.resolve("/12/h_tdigest_signal"), { kind: "array" })
+    ).rejects.toThrow();
+    expect(await store.get(`/12/h_tdigest_signal/c/0/${r8}`)).toEqual(
+      Uint8Array.of(1, 2, 3)
+    );
+  });
+});
+
 describe("createHiveStore chunks", () => {
   it("reads a leaf's inner chunk as a range of its shard object", async () => {
     const inner = hive();
