@@ -11,6 +11,7 @@ import {
   useGridHoverLookup,
   type TGridHoverLookupResult,
 } from "./composables/gridHoverUtils.ts";
+import { useDigestField } from "./composables/useDigestField.ts";
 import { useGridDataLoader } from "./composables/useGridDataLoader.ts";
 import { useScalarFieldCache } from "./composables/useScalarFieldCache.ts";
 import { useSharedGridLogic } from "./composables/useSharedGridLogic.ts";
@@ -243,7 +244,7 @@ function updateMeshProjectionUniforms() {
   });
 }
 
-const { datasourceUpdate } = useGridDataLoader({
+const { datasourceUpdate, getData } = useGridDataLoader({
   getDatasources: () => props.datasources,
   getDataVar,
   fetchAndRenderData,
@@ -263,6 +264,15 @@ const { datasourceUpdate } = useGridDataLoader({
     streamlineRequestRevision++;
     store.streamlineLoading = false;
     store.streamlineProgress = undefined;
+  },
+});
+
+// Variables derived from a t-digest are computed here, not read.
+const digestFields = useDigestField({
+  getDatasources: () => props.datasources,
+  reload: async () => {
+    await getData();
+    updateColormap(drawnMeshes());
   },
 });
 
@@ -644,6 +654,10 @@ function fetchHealpixVariableData(
   variable = varnameSelector.value,
   sources = props.datasources!
 ) {
+  const derived = digestFields.fetch(selection, variable, sources);
+  if (derived) {
+    return derived;
+  }
   return getGridVariableData({
     source: ZarrDataManager.getDatasetSource(sources, varnameSelector.value),
     variable,
@@ -1144,7 +1158,12 @@ async function loadBackdrop(
   if (level === undefined || level === (sources.selectedLevel ?? 0)) {
     return undefined;
   }
-  const key = JSON.stringify([level, varnameSelector.value, indices]);
+  const key = JSON.stringify([
+    level,
+    varnameSelector.value,
+    indices,
+    digestFields.key(),
+  ]);
   if (backdropFrame?.key === key) {
     return backdropFrame;
   }
