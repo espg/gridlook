@@ -62,6 +62,7 @@ import GridTriangular from "@/ui/grids/Triangular.vue";
 import AboutView from "@/ui/overlays/AboutModal.vue";
 import { toggleTimeAnimation } from "@/ui/overlays/controls/useTimeAnimation.ts";
 import GlobeControls from "@/ui/overlays/Controls.vue";
+import DigestPanel from "@/ui/overlays/DigestPanel.vue";
 import DistanceScale from "@/ui/overlays/DistanceScale.vue";
 import HoverReadout from "@/ui/overlays/HoverReadout.vue";
 import InfoPanel from "@/ui/overlays/InfoPanel.vue";
@@ -630,6 +631,10 @@ useEventListener(window, "keydown", (e: KeyboardEvent) => {
         :is-rotated="detectedGridType === GRID_TYPES.REGULAR_ROTATED"
       />
       <HoverReadout v-if="detectedGridType !== undefined" />
+      <DigestPanel
+        v-if="detectedGridType !== undefined"
+        :vars="modelInfo?.vars"
+      />
       <DistanceScale v-if="detectedGridType !== undefined" />
     </div>
     <div

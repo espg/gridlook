@@ -1,5 +1,9 @@
 import * as zarr from "zarrita";
 
+import {
+  digestVariableMetadata,
+  digestVariablesOf,
+} from "@/lib/digest/digestVariables.ts";
 import { parseRootCoverage, rangesShardIds } from "@/lib/morton/coverage.ts";
 import { decimalBase, parseMortonDecimal } from "@/lib/morton/decimal.ts";
 import { hiveComponents, leafPath } from "@/lib/morton/hive.ts";
@@ -22,6 +26,10 @@ import { wordToNested } from "@/lib/morton/word.ts";
  * `floor(n / C)` (`C` inner chunks per object), inner chunk `n mod C`; a
  * leaf's inner chunk is a byte range of its shard object, found through the
  * shard index that the leaf writer appends.
+ *
+ * A t-digest array (ragged, which zarrita cannot open) is listed with the
+ * variables a viewer derives from it, as float32 arrays without chunks: the
+ * digests themselves are read by `digestReader.ts` from the same keys.
  *
  * Nothing is listed: the manifest plus the root coverage name every node.
  * The per-cell `morton` coordinate is never read (a windowed leaf has none:
@@ -62,6 +70,8 @@ type THiveLevel = {
 type TJson = Record<string, unknown>;
 type TIndexEntry = { offset: number; length: number } | undefined;
 type TContents = { path: zarr.AbsolutePath; kind: "array" | "group" }[];
+// a derived variable's name -> the digest array beside it and its attributes
+type TDerived = Map<string, { array: string; attributes: TJson }>;
 
 export type THiveStore = zarr.Listable<zarr.AsyncReadable>;
 
@@ -214,6 +224,7 @@ function createHiveReader(
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
   const cache = new Map<string, Promise<unknown>>();
+  const derived: TDerived = new Map();
   // Every derived fact is computed once per key, however many chunks ask.
   function once<T>(key: string, compute: () => Promise<T>): Promise<T> {
     let pending = cache.get(key) as Promise<T> | undefined;
@@ -270,7 +281,7 @@ function createHiveReader(
   async function chunk(match: RegExpMatchArray) {
     const [, order, name, row, index] = match;
     const target = level(Number(order));
-    if (!target || Number(row) >= rows) {
+    if (!target || Number(row) >= rows || derived.has(name)) {
       return undefined;
     }
     const view = await arrayView(target, name);
@@ -319,18 +330,30 @@ function createHiveReader(
     const array = ARRAY_KEY.exec(key);
     if (array) {
       const target = level(Number(array[1]));
-      const view = target && (await arrayView(target, array[2]));
-      return view && encoder.encode(JSON.stringify(view.metadata));
+      const variable = derived.get(array[2]);
+      const view =
+        target && (await arrayView(target, variable?.array ?? array[2]));
+      return (
+        view &&
+        encoder.encode(
+          JSON.stringify(
+            variable
+              ? digestVariableMetadata(view.metadata, variable.attributes)
+              : view.metadata
+          )
+        )
+      );
     }
     const match = CHUNK_KEY.exec(key);
     return match ? await chunk(match) : undefined;
   }
-  return { get, arrayView };
+  return { get, arrayView, derived };
 }
 
 /**
- * The arrays every level lists: the manifest's fields plus the located and
- * timed siblings the leaf template declares for them.
+ * The arrays every level lists: the manifest's fields, the located and
+ * timed siblings the leaf template declares for them, and the variables
+ * derived from a t-digest field.
  */
 async function arrayNames(
   reader: ReturnType<typeof createHiveReader>,
@@ -346,6 +369,12 @@ async function arrayNames(
   );
   for (const name of [...names]) {
     const attrs = (await reader.arrayView(leaf, name))?.metadata.attributes;
+    for (const [variable, { array, attributes }] of Object.entries(
+      digestVariablesOf(name, attrs)
+    )) {
+      reader.derived.set(variable, { array, attributes });
+      names.add(variable);
+    }
     const ragged = isRecord(attrs) ? attrs.ragged : undefined;
     for (const sibling of [
       isRecord(ragged) ? ragged.locations : undefined,

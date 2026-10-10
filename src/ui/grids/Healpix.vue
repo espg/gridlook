@@ -11,6 +11,8 @@ import {
   useGridHoverLookup,
   type TGridHoverLookupResult,
 } from "./composables/gridHoverUtils.ts";
+import { useDigestField } from "./composables/useDigestField.ts";
+import { useDigestProbe } from "./composables/useDigestProbe.ts";
 import { useGridDataLoader } from "./composables/useGridDataLoader.ts";
 import { useScalarFieldCache } from "./composables/useScalarFieldCache.ts";
 import { useSharedGridLogic } from "./composables/useSharedGridLogic.ts";
@@ -141,6 +143,7 @@ const {
   canvas,
   box,
   hoveredGeoPoint,
+  clickedGeoPoint,
 } = useSharedGridLogic();
 
 const { setHoverLookup, clearHoverLookup } =
@@ -243,7 +246,7 @@ function updateMeshProjectionUniforms() {
   });
 }
 
-const { datasourceUpdate } = useGridDataLoader({
+const { datasourceUpdate, getData } = useGridDataLoader({
   getDatasources: () => props.datasources,
   getDataVar,
   fetchAndRenderData,
@@ -264,6 +267,20 @@ const { datasourceUpdate } = useGridDataLoader({
     store.streamlineLoading = false;
     store.streamlineProgress = undefined;
   },
+});
+
+// Variables derived from a t-digest are computed here, not read.
+const digestFields = useDigestField({
+  getDatasources: () => props.datasources,
+  reload: async () => {
+    await getData();
+    updateColormap(drawnMeshes());
+  },
+});
+useDigestProbe({
+  getDatasources: () => props.datasources,
+  getGrid: () => healpixGrid.value as healpixGeo.Grid | null,
+  clickedGeoPoint,
 });
 
 function coerceInteger(value: unknown): number | null {
@@ -644,6 +661,10 @@ function fetchHealpixVariableData(
   variable = varnameSelector.value,
   sources = props.datasources!
 ) {
+  const derived = digestFields.fetch(selection, variable, sources);
+  if (derived) {
+    return derived;
+  }
   return getGridVariableData({
     source: ZarrDataManager.getDatasetSource(sources, varnameSelector.value),
     variable,
@@ -1144,7 +1165,12 @@ async function loadBackdrop(
   if (level === undefined || level === (sources.selectedLevel ?? 0)) {
     return undefined;
   }
-  const key = JSON.stringify([level, varnameSelector.value, indices]);
+  const key = JSON.stringify([
+    level,
+    varnameSelector.value,
+    indices,
+    digestFields.key(),
+  ]);
   if (backdropFrame?.key === key) {
     return backdropFrame;
   }
@@ -1179,7 +1205,10 @@ async function loadBackdrop(
 /** Draw the coarsest level under a level that leaves part of the view empty. */
 function showBackdrop(frame: TBackdropFrame | undefined) {
   const dense = levelCellCount === 12 * unpackGrid().nside ** 2;
-  const wanted = frame && (loadedBlocks || !dense) ? frame : undefined;
+  const wanted =
+    store.levelBackdrop && frame && (loadedBlocks || !dense)
+      ? frame
+      : undefined;
   if (backdropKey === wanted?.key) {
     return;
   }

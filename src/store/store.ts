@@ -1,4 +1,5 @@
 import { defineStore } from "pinia";
+import { markRaw } from "vue";
 
 import {
   levelAxesAreIdentical,
@@ -7,6 +8,12 @@ import {
   type TVectorVariableSelection,
 } from "@/lib/data/vectorField.ts";
 import type { TVectorMagnitudeInfo } from "@/lib/data/vectorMagnitude.ts";
+import type { TDigestProbe } from "@/lib/digest/digestProbe.ts";
+import {
+  DEFAULT_PERCENTILE,
+  DEFAULT_PERCENTILE_HIGH,
+  DEFAULT_PERCENTILE_LOW,
+} from "@/lib/digest/digestVariables.ts";
 import {
   LAND_SEA_MASK_MODES,
   type TLandSeaMaskMode,
@@ -250,6 +257,19 @@ export const useGlobeControlStore = defineStore("globeControl", {
       // histogram (right for a mean, e.g. elevation) or each level takes its
       // own (right for a sum, e.g. a count, which grows 4x per level)
       levelRangeShared: true,
+      // whether the coarsest level is drawn beneath a level loaded by view;
+      // it is still read for the shared colour range either way
+      levelBackdrop: false,
+      // variables derived from a t-digest: the percentile shown, and the
+      // two a percentile range is the difference of (0..100)
+      digestPercentile: DEFAULT_PERCENTILE as number,
+      digestPercentileLow: DEFAULT_PERCENTILE_LOW as number,
+      digestPercentileHigh: DEFAULT_PERCENTILE_HIGH as number,
+      // the place whose distribution the panel keeps showing (a click), and
+      // the cell it shows now: the pinned place at the level on screen, or
+      // the cell under the cursor
+      digestPin: undefined as { lat: number; lon: number } | undefined,
+      digestProbe: undefined as TDigestProbe | undefined,
       // ── Live datasets ──────────────────────────────────────────────
       // A live dataset exposes only the currently-available timestep and is
       // followed automatically by polling the store's timestep endpoints.
@@ -300,6 +320,8 @@ export const useGlobeControlStore = defineStore("globeControl", {
         this.newDatasetSignifier += 1;
       }
       this.resetStreamlineSelection();
+      this.digestPin = undefined;
+      this.digestProbe = undefined;
       this.volumeSelections = [];
       this.volumeLoading = false;
       this.volumeProgress = undefined;
@@ -332,6 +354,33 @@ export const useGlobeControlStore = defineStore("globeControl", {
     },
     setLevelRangeShared(shared: boolean) {
       this.levelRangeShared = shared;
+    },
+    setLevelBackdrop(shown: boolean) {
+      this.levelBackdrop = shown;
+    },
+    setDigestPercentile(percentile: number) {
+      if (Number.isFinite(percentile)) {
+        this.digestPercentile = Math.min(Math.max(percentile, 0), 100);
+      }
+    },
+    // the bounds of a percentile range, kept in order
+    setDigestPercentileBounds(low: number, high: number) {
+      if (!Number.isFinite(low) || !Number.isFinite(high)) {
+        return;
+      }
+      const clamped = [low, high].map((v) => Math.min(Math.max(v, 0), 100));
+      this.digestPercentileLow = Math.min(...clamped);
+      this.digestPercentileHigh = Math.max(...clamped);
+    },
+    setDigestPin(pin: { lat: number; lon: number } | undefined) {
+      this.digestPin = pin;
+      if (!pin) {
+        this.digestProbe = undefined;
+      }
+    },
+    setDigestProbe(probe: TDigestProbe | undefined) {
+      // typed arrays: never walked by the reactivity system
+      this.digestProbe = probe && markRaw(probe);
     },
     isNewDataset(): boolean {
       return this.newDatasetSignifier % 2 === 0;

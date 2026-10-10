@@ -90,6 +90,7 @@ export function useSharedGridLogic() {
     updateBaseSurface,
     configureCameraForProjection,
     hoveredGeoPoint,
+    clickedGeoPoint,
   } = useGridScene({
     projectionHelper,
     projectionCenter,
@@ -308,5 +309,6 @@ export function useSharedGridLogic() {
     canvas,
     box,
     hoveredGeoPoint,
+    clickedGeoPoint,
   };
 }

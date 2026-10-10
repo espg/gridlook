@@ -203,3 +203,48 @@ it("turns automatic level selection off on a manual pick", () => {
   store.setLevelAuto(true);
   expect(store.levelAuto).toBe(true);
 });
+
+it("keeps the percentiles of a digest variable in 0..100 and in order", () => {
+  const store = useGlobeControlStore();
+  expect(store.digestPercentile).toBe(50);
+  expect([store.digestPercentileLow, store.digestPercentileHigh]).toEqual([
+    2, 98,
+  ]);
+
+  store.setDigestPercentile(140);
+  expect(store.digestPercentile).toBe(100);
+  store.setDigestPercentile(NaN);
+  expect(store.digestPercentile).toBe(100);
+
+  store.setDigestPercentileBounds(90, 10);
+  expect([store.digestPercentileLow, store.digestPercentileHigh]).toEqual([
+    10, 90,
+  ]);
+  store.setDigestPercentileBounds(-5, 250);
+  expect([store.digestPercentileLow, store.digestPercentileHigh]).toEqual([
+    0, 100,
+  ]);
+});
+
+it("drops the pinned cell with its panel, and with the dataset", () => {
+  const store = useGlobeControlStore();
+  const probe = {
+    lat: 1,
+    lon: 2,
+    cell: 3,
+    order: 8,
+    pinned: true,
+    strata: [],
+  };
+  store.setDigestPin({ lat: 1, lon: 2 });
+  store.setDigestProbe(probe);
+  expect(store.digestProbe).toEqual(probe);
+  store.setDigestPin(undefined);
+  expect(store.digestProbe).toBeUndefined();
+
+  store.setDigestPin({ lat: 1, lon: 2 });
+  store.setDigestProbe(probe);
+  store.signifyDatasetChange();
+  expect(store.digestPin).toBeUndefined();
+  expect(store.digestProbe).toBeUndefined();
+});

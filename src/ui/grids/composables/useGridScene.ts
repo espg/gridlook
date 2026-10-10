@@ -117,6 +117,9 @@ export function useGridScene(options: UseGridSceneOptions) {
   const lastRenderedCameraPosition = new THREE.Vector3();
   const lastRenderedCameraQuaternion = new THREE.Quaternion();
   const hoveredGeoPoint = shallowRef<THoverGeoPoint | null>(null);
+  // the place last clicked or tapped (not dragged), whatever the hover state
+  const clickedGeoPoint = shallowRef<THoverGeoPoint | null>(null);
+  let clickStart: { clientX: number; clientY: number } | null = null;
   let lastPointerPosition: { clientX: number; clientY: number } | null = null;
   let touchPickStart: { clientX: number; clientY: number } | null = null;
   let touchPickMoved = false;
@@ -1233,7 +1236,24 @@ export function useGridScene(options: UseGridSceneOptions) {
       return;
     }
     updateHoverPosition(touch.clientX, touch.clientY);
+    clickedGeoPoint.value = getHoveredGeoPoint(touch.clientX, touch.clientY);
     touchPickStart = null;
+  }
+
+  function onClickEnd(event: MouseEvent) {
+    const start = clickStart;
+    clickStart = null;
+    if (!start || event.button !== 0) {
+      return;
+    }
+    const deltaX = event.clientX - start.clientX;
+    const deltaY = event.clientY - start.clientY;
+    if (
+      deltaX * deltaX + deltaY * deltaY <=
+      TOUCH_PICK_TAP_MAX_DISTANCE_PX * TOUCH_PICK_TAP_MAX_DISTANCE_PX
+    ) {
+      clickedGeoPoint.value = getHoveredGeoPoint(event.clientX, event.clientY);
+    }
   }
 
   function setupHoverListeners() {
@@ -1246,6 +1266,18 @@ export function useGridScene(options: UseGridSceneOptions) {
       { passive: true }
     );
 
+    useEventListener(
+      canvas.value,
+      "mousedown",
+      (event: MouseEvent) => {
+        clickStart =
+          event.button === 0
+            ? { clientX: event.clientX, clientY: event.clientY }
+            : null;
+      },
+      { passive: true }
+    );
+    useEventListener(canvas.value, "mouseup", onClickEnd, { passive: true });
     useEventListener(canvas.value, "touchstart", onTouchPickStart, {
       passive: true,
     });
@@ -1539,5 +1571,6 @@ export function useGridScene(options: UseGridSceneOptions) {
     updateBaseSurface,
     configureCameraForProjection,
     hoveredGeoPoint,
+    clickedGeoPoint,
   };
 }
