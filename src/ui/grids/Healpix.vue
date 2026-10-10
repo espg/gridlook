@@ -429,6 +429,18 @@ async function getCells(sources = props.datasources!) {
   const cellCoord = await getCellCoordinateName(sources);
 
   try {
+    // A level with every cell of its order is read by index (see
+    // `searchedCoordinate`): its coordinate, if it stores one, is not nested
+    // ids (a zagg level's holds packed morton words and fill).
+    const datavar = await ZarrDataManager.getVariableInfoByDatasetSources(
+      sources,
+      varnameSelector.value
+    );
+    const cellCount = datavar.shape[datavar.shape.length - 1];
+    const nside = Math.sqrt(cellCount / 12);
+    if (Number.isInteger(nside) && Number.isInteger(Math.log2(nside))) {
+      return undefined;
+    }
     const rawCells = await fetchHealpixVariableData(
       [],
       ZarrDataManager.resolveVariablePath(varnameSelector.value, cellCoord),
