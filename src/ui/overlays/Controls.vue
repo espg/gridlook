@@ -97,6 +97,8 @@ const {
   paramPercentile,
   paramPercentileLow,
   paramPercentileHigh,
+  paramSmooth,
+  paramSmoothKernel,
 } = storeToRefs(urlParameterStore);
 
 // the digest the selected variable is derived from, if it is
@@ -337,6 +339,10 @@ function initFromParams() {
       Number(paramPercentileLow.value ?? store.digestPercentileLow),
       Number(paramPercentileHigh.value ?? store.digestPercentileHigh)
     );
+  }
+  store.setGapFill(paramSmooth.value === "true");
+  if (paramSmoothKernel.value) {
+    store.setGapFillSize(Number(paramSmoothKernel.value));
   }
   if (paramBoundHigh.value && paramBoundLow.value) {
     const low = parseFloat(paramBoundLow.value);

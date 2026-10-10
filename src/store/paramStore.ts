@@ -47,6 +47,8 @@ export const useUrlParameterStore = defineStore("urlParams", {
       paramPercentile: undefined as string | undefined,
       paramPercentileLow: undefined as string | undefined,
       paramPercentileHigh: undefined as string | undefined,
+      paramSmooth: undefined as string | undefined,
+      paramSmoothKernel: undefined as string | undefined,
     };
   },
   actions: {
@@ -109,4 +111,6 @@ export const STORE_PARAM_MAPPING = {
   percentile: "paramPercentile",
   percentilelow: "paramPercentileLow",
   percentilehigh: "paramPercentileHigh",
+  smooth: "paramSmooth",
+  smoothkernel: "paramSmoothKernel",
 } as const;

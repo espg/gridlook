@@ -1,12 +1,12 @@
 import { watchThrottled } from "@vueuse/core";
 import type * as healpixGeo from "healpix-geo";
-import { watch, type ShallowRef } from "vue";
+import { watch, type Ref, type ShallowRef } from "vue";
 
 import type { THoverGeoPoint } from "./gridHoverUtils.ts";
 
 import { currentLevel } from "@/lib/data/levels.ts";
 import { digestCell, levelSource } from "@/lib/digest/digestField.ts";
-import { digestStrata } from "@/lib/digest/digestProbe.ts";
+import { digestStrata, type TDigestProbe } from "@/lib/digest/digestProbe.ts";
 import { digestVariableOf } from "@/lib/digest/digestVariables.ts";
 import { ProjectionHelper } from "@/lib/projection/projectionUtils.ts";
 import type { TSources } from "@/lib/types/GlobeTypes.ts";
@@ -30,6 +30,13 @@ export function useDigestProbe(options: {
   /** The grid of the level on screen. */
   getGrid: () => healpixGeo.Grid | null;
   clickedGeoPoint: Readonly<ShallowRef<THoverGeoPoint | null>>;
+  /** The values gap filling gave a cell of the level on screen, if any. */
+  getInterpolated: (
+    cell: number,
+    grid: healpixGeo.Grid
+  ) => TDigestProbe["interpolated"];
+  /** Changes when the filled cells do. */
+  filledRevision: Readonly<Ref<number>>;
 }) {
   const store = useGlobeControlStore();
   const { logError } = useLog();
@@ -86,6 +93,7 @@ export function useDigestProbe(options: {
       cell,
       order: grid.level,
       pinned,
+      interpolated: options.getInterpolated(cell, grid),
       strata: strata.map(({ name }, index) => ({
         name,
         digest: digests[index],
@@ -108,9 +116,11 @@ export function useDigestProbe(options: {
     }
   });
   // a pinned place is a cell of whatever level is on screen
-  watch([() => store.digestPin, options.getGrid], showPinned, {
-    immediate: true,
-  });
+  watch(
+    [() => store.digestPin, options.getGrid, options.filledRevision],
+    showPinned,
+    { immediate: true }
+  );
   watchThrottled(
     () => store.hoveredGridPoint,
     (point) => {

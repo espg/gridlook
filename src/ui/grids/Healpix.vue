@@ -13,6 +13,7 @@ import {
 } from "./composables/gridHoverUtils.ts";
 import { useDigestField } from "./composables/useDigestField.ts";
 import { useDigestProbe } from "./composables/useDigestProbe.ts";
+import { useGapFill } from "./composables/useGapFill.ts";
 import { useGridDataLoader } from "./composables/useGridDataLoader.ts";
 import { useScalarFieldCache } from "./composables/useScalarFieldCache.ts";
 import { useSharedGridLogic } from "./composables/useSharedGridLogic.ts";
@@ -282,10 +283,16 @@ const digestFields = useDigestField({
   getDatasources: () => props.datasources,
   reload: recompute,
 });
+const gapFill = useGapFill({
+  getDatasources: () => props.datasources,
+  reload: recompute,
+});
 useDigestProbe({
   getDatasources: () => props.datasources,
   getGrid: () => healpixGrid.value as healpixGeo.Grid | null,
   clickedGeoPoint,
+  getInterpolated: gapFill.interpolated,
+  filledRevision: gapFill.revision,
 });
 
 function coerceInteger(value: unknown): number | null {
@@ -615,7 +622,8 @@ async function prepareLevel() {
 /** The stored cells with ids in a nested range, and their values. */
 async function fetchCellRange(
   range: { start: number; end: number },
-  indices: (number | zarr.Slice | null)[]
+  indices: (number | zarr.Slice | null)[],
+  percentile?: number
 ) {
   // Dense levels store cell `n` at index `n`; sparse ones are searched.
   const start = sortedCells
@@ -632,7 +640,7 @@ async function fetchCellRange(
     sortedCells
       ? sortedCells.slice(start, end)
       : Array.from({ length: end - start }, (_, index) => start + index),
-    fetchHealpixVariableData(selection),
+    fetchHealpixVariableData(selection, undefined, undefined, percentile),
   ]);
   if (cells[0] < range.start || cells[cells.length - 1] >= range.end) {
     throw new Error("The cell coordinate is not in ascending order.");
@@ -644,7 +652,8 @@ async function fetchCellRange(
 async function fetchFaceBlocks(
   faceIndex: number,
   grid: healpixGeo.Grid,
-  indices: (number | zarr.Slice | null)[]
+  indices: (number | zarr.Slice | null)[],
+  percentile?: number
 ) {
   const blockLevel = healpixBlockLevel(grid.level, chunkDepth);
   const ranges = healpixBlockRanges(
@@ -654,7 +663,7 @@ async function fetchFaceBlocks(
     4 ** (grid.level - blockLevel)
   );
   const parts = await Promise.all(
-    ranges.map((range) => fetchCellRange(range, indices))
+    ranges.map((range) => fetchCellRange(range, indices, percentile))
   );
   let length = 0;
   for (const part of parts) {
@@ -674,9 +683,11 @@ async function fetchFaceBlocks(
 function fetchHealpixVariableData(
   selection: (number | zarr.Slice | null)[],
   variable = varnameSelector.value,
-  sources = props.datasources!
+  sources = props.datasources!,
+  // the height at one percentile, whatever the digest variable shows
+  percentile?: number
 ) {
-  const derived = digestFields.fetch(selection, variable, sources);
+  const derived = digestFields.fetch(selection, variable, sources, percentile);
   if (derived) {
     return derived;
   }
@@ -1132,22 +1143,45 @@ async function processHealpixChunks(
     const range = getHealpixFaceRange(faceIndex, grid.nside, cells);
     const selection = indices.slice();
     selection[selection.length - 1] = zarr.slice(range.start, range.end);
-    const face = byView
-      ? await fetchFaceBlocks(faceIndex, grid, indices)
-      : {
-          data:
-            range.start === range.end
-              ? new Float32Array()
-              : castDataVarToFloat32(
-                  await fetchHealpixVariableData(selection, undefined, sources)
-                ),
-          cells: range.cells,
-        };
+    const readFace = async (percentile?: number) =>
+      byView
+        ? await fetchFaceBlocks(faceIndex, grid, indices, percentile)
+        : {
+            data:
+              range.start === range.end
+                ? new Float32Array()
+                : castDataVarToFloat32(
+                    await fetchHealpixVariableData(
+                      selection,
+                      undefined,
+                      sources,
+                      percentile
+                    )
+                  ),
+            cells: range.cells,
+          };
+    const face = await readFace();
+    // the backdrop is drawn as read
+    const shown =
+      sources === props.datasources
+        ? await gapFill.fill(
+            faceIndex,
+            grid.nside,
+            face,
+            async (percentile) => (await readFace(percentile)).data
+          )
+        : { data: face.data, histogramSummary: undefined };
     if (disposed || !isCurrent()) {
       return;
     }
-    const batch = await buildHealpixFace({ ...options, faceIndex, ...face });
-    const summary = batch.histogramSummary;
+    const batch = await buildHealpixFace({
+      ...options,
+      faceIndex,
+      ...face,
+      data: shown.data,
+    });
+    // filled cells are drawn, not counted
+    const summary = shown.histogramSummary ?? batch.histogramSummary;
     histogramSummaries.push(summary);
     dataMin = dataMin > summary.min ? summary.min : dataMin;
     dataMax = dataMax < summary.max ? summary.max : dataMax;
@@ -1292,6 +1326,7 @@ function healpixHoverLookup(
     lat: pixelAngles[1],
     lon: ProjectionHelper.normalizeLongitude(pixelAngles[0]),
     value: isMissing ? null : value,
+    interpolated: gapFill.interpolated(pixel, grid) !== undefined,
     status: isMissing
       ? HOVERED_GRID_POINT_STATUS.MISSING
       : HOVERED_GRID_POINT_STATUS.VALUE,

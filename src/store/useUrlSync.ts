@@ -63,6 +63,12 @@ const GLOBE_URL_SYNC_MAP: TUrlSyncEntry[] = [
   { key: "digestPercentileLow", param: URL_PARAMETERS.PERCENTILE_LOW },
   { key: "digestPercentileHigh", param: URL_PARAMETERS.PERCENTILE_HIGH },
   {
+    key: "gapFill",
+    param: URL_PARAMETERS.SMOOTH,
+    transform: (enabled) => (enabled ? "true" : ""),
+  },
+  { key: "gapFillSize", param: URL_PARAMETERS.SMOOTH_KERNEL },
+  {
     key: "streamlineMagnitudeRequested",
     param: URL_PARAMETERS.STREAMLINE_MAGNITUDE,
     transform: (requested) => (requested ? "true" : ""),

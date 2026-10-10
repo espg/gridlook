@@ -171,3 +171,30 @@ between are not stored. Gridlook lists them as levels of their own, named
   included (a stored level keeps 16 for `count`).
 
 The distribution panel shows the pooled digest of a derived cell.
+
+## Filling the gaps between tracks
+
+At fine levels the cells with photons are ground tracks with blank cells in
+between. **Smooth gaps**, under a height variable, fills the blank cells:
+
+- What is smoothed is the field on screen, the height at the chosen
+  percentile in each cell, not the digests. Averaging a percentile over
+  neighbouring cells interpolates between their distributions and keeps the
+  percentiles in order; merging their digests would give a mixture, whose
+  median jumps from one track's to the other's. A percentile range is the
+  difference of its two percentile fields, each filled on its own.
+- The filter is a normalised convolution with a Gaussian kernel:
+  `conv(value · mask) / conv(mask)`, where `mask` is 1 on a cell with data.
+  A cell with data keeps its value. A blank cell takes the weighted mean of
+  the data under the kernel, and stays blank when there is none.
+- The kernel is 3, 5, 7, 9, 15 or 31 cells across and reaches three standard
+  deviations either way: `size = 2 · ceil(3σ) + 1`, so `σ = (size − 1) / 6`
+  cells (0.33 to 5).
+- It runs on the (x, y) grid of each HEALPix face over the cells loaded. A
+  cell is not filled from across a face boundary, nor from cells outside the
+  loaded window.
+- The colour range and the histogram stay those of the values observed. The
+  hover readout marks a filled value as interpolated, and the distribution
+  panel says so and shows the filled heights instead of a curve.
+- `count` is never smoothed. The setting is part of the shareable URL
+  (`smooth`, `smoothkernel`).

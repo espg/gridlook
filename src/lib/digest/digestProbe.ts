@@ -26,6 +26,11 @@ export type TDigestProbe = {
   order: number;
   /** Shown until another cell is clicked, not the cell under the cursor. */
   pinned: boolean;
+  /**
+   * The cell has no observations and is drawn with a value filled from its
+   * neighbours: the heights at the percentiles displayed.
+   */
+  interpolated?: { percentile: number; value: number }[];
   strata: {
     name: string;
     /** Null: the cell has no digest. Undefined: it was not read. */

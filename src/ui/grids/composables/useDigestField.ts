@@ -4,7 +4,10 @@ import type * as zarr from "zarrita";
 import { currentLevel } from "@/lib/data/levels.ts";
 import { summedField } from "@/lib/digest/derivedLevel.ts";
 import { digestField, levelSource } from "@/lib/digest/digestField.ts";
-import { digestVariableOf } from "@/lib/digest/digestVariables.ts";
+import {
+  DIGEST_PRODUCTS,
+  digestVariableOf,
+} from "@/lib/digest/digestVariables.ts";
 import type { TSources } from "@/lib/types/GlobeTypes.ts";
 import { useGlobeControlStore } from "@/store/store.ts";
 
@@ -40,11 +43,14 @@ export function useDigestField(options: {
   /**
    * The values of a computed variable over a selection whose last entry is
    * the slice of cells; undefined for a variable that is read as stored.
+   * With `percentile`, the height at that percentile whatever the variable
+   * (one of the two a percentile range is the difference of).
    */
   function fetch(
     selection: (number | zarr.Slice | null)[],
     variable: string,
-    sources: TSources
+    sources: TSources,
+    percentile?: number
   ) {
     const level = currentLevel(sources);
     const source = level.datasources[variable];
@@ -62,8 +68,15 @@ export function useDigestField(options: {
         summedField(reader, from.path(variable), from.group, start, end)
       );
     }
+    const [product, at] =
+      percentile === undefined
+        ? [digest, params()]
+        : [
+            { product: DIGEST_PRODUCTS.PERCENTILE },
+            { ...params(), percentile },
+          ];
     return from.digests.then((reader) =>
-      digestField(reader, from.path(digest.array), digest, params(), start, end)
+      digestField(reader, from.path(digest.array), product, at, start, end)
     );
   }
 

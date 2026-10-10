@@ -248,3 +248,16 @@ it("drops the pinned cell with its panel, and with the dataset", () => {
   expect(store.digestPin).toBeUndefined();
   expect(store.digestProbe).toBeUndefined();
 });
+
+it("keeps the gap-fill kernel to the sizes offered", () => {
+  const store = useGlobeControlStore();
+  expect(store.gapFill).toBe(false);
+  expect(store.gapFillSize).toBe(5);
+  store.setGapFillSize(31);
+  expect(store.gapFillSize).toBe(31);
+  store.setGapFillSize(4);
+  store.setGapFillSize(NaN);
+  expect(store.gapFillSize).toBe(31);
+  store.setGapFill(true);
+  expect(store.gapFill).toBe(true);
+});
