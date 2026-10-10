@@ -1078,7 +1078,9 @@ function removeBackdrop() {
 /** Draw the coarsest level under a level that leaves part of the view empty. */
 function showBackdrop(frame: TBackdropFrame | undefined) {
   const wanted =
-    frame && (gridWindow !== undefined || !isLongitudeGlobal(levelLongitudes))
+    store.levelBackdrop &&
+    frame &&
+    (gridWindow !== undefined || !isLongitudeGlobal(levelLongitudes))
       ? frame
       : undefined;
   if (backdrop?.userData.key === wanted?.key) {

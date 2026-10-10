@@ -1205,7 +1205,10 @@ async function loadBackdrop(
 /** Draw the coarsest level under a level that leaves part of the view empty. */
 function showBackdrop(frame: TBackdropFrame | undefined) {
   const dense = levelCellCount === 12 * unpackGrid().nside ** 2;
-  const wanted = frame && (loadedBlocks || !dense) ? frame : undefined;
+  const wanted =
+    store.levelBackdrop && frame && (loadedBlocks || !dense)
+      ? frame
+      : undefined;
   if (backdropKey === wanted?.key) {
     return;
   }

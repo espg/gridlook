@@ -257,6 +257,9 @@ export const useGlobeControlStore = defineStore("globeControl", {
       // histogram (right for a mean, e.g. elevation) or each level takes its
       // own (right for a sum, e.g. a count, which grows 4x per level)
       levelRangeShared: true,
+      // whether the coarsest level is drawn beneath a level loaded by view;
+      // it is still read for the shared colour range either way
+      levelBackdrop: false,
       // variables derived from a t-digest: the percentile shown, and the
       // two a percentile range is the difference of (0..100)
       digestPercentile: DEFAULT_PERCENTILE as number,
@@ -351,6 +354,9 @@ export const useGlobeControlStore = defineStore("globeControl", {
     },
     setLevelRangeShared(shared: boolean) {
       this.levelRangeShared = shared;
+    },
+    setLevelBackdrop(shown: boolean) {
+      this.levelBackdrop = shown;
     },
     setDigestPercentile(percentile: number) {
       if (Number.isFinite(percentile)) {

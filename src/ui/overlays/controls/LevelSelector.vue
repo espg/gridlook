@@ -41,6 +41,10 @@ function onAutoChange(event: Event) {
   store.setLevelAuto((event.target as HTMLInputElement).checked);
 }
 
+function onBackdropChange(event: Event) {
+  store.setLevelBackdrop((event.target as HTMLInputElement).checked);
+}
+
 function onRangeSharedChange(event: Event) {
   store.setLevelRangeShared((event.target as HTMLInputElement).checked);
 }
@@ -91,6 +95,17 @@ function onRangeSharedChange(event: Event) {
           @change="onRangeSharedChange"
         />
         Keep one colour range across levels
+      </label>
+      <label
+        class="checkbox is-size-7 is-block"
+        title="Fill the area outside the loaded view with the coarsest level"
+      >
+        <input
+          :checked="store.levelBackdrop"
+          type="checkbox"
+          @change="onBackdropChange"
+        />
+        Draw the coarsest level beneath
       </label>
     </div>
   </div>

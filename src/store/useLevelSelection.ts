@@ -9,7 +9,12 @@ import {
   EARTH_RADIUS_METERS,
   getGlobeFitCameraDistance,
 } from "@/lib/camera/cameraSettings.ts";
-import { selectLevel } from "@/lib/data/levels.ts";
+import {
+  currentLevel,
+  DIGEST_PIXELS_PER_CELL,
+  selectLevel,
+} from "@/lib/data/levels.ts";
+import { digestVariableOf } from "@/lib/digest/digestVariables.ts";
 import type { TSources } from "@/lib/types/GlobeTypes.ts";
 
 /**
@@ -19,6 +24,14 @@ import type { TSources } from "@/lib/types/GlobeTypes.ts";
 export const LEVEL_PICK_INTERVAL_MS = 200;
 
 export type TViewportSize = { width: number; height: number };
+
+/** A variable derived from a t-digest is picked at a coarser cell size. */
+function pickOptions(datasources: TSources, varname: string) {
+  const attrs = currentLevel(datasources).datasources[varname]?.attrs;
+  return digestVariableOf(attrs)
+    ? { pixelsPerCell: DIGEST_PIXELS_PER_CELL }
+    : {};
+}
 
 /**
  * Camera-driven level selection for multi-resolution datasets.
@@ -62,7 +75,8 @@ export function useLevelSelection(
       levels.map((level, index) =>
         store.loadsLevelByView(index) ? { ...level, cellCount: 0 } : level
       ),
-      store.selectedLevel
+      store.selectedLevel,
+      pickOptions(datasources.value!, store.varnameSelector)
     );
     store.selectLevel(next, false);
   }
@@ -72,6 +86,7 @@ export function useLevelSelection(
   });
   watch(
     () => [
+      store.varnameSelector,
       store.levelAuto,
       ...(datasources.value?.levels ?? []).map((_, index) =>
         store.loadsLevelByView(index)

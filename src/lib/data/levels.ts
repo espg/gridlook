@@ -45,6 +45,14 @@ export const STREAMLINES_NEED_WHOLE_LEVEL =
 export const DEFAULT_PIXELS_PER_CELL = 16;
 
 /**
+ * The target for a variable derived from a t-digest. A cell with data costs
+ * about 3.6 KB of digest whatever its level (against 4 B for a dense value),
+ * so a view is priced by its cell count: twice the cell size is a quarter of
+ * the bytes.
+ */
+export const DIGEST_PIXELS_PER_CELL = 32;
+
+/**
  * Hysteresis in orders (log2 of cell size, so one order is one unit): another
  * level replaces the active one only when it fits the target better by at
  * least this margin. 0.5 would mean "never switch before the midpoint plus
