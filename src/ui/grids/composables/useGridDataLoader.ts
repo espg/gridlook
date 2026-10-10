@@ -203,6 +203,7 @@ function registerGridDataLoaderWatches(
     options.updateColormap();
   }
   watch(() => options.getDatasources()?.selectedLevel, regrid);
+  watch(() => store.levelRangeShared, regrid);
   async function reloadWindow() {
     if (!options.viewWindowStale?.()) {
       return;

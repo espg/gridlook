@@ -40,6 +40,10 @@ function onLevelChange(event: Event) {
 function onAutoChange(event: Event) {
   store.setLevelAuto((event.target as HTMLInputElement).checked);
 }
+
+function onRangeSharedChange(event: Event) {
+  store.setLevelRangeShared((event.target as HTMLInputElement).checked);
+}
 </script>
 
 <template>
@@ -76,6 +80,17 @@ function onAutoChange(event: Event) {
           @change="onAutoChange"
         />
         Pick the level from the zoom
+      </label>
+      <label
+        class="checkbox is-size-7 is-block"
+        title="Off: each level takes its own data range (sums such as counts grow with the cell size)"
+      >
+        <input
+          :checked="store.levelRangeShared"
+          type="checkbox"
+          @change="onRangeSharedChange"
+        />
+        Keep one colour range across levels
       </label>
     </div>
   </div>
