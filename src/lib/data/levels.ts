@@ -7,10 +7,14 @@ import type { TSourceLevel, TSources } from "@/lib/types/GlobeTypes.ts";
 /**
  * The level every consumer of a dataset reads: `levels[selectedLevel]`, or
  * the first level while nothing has been selected (single-level datasets
- * never select anything, so they keep reading `levels[0]`).
+ * never select anything, so they keep reading `levels[0]`). An index the
+ * list does not have (kept from a dataset with more levels) also reads the
+ * first level, the finest.
  */
 export function currentLevel(datasources: TSources): TSourceLevel {
-  return datasources.levels[datasources.selectedLevel ?? 0];
+  return (
+    datasources.levels[datasources.selectedLevel ?? 0] ?? datasources.levels[0]
+  );
 }
 
 /**

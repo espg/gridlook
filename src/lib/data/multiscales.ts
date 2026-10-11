@@ -195,7 +195,10 @@ function geoZarrEntries(
  *
  * `derived` (the `derived_levels` attribute a hive store view adds) names
  * the orders a viewer computes from the group `dataset`, the leaves',
- * finest first; they are listed after it.
+ * finest first. That group is then their source and no level of its own:
+ * finer than the finest derived level the viewer shows the points
+ * themselves (`POINT_TIER_ORDERS` in `hiveStore.ts`), so the list starts
+ * at the derived levels.
  */
 function zaggEntries(
   multiscale: Record<string, unknown>,
@@ -211,8 +214,10 @@ function zaggEntries(
   const source = isRecord(derived) ? Number(derived.dataset) : NaN;
   const cells =
     isRecord(derived) && Array.isArray(derived.cells) ? derived.cells : [];
+  const base = cellOrder(multiscale.base);
   return [
-    ...zaggEntry(cellOrder(multiscale.base)),
+    // the leaves, unless they are the source of derived levels
+    ...(base === source ? [] : zaggEntry(base)),
     // between the leaves and the first level the store holds
     ...cells.flatMap((order) =>
       zaggEntry(Number(order), {

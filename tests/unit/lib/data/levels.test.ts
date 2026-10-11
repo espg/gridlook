@@ -73,6 +73,13 @@ describe("currentLevel", () => {
       sources.levels[1]
     );
   });
+
+  it("reads the finest level for an index the list does not have", () => {
+    // kept from a list with the leaves on it, or from a longer pyramid
+    expect(currentLevel({ ...sources, selectedLevel: 2 })).toBe(
+      sources.levels[0]
+    );
+  });
 });
 
 describe("groundMetersPerPixel", () => {
@@ -242,7 +249,8 @@ describe("a level derived from the leaves", () => {
     ...healpixLevel(order),
     derived: { dataset: "19", refinement: 19 - order },
   });
-  const ORDERS = [14, 15, 16, 17, 18];
+  // the finest level is derived 17: 18 and the leaves are the point tier's
+  const ORDERS = [14, 15, 16, 17];
 
   it.each(ORDERS)("is never whole-loadable at order %i", (order) => {
     const level = derived(order);
@@ -250,16 +258,44 @@ describe("a level derived from the leaves", () => {
     expect(exceedsCellCap(level)).toBe(true);
     expect(exceedsCellCap(level, DEFAULT_MAX_VIEW_CELLS)).toBe(true);
     // never the backdrop, the one level that is always loaded whole
-    expect(coarsestLevel([healpixLevel(19), level])).toBe(0);
+    expect(coarsestLevel([level, healpixLevel(13)])).toBe(1);
     expect(coarsestLevel([level, derived(order - 1)])).toBeUndefined();
-    expect(coarsestLevel([healpixLevel(19), level, healpixLevel(13)])).toBe(2);
+    expect(coarsestLevel([level, healpixLevel(13), healpixLevel(12)])).toBe(2);
   });
 
   it("is kept out of automatic selection while it would be loaded whole", () => {
-    const levels = [healpixLevel(19), ...ORDERS.map(derived), healpixLevel(8)];
+    const levels = [...ORDERS.map(derived), healpixLevel(8)];
     for (const order of ORDERS) {
-      expect(selectLevel(cameraFor(resolution(order)), levels, 6)).toBe(6);
+      expect(selectLevel(cameraFor(resolution(order)), levels, 4)).toBe(4);
     }
+  });
+});
+
+describe("the finest level of a hive store", () => {
+  const derived = (order: number) => ({
+    ...healpixLevel(order),
+    derived: { dataset: "19", refinement: 19 - order },
+  });
+
+  it("is derived 17, where a very close zoom stays; never the leaves", () => {
+    // the list a hive store gives, finest first, every level loaded by view
+    const orders = [17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4];
+    const levels = orders.map((order) => ({
+      resolution: pickResolution(
+        order > 13 ? derived(order) : healpixLevel(order),
+        DIGEST_PIXELS_PER_CELL
+      ),
+      cellCount: 0,
+    }));
+    const options = { pixelsPerCell: DIGEST_PIXELS_PER_CELL };
+    for (const order of [17, 18, 19, 22]) {
+      const scale = resolution(order) / DIGEST_PIXELS_PER_CELL;
+      expect(selectLevel(scale, levels, 4, options)).toBe(0);
+      expect(selectLevel(scale, levels, 0, options)).toBe(0);
+    }
+    expect(
+      selectLevel(resolution(13) / DIGEST_PIXELS_PER_CELL, levels, 0, options)
+    ).toBe(4);
   });
 
   it("is picked at the digest cell size whatever the variable", () => {

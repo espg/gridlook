@@ -147,7 +147,13 @@ the panel.
 A zagg store holds its leaves (cell order 19 in the stores so far) and then
 levels from the leaf column down (order 13 and coarser). The orders in
 between are not stored. Gridlook lists them as levels of their own, named
-"order 15 (derived)", and computes them in the browser from the leaf chunks:
+"order 15 (derived)", and computes them in the browser from the leaf chunks.
+The two finest orders, 18 and 19, are no level: past derived order 17 the
+viewer is to show the points themselves (`POINT_TIER_ORDERS` in
+`hiveStore.ts`), so order 18 is not derived and the leaves, `/19`, are not in
+the level list. They stay in the hierarchy as the source every derived level
+and the distribution panel read from. The zoom therefore stops at order 17,
+and a level index kept from a longer list falls back to the finest level.
 
 - One chunk of a leaf array holds the 4096 leaf cells below one order-13
   cell, in nested order. Chunk `n` therefore is chunk `n` of every derived
@@ -170,7 +176,9 @@ between are not stored. Gridlook lists them as levels of their own, named
   derived level is picked at 32 pixels per cell for every variable, `count`
   included (a stored level keeps 16 for `count`).
 
-The distribution panel shows the pooled digest of a derived cell.
+The distribution panel shows the pooled digest of a derived cell: the
+derived level names the leaf group it is computed from (`derived.dataset`),
+and the digests are read there whether or not that group is a level.
 
 ## Filling the gaps between tracks
 

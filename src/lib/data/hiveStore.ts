@@ -35,6 +35,8 @@ import { wordToNested } from "@/lib/morton/word.ts";
  * not hold are listed too, as levels without chunks (`derived_levels` in
  * the root attributes): a viewer computes them from the leaf chunks, chunk
  * `n` of a derived level being chunk `n` of the leaves (`derivedLevel.ts`).
+ * The finest `POINT_TIER_ORDERS` orders are not derived: there the viewer
+ * shows the points themselves, and the leaves are only their source.
  *
  * Nothing is listed: the manifest plus the root coverage name every node.
  * The per-cell `morton` coordinate is never read (a windowed leaf has none:
@@ -51,6 +53,14 @@ const COALESCE_SIZE = 32768;
 const INDEX_ENTRY_BYTES = 16;
 const INDEX_CHECKSUM_BYTES = 4;
 const ABSENT = 0xffffffffffffffffn;
+/**
+ * Orders at the fine end that are no level of the viewer: the leaves and
+ * the order above them (19 and 18 in the stores so far). Past the finest
+ * derived level, two orders above the leaves, the viewer shows the points
+ * themselves (gridlook#21); the leaves stay the source of every derived
+ * level and of the digests, and are not listed as a level (`multiscales.ts`).
+ */
+const POINT_TIER_ORDERS = 2;
 
 const CHUNK_KEY = /^\/(\d+)\/([^/]+)\/c\/(\d+)\/(\d+)$/;
 const GROUP_KEY = /^\/(\d+)\/zarr\.json$/;
@@ -457,9 +467,10 @@ async function arrayNames(
 
 /**
  * The levels computed from the leaves: every order the store does not hold
- * from the leaf chunk's (one chunk, one cell) up to the leaves', and only
- * under a stored level, which is what a viewer loads whole. Their arrays
- * are the fields that sum exactly (`count`) and the digest variables.
+ * from the leaf chunk's (one chunk, one cell) up to `POINT_TIER_ORDERS`
+ * below the leaves, and only under a stored level, which is what a viewer
+ * loads whole. Their arrays are the fields that sum exactly (`count`) and
+ * the digest variables.
  */
 async function pooledLevels(
   reader: ReturnType<typeof createHiveReader>,
@@ -480,7 +491,8 @@ async function pooledLevels(
   }
   const held = Math.max(...stored.map(({ cellOrder }) => cellOrder));
   const orders: number[] = [];
-  for (let order = leaf.cellOrder - 1; order >= chunkOrder; order--) {
+  const finest = leaf.cellOrder - POINT_TIER_ORDERS;
+  for (let order = finest; order >= chunkOrder; order--) {
     if (order > held) {
       orders.push(order);
     }
