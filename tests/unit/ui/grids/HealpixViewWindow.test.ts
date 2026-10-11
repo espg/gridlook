@@ -221,6 +221,16 @@ const { useGlobeControlStore } = await import("@/store/store.ts");
 const { default: Healpix } = await import("@/ui/grids/Healpix.vue");
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+/** Wait for a condition, polling; the suite runs many files at once. */
+async function until(condition: () => boolean, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) {
+      throw new Error("timed out waiting for a condition");
+    }
+    await wait(10);
+  }
+}
 
 async function mount(lat: number, lon: number) {
   beforeMount.length = 0;
@@ -419,8 +429,11 @@ it("draws a window as its blocks land, the block under the camera first", async 
   stored.fine = { level: 9, chunk: 256, manual: true };
   stored.coarse = { level: 3 };
   const mounting = mount(11, 31);
+  const fine = () => fetches.filter(({ dataset }) => dataset === "fine");
+  await until(() => fine().length >= 2);
+  // past the progressive draw interval, so the first landing is drawn
   await wait(200);
-  const issued = fetches.filter(({ dataset }) => dataset === "fine");
+  const issued = fine();
   // a few reads in flight, the one under the camera first
   expect(issued.length).toBeGreaterThanOrEqual(2);
   expect(issued.length).toBeLessThanOrEqual(8);
@@ -433,7 +446,7 @@ it("draws a window as its blocks land, the block under the camera first", async 
   // the first block lands: its face is drawn with that block alone
   issued[0].release!();
   issued[0].release = undefined;
-  await wait(50);
+  await until(() => drawnFaces().length === 1);
   expect(drawnFaces()).toHaveLength(1);
   const partial = texels(drawnFaces()[0]);
   expect(partial).toHaveLength(256);
@@ -455,6 +468,7 @@ it("stops reading a window the view has left and draws nothing of it", async () 
   stored.fine = { level: 9, chunk: 256, manual: true };
   stored.coarse = { level: 3 };
   const mounting = mount(11, 31);
+  await until(() => fetches.some(({ dataset }) => dataset === "fine"));
   await wait(100);
   const store = useGlobeControlStore();
   const first = new Set(
@@ -470,7 +484,7 @@ it("stops reading a window the view has left and draws nothing of it", async () 
     centreLat: -41,
     centreLon: 171,
   };
-  await wait(50);
+  await wait(200);
   await release("fine");
   await mounting;
   await release("fine");
