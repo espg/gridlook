@@ -49,6 +49,27 @@ export function coarsestLevel(
   return coarsest;
 }
 
+/**
+ * Indices of the stored levels coarser than `levels[index]`, the finest
+ * first: the ladder a level loaded by view is filled from beneath. A derived
+ * level is skipped: its window reads the same leaf chunks as the level's own
+ * and would show nothing sooner. Empty when a resolution is unknown.
+ */
+export function coarserLevels(
+  levels: readonly Pick<TSourceLevel, "resolution" | "derived">[],
+  index: number
+) {
+  const own = levels[index]?.resolution;
+  if (!(own! > 0) || levels.some((level) => !(level.resolution! > 0))) {
+    return [];
+  }
+  return levels
+    .map((level, at) => ({ level, at }))
+    .filter(({ level }) => !level.derived && level.resolution! > own!)
+    .sort((a, b) => a.level.resolution! - b.level.resolution!)
+    .map(({ at }) => at);
+}
+
 /** Shown in place of streamlines on a level that cannot be loaded whole. */
 export const STREAMLINES_NEED_WHOLE_LEVEL =
   "Streamlines read a whole level, and this one is too large to load whole. Pick a coarser level.";

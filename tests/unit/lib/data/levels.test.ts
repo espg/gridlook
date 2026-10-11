@@ -6,6 +6,7 @@ import {
 } from "@/lib/camera/cameraSettings.ts";
 import {
   cellsInView,
+  coarserLevels,
   coarsestLevel,
   currentLevel,
   DEFAULT_MAX_LEVEL_CELLS,
@@ -123,6 +124,22 @@ describe("groundMetersPerPixel", () => {
       )
     ).toBe(true);
   });
+});
+
+it("lists the stored levels coarser than a level, the finest first", () => {
+  const levels = [
+    { resolution: 100 },
+    { resolution: 800 },
+    { resolution: 200 },
+    { resolution: 400, derived: { dataset: "19", refinement: 2 } },
+  ];
+  // the next coarser stored level first; a derived level is never beneath
+  expect(coarserLevels(levels, 0)).toEqual([2, 1]);
+  expect(coarserLevels(levels, 2)).toEqual([1]);
+  expect(coarserLevels(levels, 3)).toEqual([1]);
+  expect(coarserLevels(levels, 1)).toEqual([]);
+  // nothing to walk without a resolution on every level
+  expect(coarserLevels([{ resolution: 100 }, {}], 0)).toEqual([]);
 });
 
 it("names the coarsest level, when every level states its resolution", () => {
