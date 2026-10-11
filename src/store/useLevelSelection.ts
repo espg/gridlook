@@ -13,10 +13,14 @@ import {
   currentLevel,
   DEFAULT_PIXELS_PER_CELL,
   DIGEST_PIXELS_PER_CELL,
+  finestLevel,
   pickResolution,
   selectLevel,
+  selectPointTier,
 } from "@/lib/data/levels.ts";
 import { digestVariableOf } from "@/lib/digest/digestVariables.ts";
+import { pointTierSource } from "@/lib/points/pointSource.ts";
+import { PROJECTION_TYPES } from "@/lib/projection/projectionUtils.ts";
 import type { TSources } from "@/lib/types/GlobeTypes.ts";
 
 /**
@@ -33,6 +37,41 @@ function pixelsPerCell(datasources: TSources, varname: string) {
   return digestVariableOf(attrs)
     ? DIGEST_PIXELS_PER_CELL
     : DEFAULT_PIXELS_PER_CELL;
+}
+
+/**
+ * The level the point tier is to be drawn over, or undefined for none: the
+ * finest level has a point source under the shown variable, the globe is
+ * drawn (a flat projection has no heights), and its cells are large enough
+ * on screen, with the hysteresis of the tier already on.
+ */
+function pointTierLevel(
+  store: ReturnType<typeof useGlobeControlStore>,
+  levels: TSources["levels"],
+  camera: Parameters<typeof selectPointTier>[0]
+) {
+  const finest = finestLevel(levels);
+  const onGlobe =
+    store.projectionMode === PROJECTION_TYPES.NEARSIDE_PERSPECTIVE;
+  return finest !== undefined &&
+    onGlobe &&
+    pointTierSource(levels[finest], store.varnameSelector) &&
+    selectPointTier(camera, levels[finest].resolution!, store.pointTier)
+    ? finest
+    : undefined;
+}
+
+/** The camera's altitude: the URL's, else the globe's fitted framing. */
+function altitudeMeters(
+  urlAltitude: string | undefined,
+  viewport: TViewportSize
+) {
+  const altitude = Number(urlAltitude);
+  if (Number.isFinite(altitude)) {
+    return altitude;
+  }
+  const aspect = viewport.width / Math.max(viewport.height, 1);
+  return (getGlobeFitCameraDistance(aspect) - 1) * EARTH_RADIUS_METERS;
 }
 
 /**
@@ -53,15 +92,6 @@ export function useLevelSelection(
   const store = useGlobeControlStore();
   const { paramCameraAlt } = storeToRefs(useUrlParameterStore());
 
-  function altitudeMeters(viewport: TViewportSize) {
-    const altitude = Number(paramCameraAlt.value);
-    if (Number.isFinite(altitude)) {
-      return altitude;
-    }
-    const aspect = viewport.width / Math.max(viewport.height, 1);
-    return (getGlobeFitCameraDistance(aspect) - 1) * EARTH_RADIUS_METERS;
-  }
-
   function pickLevel() {
     const levels = datasources.value?.levels;
     if (!levels || levels.length < 2 || !store.levelAuto) {
@@ -69,11 +99,18 @@ export function useLevelSelection(
     }
     const viewport = getViewport();
     const target = pixelsPerCell(datasources.value!, store.varnameSelector);
+    const camera = store.metersPerPixel ?? {
+      altitudeMeters: altitudeMeters(paramCameraAlt.value, viewport),
+      viewportHeightPx: viewport.height,
+    };
+    const points = pointTierLevel(store, levels, camera);
+    if (points !== undefined) {
+      store.selectPointTier(points, false);
+      return;
+    }
+    store.setPointTier(false);
     const next = selectLevel(
-      store.metersPerPixel ?? {
-        altitudeMeters: altitudeMeters(viewport),
-        viewportHeightPx: viewport.height,
-      },
+      camera,
       // no level is too large where the grid loads only the view of it
       levels.map((level, index) => ({
         resolution: pickResolution(level, target),
@@ -92,6 +129,7 @@ export function useLevelSelection(
     () => [
       store.varnameSelector,
       store.levelAuto,
+      store.projectionMode,
       ...(datasources.value?.levels ?? []).map((_, index) =>
         store.loadsLevelByView(index)
       ),

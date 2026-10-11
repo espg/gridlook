@@ -149,9 +149,9 @@ levels from the leaf column down (order 13 and coarser). The orders in
 between are not stored. Gridlook lists them as levels of their own, named
 "order 15 (derived)", and computes them in the browser from the leaf chunks.
 The two finest orders, 18 and 19, are no level: past derived order 17 the
-viewer is to show the points themselves (`POINT_TIER_ORDERS` in
-`hiveStore.ts`), so order 18 is not derived and the leaves, `/19`, are not in
-the level list. They stay in the hierarchy as the source every derived level
+viewer shows the points themselves (`POINT_TIER_ORDERS` in `hiveStore.ts`,
+and "The point tier" below), so order 18 is not derived and the leaves,
+`/19`, are not in the level list. They stay in the hierarchy as the source every derived level
 and the distribution panel read from. The zoom therefore stops at order 17,
 and a level index kept from a longer list falls back to the finest level.
 
@@ -179,6 +179,52 @@ and a level index kept from a longer list falls back to the finest level.
 The distribution panel shows the pooled digest of a derived cell: the
 derived level names the leaf group it is computed from (`derived.dataset`),
 and the digests are read there whether or not that group is a level.
+
+## The point tier
+
+Past derived order 17 the viewer shows the observations themselves: the
+photons of the leaf chunks under the view, each drawn at its height. The
+tier is a mode of the level selector, not a level: the picker shows
+"points (signal)" while it is on, and the order-17 mesh stays drawn beneath
+the cloud. It exists on the globe only; a flat projection stops at the
+finest level.
+
+- **Hand-off.** The tier comes on when a cell of the finest level would span
+  **64 pixels** on screen (`POINT_TIER_PIXELS_PER_CELL`, twice the digest
+  target), and stays on until the cells shrink by the usual 0.35 orders
+  (about 50 px), so a view at the boundary does not flap. It needs a
+  variable derived from a t-digest; under `count` the ladder ends at the
+  finest level. A manual pick of a level turns it off, and "points" can be
+  picked by hand too.
+- **What is drawn.** For each leaf chunk under the view plus a half-view
+  margin (the window a derived level reads, so a view that just left order
+  17 reads nothing new), every centroid of the displayed digest
+  (`h_tdigest_signal`) is one point: its height is the centroid's mean, its
+  place the order-29 cell its located word names (`h_tdigest_signal_locations`,
+  one word per centroid), decoded on the uint32 halves of the word. A lossy
+  centroid (weight above 1, about one cell in 100 000) is one point at its
+  mean, at the centre of its ancestor cell. Noise is not read.
+- **Height.** A point sits at `r = 1 + (h − h_ref) · exaggeration / R` globe
+  radii, with `R` the store's semi-major axis; the reference height is 0 and
+  the exaggeration 1 for now (both are shader uniforms). Positions are kept
+  relative to each chunk's centre so that float32 resolves millimetres; the
+  colour is the height on the current colormap and range.
+- **Budget.** At most `OBSERVATION_POINT_BUDGET` (300 000) points are drawn:
+  over it, every k-th centroid of every chunk is drawn, uniformly and
+  deterministically, never by place. A window is priced before it is read
+  at `OBSERVATION_CHUNK_BYTES` (74 KB) per chunk and cut down around the
+  pivot to `OBSERVATION_FETCH_CAP` (24 MB). Decoded chunks are cached (64 MB)
+  beside the digest chunks they came from. Everything is in
+  `src/lib/points/pointBudget.ts`.
+- **Camera.** On entering, the orbit's target moves from the globe's centre
+  to the ground under the view centre and the camera's up to the local
+  vertical, so the left button pans (the pivot slides along the surface),
+  the right button tilts (from nadir to 85°) and turns about the vertical,
+  and the wheel zooms toward the ground under the cursor, which stays under
+  the cursor. The camera comes no closer than 200 m to the pivot and stays
+  at least 100 m above the surface. Leaving puts the camera back on the globe
+  orbit above the pivot at its altitude.
+- **Panel.** A click pins the order-17 cell's digest, as on level 17.
 
 ## Filling the gaps between tracks
 

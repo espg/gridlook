@@ -15,6 +15,7 @@ import { useDigestField } from "./composables/useDigestField.ts";
 import { useDigestProbe } from "./composables/useDigestProbe.ts";
 import { useGapFill } from "./composables/useGapFill.ts";
 import { useGridDataLoader } from "./composables/useGridDataLoader.ts";
+import { usePointLayer } from "./composables/usePointLayer.ts";
 import { useScalarFieldCache } from "./composables/useScalarFieldCache.ts";
 import { useSharedGridLogic } from "./composables/useSharedGridLogic.ts";
 import { useStreamlineLayer } from "./composables/useStreamlineLayer.ts";
@@ -142,10 +143,12 @@ const {
   onMotionStateChange,
   onColormapChange,
   registerAnimationCallback,
+  registerUpdateLOD,
   canvas,
   box,
   hoveredGeoPoint,
   clickedGeoPoint,
+  pointPivot,
 } = useSharedGridLogic();
 
 const { setHoverLookup, clearHoverLookup } =
@@ -293,6 +296,17 @@ useDigestProbe({
   clickedGeoPoint,
   getInterpolated: gapFill.interpolated,
   filledRevision: gapFill.revision,
+});
+// the point tier: the observations over the finest level (levels.ts)
+usePointLayer({
+  getDatasources: () => props.datasources,
+  getScene,
+  redraw,
+  registerUpdateLOD,
+  onColormapChange,
+  updateColormap,
+  projectionHelper,
+  pointPivot,
 });
 
 function coerceInteger(value: unknown): number | null {

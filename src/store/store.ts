@@ -50,6 +50,22 @@ export type THoveredGridPoint = {
   screenY: number;
 };
 
+/** What the point tier has on screen (usePointLayer.ts), for the selector. */
+export type TPointTierStats = {
+  /** Leaf chunks in the window, and how many have landed. */
+  chunks: number;
+  loaded: number;
+  /** Observations decoded in the window, and drawn after decimation. */
+  photons: number;
+  drawn: number;
+  stride: number;
+  /** Milliseconds from the window's request to its first points, and to all. */
+  firstPointsMs?: number;
+  windowMs?: number;
+  /** Milliseconds spent decoding, over the window. */
+  decodeMs: number;
+};
+
 export const LAYER_KINDS = {
   COASTLINES: "coastlines",
   GRATICULES: "graticules",
@@ -256,6 +272,10 @@ export const useGlobeControlStore = defineStore("globeControl", {
       // whether the camera picks it (a manual pick turns that off)
       selectedLevel: 0 as number,
       levelAuto: true,
+      // the point tier (levels.ts): the observations themselves are drawn
+      // over the finest level, which `selectedLevel` then is
+      pointTier: false,
+      pointTierStats: undefined as TPointTierStats | undefined,
       // whether every level shares the coarsest level's colour range and
       // histogram (right for a mean, e.g. elevation) or each level takes its
       // own (right for a sum, e.g. a count, which grows 4x per level)
@@ -327,6 +347,7 @@ export const useGlobeControlStore = defineStore("globeControl", {
         this.newDatasetSignifier += 1;
       }
       this.resetStreamlineSelection();
+      this.pointTier = false;
       this.digestPin = undefined;
       this.digestProbe = undefined;
       this.volumeSelections = [];
@@ -351,10 +372,22 @@ export const useGlobeControlStore = defineStore("globeControl", {
     selectLevel(index: number, manual = true) {
       if (manual) {
         this.levelAuto = false;
+        this.pointTier = false;
       }
       if (this.selectedLevel !== index) {
         this.selectedLevel = index;
       }
+    },
+    // the points over the finest level, `index`; by hand unless told otherwise
+    selectPointTier(index: number, manual = true) {
+      this.selectLevel(index, manual);
+      this.pointTier = true;
+    },
+    setPointTier(on: boolean) {
+      this.pointTier = on;
+    },
+    setPointTierStats(stats: TPointTierStats | undefined) {
+      this.pointTierStats = stats;
     },
     setLevelAuto(auto: boolean) {
       this.levelAuto = auto;

@@ -38,6 +38,13 @@ import {
   handleKeyDown,
   useSurfaceZoom,
 } from "@/lib/camera/OrbitControlsAddOn.ts";
+import {
+  createPointPivot,
+  pivotNearPlane,
+  surfacePointNearRay,
+  wheelDollyScale,
+  type TPointPivot,
+} from "@/lib/camera/pointPivot.ts";
 import { getRegionalCameraPosition } from "@/lib/camera/regionalCamera.ts";
 import {
   getDistanceScale,
@@ -108,6 +115,12 @@ export function useGridScene(options: UseGridSceneOptions) {
   let camera: THREE.PerspectiveCamera | undefined = undefined;
   let renderer: THREE.WebGLRenderer | undefined = undefined;
   let orbitControls: OrbitControls | undefined = undefined;
+  // the point tier's camera: a pivot on the ground (pointPivot.ts), wanted
+  // by the point layer and applied once the controls exist and the globe is
+  // drawn
+  let pivotControls: TPointPivot | undefined = undefined;
+  let pivotWanted = false;
+  const pivotGround = shallowRef<{ lat: number; lon: number } | null>(null);
   let updateLOD: (() => void) | undefined = undefined;
   let baseSurface: THREE.Mesh | undefined = undefined;
   let pickSurface: THREE.Mesh | undefined = undefined;
@@ -231,7 +244,10 @@ export function useGridScene(options: UseGridSceneOptions) {
       const altitude = isFlat
         ? camera.position.z
         : camera.position.length() - 1;
-      const near = Math.min(isFlat ? 0.005 : 0.1, altitude / 2);
+      // on the pivot camera the cloud reaches up to the camera
+      const near = pivotControls?.active
+        ? pivotNearPlane(altitude)
+        : Math.min(isFlat ? 0.005 : 0.1, altitude / 2);
       if (camera.near !== near) {
         camera.near = near;
         camera.updateProjectionMatrix();
@@ -278,10 +294,59 @@ export function useGridScene(options: UseGridSceneOptions) {
       if (scale !== null) {
         store.metersPerPixel = scale;
       }
+      refreshPivotGround();
     },
     VIEW_FOOTPRINT_INTERVAL_MS,
     true
   );
+
+  function refreshPivotGround() {
+    const target = orbitControls?.target;
+    const next =
+      pivotControls?.active && target
+        ? ProjectionHelper.cartesianToLatLon(target.x, target.y, target.z)
+        : null;
+    if (JSON.stringify(next) !== JSON.stringify(pivotGround.value)) {
+      pivotGround.value = next;
+    }
+  }
+
+  /** Enter or leave the pivot camera as wanted, on the globe only. */
+  function applyPointPivot() {
+    const cam = camera;
+    if (!cam || !pivotControls) {
+      return;
+    }
+    const wanted = pivotWanted && !projectionHelper.value.isFlat;
+    if (wanted && !pivotControls.active) {
+      const forward = cam.getWorldDirection(new THREE.Vector3());
+      pivotControls.enter(surfacePointNearRay(cam.position, forward));
+    } else if (!wanted && pivotControls.active) {
+      pivotControls.leave();
+      syncProjectionCenterFromCamera(cam);
+      cameraState.encodeCameraToURL(cam, false);
+    } else {
+      return;
+    }
+    refreshPivotGround();
+    redraw();
+  }
+
+  const pointPivot = {
+    enter() {
+      pivotWanted = true;
+      applyPointPivot();
+    },
+    leave() {
+      pivotWanted = false;
+      applyPointPivot();
+    },
+    /** The pivot's place while the camera is on it, a few times a second. */
+    ground: pivotGround,
+    /** The camera's distance to the pivot, scene units; undefined off it. */
+    distance: () =>
+      pivotControls?.active ? pivotControls.pivotDistance() : undefined,
+  };
 
   function refreshDistanceScale() {
     store.distanceScale =
@@ -832,6 +897,8 @@ export function useGridScene(options: UseGridSceneOptions) {
       return;
     }
 
+    // the globe orbit is configured from its own settings
+    pivotControls?.leave();
     if (projectionHelper.value.isFlat) {
       configureFlatProjectionCamera(cam, controls);
       controls.autoRotate = false;
@@ -842,6 +909,7 @@ export function useGridScene(options: UseGridSceneOptions) {
 
     applyCameraTarget(cam, controls);
     syncCameraStateWithUrl(cam, controls);
+    applyPointPivot();
 
     // In display mode, disable all direct interaction after camera is set up
     if (isDisplayMode.value) {
@@ -930,7 +998,12 @@ export function useGridScene(options: UseGridSceneOptions) {
     camera.lookAt(center);
 
     orbitControls = new OrbitControls(camera, renderer.domElement);
-    useSurfaceZoom(orbitControls, () => projectionHelper.value.isFlat);
+    // the pivot wraps first: the surface zoom stands aside while it is on
+    pivotControls = createPointPivot(orbitControls);
+    useSurfaceZoom(
+      orbitControls,
+      () => projectionHelper.value.isFlat || pivotControls!.active
+    );
     orbitControls.minDistance = GLOBE_MIN_CAMERA_DISTANCE;
     orbitControls.enablePan = false;
 
@@ -1106,7 +1179,12 @@ export function useGridScene(options: UseGridSceneOptions) {
   }
 
   function updateRotationSpeed() {
-    if (projectionHelper.value.isFlat || !orbitControls || !camera) {
+    if (
+      projectionHelper.value.isFlat ||
+      pivotControls?.active ||
+      !orbitControls ||
+      !camera
+    ) {
       return;
     }
     // Normalize by the visible span so navigation sensitivity remains tied to
@@ -1208,6 +1286,23 @@ export function useGridScene(options: UseGridSceneOptions) {
     setMotionState(true);
     debouncedEndWheelInteraction();
     animationLoop();
+  }
+
+  // On the pivot camera the wheel zooms toward the ground under the cursor;
+  // OrbitControls' own zoom is off there.
+  function onPivotWheel(event: WheelEvent) {
+    const rect = canvas.value?.getBoundingClientRect();
+    if (!pivotControls?.active || !orbitControls || !rect) {
+      return;
+    }
+    event.preventDefault();
+    pivotControls.zoom(
+      wheelDollyScale(event, orbitControls.zoomSpeed),
+      new THREE.Vector2(
+        ((event.clientX - rect.left) / rect.width) * 2 - 1,
+        -((event.clientY - rect.top) / rect.height) * 2 + 1
+      )
+    );
   }
 
   function updateHoverPosition(clientX: number, clientY: number) {
@@ -1320,6 +1415,7 @@ export function useGridScene(options: UseGridSceneOptions) {
     useEventListener(canvas.value, "wheel", onWheelInteraction, {
       passive: true,
     });
+    useEventListener(canvas.value, "wheel", onPivotWheel, { passive: false });
 
     useEventListener(canvas.value, "mouseup", onInteractionEnd, {
       passive: true,
@@ -1428,7 +1524,12 @@ export function useGridScene(options: UseGridSceneOptions) {
 
       if (navigationKeys.includes(e.key)) {
         onInteractionStart();
-        handleKeyDown(e, getOrbitControls()!, projectionHelper.value.isFlat);
+        // on the pivot camera the arrows pan and +/- dolly, as on a flat map
+        handleKeyDown(
+          e,
+          getOrbitControls()!,
+          projectionHelper.value.isFlat || Boolean(pivotControls?.active)
+        );
         onInteractionEnd();
       }
     });
@@ -1495,7 +1596,12 @@ export function useGridScene(options: UseGridSceneOptions) {
     () => projectionCenter.value,
     () => {
       initialRegionalFitPending = false;
-      if (projectionHelper.value.isFlat || updatingProjectionCenterFromCamera) {
+      if (
+        projectionHelper.value.isFlat ||
+        updatingProjectionCenterFromCamera ||
+        // the pivot camera owns the view; its centre follows the camera
+        pivotControls?.active
+      ) {
         return;
       }
       const cam = getCamera();
@@ -1583,5 +1689,6 @@ export function useGridScene(options: UseGridSceneOptions) {
     configureCameraForProjection,
     hoveredGeoPoint,
     clickedGeoPoint,
+    pointPivot,
   };
 }

@@ -94,7 +94,14 @@ vi.mock("@/ui/grids/composables/useGridScene.ts", async () => {
       getRenderer: () => undefined,
       redraw: vi.fn(),
       fitCameraToDataset: vi.fn(),
+      registerUpdateLOD: vi.fn(),
       hoveredGeoPoint: ref(null),
+      pointPivot: {
+        enter: vi.fn(),
+        leave: vi.fn(),
+        ground: ref(null),
+        distance: () => undefined,
+      },
     }),
   };
 });
