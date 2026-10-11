@@ -44,11 +44,19 @@ import {
   createVectorMagnitudeData,
   type TVectorMagnitudeData,
 } from "@/lib/data/vectorMagnitude.ts";
+import type { TAxisRange } from "@/lib/data/viewWindow.ts";
 import { ZarrDataManager } from "@/lib/data/ZarrDataManager.ts";
 import {
   getGridVariableData,
   terminateGridDataWorker,
 } from "@/lib/grids/gridDataWorkerClient.ts";
+import {
+  createFaceAssembly,
+  fetchInOrder,
+  orderedBlockRanges,
+  type TBlockRange,
+  type TRangeCells,
+} from "@/lib/grids/healpixBlockFetch.ts";
 import {
   HEALPIX_NUMCHUNKS,
   buildHealpixRegionCoordinates,
@@ -59,9 +67,10 @@ import {
   type THealpixDataRect,
 } from "@/lib/grids/healpixCalculations.ts";
 import {
+  healpixBlockDepth,
   healpixBlockLevel,
-  healpixBlockRanges,
   healpixViewBlocks,
+  viewWindowMargin,
 } from "@/lib/grids/healpixWindow.ts";
 import {
   buildHealpixFace,
@@ -170,15 +179,16 @@ let cachedStreamlineKey: string | undefined;
 
 let disposed = false;
 
-// A view window reaches this fraction of the view's size past every edge.
-const VIEW_WINDOW_MARGIN = 0.5;
+// A face loaded by view is redrawn with what has landed this often at most.
+const PROGRESSIVE_DRAW_MS = 150;
 // The level as stored: how many cells, and whether it can be loaded by view
 // (nested, and either dense or with an ascending `cell` coordinate).
 let levelCellCount = 0;
 let levelWindowable = false;
-// A level derived from leaf chunks is windowed by chunk: the orders between
-// its cells and a chunk's. Undefined for a stored level.
-let chunkDepth: number | undefined;
+// The orders between the level's cells and the blocks of its view window
+// (`healpixBlockDepth`), and the cells of one of its chunks.
+let blockDepth: number | undefined;
+let levelChunkCells = Infinity;
 let sortedCells: ReturnType<typeof createSortedCells> | undefined;
 // The coordinate reader of a sparse level, kept while the level stays the
 // same so that its chunks are read once.
@@ -508,17 +518,17 @@ function viewBlocks(margin: number) {
   const grid = unpackGrid();
   const maxBlocks = Math.floor(
     DEFAULT_MAX_VIEW_CELLS /
-      4 ** (grid.level - healpixBlockLevel(grid.level, chunkDepth))
+      4 ** (grid.level - healpixBlockLevel(grid.level, blockDepth))
   );
   return store.viewFootprint
     ? healpixViewBlocks(
         grid,
         store.viewFootprint,
         margin,
-        chunkDepth === undefined
-          ? maxBlocks
-          : Math.min(maxBlocks, DEFAULT_MAX_VIEW_CHUNKS),
-        chunkDepth
+        currentLevel(props.datasources!).derived
+          ? Math.min(maxBlocks, DEFAULT_MAX_VIEW_CHUNKS)
+          : maxBlocks,
+        blockDepth
       )
     : [];
 }
@@ -615,9 +625,22 @@ async function prepareLevel() {
   levelCellCount = cellCount;
   levelWindowable = windowable;
   sortedCells = cells;
-  const derived = currentLevel(sources).derived;
-  chunkDepth = derived && Math.log2(datavar.chunks.at(-1)!) / 2;
-  loadedBlocks = loadsByView() ? viewBlocks(VIEW_WINDOW_MARGIN) : undefined;
+  prepareWindow(datavar, sources);
+}
+
+/** Switch to the blocks in view of the level just prepared, if it is windowed. */
+function prepareWindow(
+  datavar: zarr.Array<zarr.DataType, zarr.AsyncReadable>,
+  sources: TSources
+) {
+  levelChunkCells = datavar.chunks.at(-1)!;
+  blockDepth = healpixBlockDepth(
+    levelChunkCells,
+    currentLevel(sources).derived !== undefined
+  );
+  loadedBlocks = loadsByView()
+    ? viewBlocks(viewWindowMargin(datavar.attrs))
+    : undefined;
 }
 
 /** The stored cells with ids in a nested range, and their values. */
@@ -649,36 +672,89 @@ async function fetchCellRange(
   return { data: castDataVarToFloat32(values), cells };
 }
 
-/** The cells of one face that the loaded blocks hold, and their values. */
-async function fetchFaceBlocks(
-  faceIndex: number,
-  grid: healpixGeo.Grid,
+/** The cells of some ranges of the window, in ascending order. */
+async function readRanges(
+  ranges: { start: number; end: number }[],
   indices: (number | zarr.Slice | null)[],
   percentile?: number
 ) {
-  const blockLevel = healpixBlockLevel(grid.level, chunkDepth);
-  const ranges = healpixBlockRanges(
-    loadedBlocks!.filter(
-      (block) => Math.floor(block / 4 ** blockLevel) === faceIndex
-    ),
-    4 ** (grid.level - blockLevel)
+  const assembly = createFaceAssembly();
+  await Promise.all(
+    ranges.map(async (range) =>
+      assembly.add(range, await fetchCellRange(range, indices, percentile))
+    )
   );
-  const parts = await Promise.all(
-    ranges.map((range) => fetchCellRange(range, indices, percentile))
+  return assembly.face();
+}
+
+/**
+ * The cell ranges of the loaded blocks, those under the camera first, and
+ * how many each face has.
+ */
+function windowRanges(grid: healpixGeo.Grid) {
+  const blockLevel = healpixBlockLevel(grid.level, blockDepth);
+  using blockGrid = grid.replace({ level: blockLevel, scheme: "nested" });
+  const centre = store.viewFootprint ?? { centreLon: 0, centreLat: 0 };
+  const ranges = orderedBlockRanges(
+    blockGrid,
+    loadedBlocks!,
+    4 ** (grid.level - blockLevel),
+    levelChunkCells,
+    centre.centreLon,
+    centre.centreLat
   );
-  let length = 0;
-  for (const part of parts) {
-    length += part.data.length;
+  const perFace = new Map<number, number>();
+  for (const { face } of ranges) {
+    perFace.set(face, (perFace.get(face) ?? 0) + 1);
   }
-  const data = new Float32Array(length);
-  const cells: number[] = [];
-  for (const part of parts) {
-    data.set(part.data, cells.length);
-    for (const cell of part.cells) {
-      cells.push(cell);
+  return { ranges, perFace };
+}
+
+type TWindowRead = {
+  landings: ReturnType<typeof fetchInOrder<TBlockRange, TRangeCells>>;
+  assemblies: Map<number, ReturnType<typeof createFaceAssembly>>;
+  perFace: Map<number, number>;
+};
+
+/**
+ * The cells of one face of the window, drawn with what has landed every
+ * `PROGRESSIVE_DRAW_MS` until the whole face is in. Ranges of other faces
+ * that land meanwhile wait in their assemblies for their turn.
+ */
+async function readFaceProgressively(
+  faceIndex: number,
+  read: TWindowRead,
+  draw: (face: TRangeCells & { ranges: TAxisRange[] }) => Promise<void>,
+  isCurrent: () => boolean
+) {
+  const assemblyOf = (face: number) => {
+    let assembly = read.assemblies.get(face);
+    if (!assembly) {
+      assembly = createFaceAssembly();
+      read.assemblies.set(face, assembly);
+    }
+    return assembly;
+  };
+  const assembly = assemblyOf(faceIndex);
+  const expected = read.perFace.get(faceIndex) ?? 0;
+  let drawnAt = Date.now();
+  while (assembly.count < expected) {
+    const landing = await read.landings.next();
+    if (!landing) {
+      break;
+    }
+    assemblyOf(landing.item.face).add(landing.item, landing.result);
+    if (
+      landing.item.face === faceIndex &&
+      assembly.count < expected &&
+      Date.now() - drawnAt >= PROGRESSIVE_DRAW_MS &&
+      isCurrent()
+    ) {
+      await draw(assembly.face());
+      drawnAt = Date.now();
     }
   }
-  return { data, cells };
+  return assembly.face();
 }
 
 function fetchHealpixVariableData(
@@ -1133,11 +1209,42 @@ async function processHealpixChunks(
     projectionType: helper.type,
     projectionCenter: { lat: helper.center.lat, lon: helper.center.lon },
   };
+  // Streamlines want the complete replacement; a level or window swap
+  // still shows the new window as it lands.
+  const deferDisplayWhole = deferDisplay && store.isStreamlineLayerEnabled();
   if (!deferDisplay) {
     clearHoverLookup();
   }
-  // Read one face at a time; with streamlines, stage the complete replacement.
-  for (let faceIndex = 0; faceIndex < HEALPIX_NUMCHUNKS; faceIndex++) {
+  // A window is read nearest the camera first and drawn as it lands, the
+  // face under the camera first; with streamlines, the complete replacement
+  // is staged.
+  const viewWindow = byView ? windowRanges(grid) : undefined;
+  const read: TWindowRead | undefined = viewWindow && {
+    landings: fetchInOrder(
+      viewWindow.ranges,
+      (range) => fetchCellRange(range, indices),
+      { isCurrent }
+    ),
+    assemblies: new Map(),
+    perFace: viewWindow.perFace,
+  };
+  const faces = [...(viewWindow?.perFace.keys() ?? [])];
+  for (let face = 0; face < HEALPIX_NUMCHUNKS; face++) {
+    if (!faces.includes(face)) {
+      faces.push(face);
+    }
+  }
+  const shownFace = async (
+    faceIndex: number,
+    face: { data: Float32Array; cells?: number[] },
+    readPercentile: (percentile: number) => Promise<Float32Array>
+  ) =>
+    // the backdrop is drawn as read
+    sources === props.datasources
+      ? await gapFill.fill(faceIndex, grid.nside, face, readPercentile)
+      : { data: face.data, histogramSummary: undefined };
+  // Read one face at a time: the face worker runs a single build at a time.
+  for (const faceIndex of faces) {
     if (disposed || !isCurrent()) {
       return;
     }
@@ -1145,8 +1252,12 @@ async function processHealpixChunks(
     const selection = indices.slice();
     selection[selection.length - 1] = zarr.slice(range.start, range.end);
     const readFace = async (percentile?: number) =>
-      byView
-        ? await fetchFaceBlocks(faceIndex, grid, indices, percentile)
+      read
+        ? await readRanges(
+            viewWindow!.ranges.filter((entry) => entry.face === faceIndex),
+            indices,
+            percentile
+          )
         : {
             data:
               range.start === range.end
@@ -1161,24 +1272,45 @@ async function processHealpixChunks(
                   ),
             cells: range.cells,
           };
-    const face = await readFace();
-    // the backdrop is drawn as read
-    const shown =
-      sources === props.datasources
-        ? await gapFill.fill(
-            faceIndex,
-            grid.nside,
-            face,
-            async (percentile) => (await readFace(percentile)).data
-          )
-        : { data: face.data, histogramSummary: undefined };
+    const drawPartial = async (
+      partial: TRangeCells & { ranges: TAxisRange[] }
+    ) => {
+      const shown = await shownFace(
+        faceIndex,
+        partial,
+        async (percentile) =>
+          (await readRanges(partial.ranges, indices, percentile)).data
+      );
+      const batch = await buildHealpixFace({
+        ...options,
+        faceIndex,
+        cells: partial.cells,
+        data: shown.data,
+      });
+      if (!disposed && isCurrent()) {
+        updateHealpixBatch(batch);
+        drawOverBackdrop();
+      }
+    };
+    const face =
+      read && !deferDisplayWhole
+        ? await readFaceProgressively(faceIndex, read, drawPartial, isCurrent)
+        : await readFace();
+    if (disposed || !isCurrent()) {
+      return;
+    }
+    const shown = await shownFace(
+      faceIndex,
+      face,
+      async (percentile) => (await readFace(percentile)).data
+    );
     if (disposed || !isCurrent()) {
       return;
     }
     const batch = await buildHealpixFace({
       ...options,
       faceIndex,
-      ...face,
+      cells: face.cells,
       data: shown.data,
     });
     // filled cells are drawn, not counted
@@ -1196,7 +1328,9 @@ async function processHealpixChunks(
     if (!isCurrent()) {
       return;
     }
-    if (deferDisplay) {
+    // a face drawn as it landed is complete now; one with no cells in the
+    // window goes with the others
+    if (deferDisplay && (deferDisplayWhole || !read || batch.width === 0)) {
       batches.push(batch);
     } else {
       updateHealpixBatch(batch);

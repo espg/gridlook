@@ -66,18 +66,32 @@ mesh first and are blank while the next level loads.
 Regular lat/lon grids (one-dimensional `lat` and `lon` axes, not rotated or
 projected) and nested HEALPix grids do not fetch a large level whole. A level
 with more than **12 · 4^8 ≈ 786 000 cells** is loaded as the part the camera
-sees plus a margin of half the view on every side:
+sees plus a margin of half the view on every side (2.25 times the visible
+area). A variable derived from a t-digest, whose cells cost kilobytes, takes
+a quarter of the view instead (1.56 times the visible area, about 30% fewer
+bytes); `count` and the other stored variables keep the half:
 
 - **Regular lat/lon:** an index window on both axes, requested as a slice.
   Zarr fetches only the chunks the slice touches. A window across the seam of
   a global longitude axis is fetched as two slices and stitched; around a
   pole the window takes every longitude and reads every n-th column.
-- **HEALPix:** blocks of 4^6 cells, six orders above the level, which are
-  contiguous in nested order and a square on their face. A dense level reads
-  them by index. A level with a `cell` coordinate must store it in ascending
-  nested order; the coordinate is then searched chunk by chunk and never read
-  whole. Every chunk is checked as it is read, and a coordinate found out of
-  order makes the level load whole.
+- **HEALPix:** blocks of at most 4^6 cells, six orders above the level,
+  which are contiguous in nested order and a square on their face. A block
+  is never larger than a chunk that is itself a square of cells (a zagg
+  level's 256-cell chunks give 256-cell blocks, four orders up), so a window
+  reads only the chunks it touches. A dense level reads them by index. A
+  level with a `cell` coordinate must store it in ascending nested order; the
+  coordinate is then searched chunk by chunk and never read whole. Every
+  chunk is checked as it is read, and a coordinate found out of order makes
+  the level load whole.
+
+  The blocks of a window are read nearest the point below the camera first,
+  a few at a time, and each face is drawn again with the blocks landed so
+  far every 150 ms, so the cells under the camera show while the margin is
+  still loading. A cell not yet landed is blank, as a cell outside the
+  window is; the colour range, the histogram and the hover readout follow
+  once the window is in. A level or window change while a window loads
+  stops its reads and draws nothing more of it.
 
 The window is reloaded in place once the view leaves it; moving inside it
 fetches nothing. While the camera keeps moving, a window that is already
@@ -130,9 +144,10 @@ gives. The percentiles are part of the shareable URL (`percentile`,
 
 Such a variable is loaded like any other, by level and by view, but a cell's
 digest is a few kilobytes where a stored value is a few bytes: a view reads
-tens of megabytes. Decoded digests are kept in memory (up to 256 MB, least
-recently used first out), so moving a percentile slider recomputes the field
-without reading anything.
+megabytes, so its window takes a quarter-view margin where a stored variable
+takes half. Decoded digests are kept in memory (up to 256 MB, least recently
+used first out), so moving a percentile slider recomputes the field without
+reading anything.
 
 Clicking a cell pins it in the **Height distribution** panel: the photons per
 metre of height of the signal and, muted, of the noise, with the selected
@@ -203,7 +218,8 @@ derived level (it stays in the URL either way).
   cells (0.33 to 5).
 - It runs on the (x, y) grid of each HEALPix face over the cells loaded. A
   cell is not filled from across a face boundary, nor from cells outside the
-  loaded window.
+  loaded window. While a window loads, the face is filled over the cells
+  landed so far, and once more when it is in.
 - The colour range and the histogram stay those of the values observed. The
   hover readout marks a filled value as interpolated, and the distribution
   panel says so and shows the filled heights instead of a curve.

@@ -3,9 +3,13 @@ import { expect, it } from "vitest";
 
 import "@/utils/disposablePolyfill.ts";
 import {
+  DIGEST_WINDOW_MARGIN,
+  VIEW_WINDOW_MARGIN,
+  healpixBlockDepth,
   healpixBlockLevel,
   healpixBlockRanges,
   healpixViewBlocks,
+  viewWindowMargin,
 } from "@/lib/grids/healpixWindow.ts";
 import { createSortedCells } from "@/lib/grids/sortedCells.ts";
 
@@ -118,4 +122,36 @@ it("finds a coordinate out of order in the chunks a search reads", async () => {
   expect(await cells.isAscending()).toBe(true);
   await expect(cells.lowerBound(200)).rejects.toThrow(/ascending/);
   expect(await cells.isAscending()).toBe(false);
+});
+
+it("gives a digest-derived variable a quarter-view margin", () => {
+  expect(viewWindowMargin({ units: "m" })).toBe(VIEW_WINDOW_MARGIN);
+  expect(viewWindowMargin(undefined)).toBe(0.5);
+  expect(
+    viewWindowMargin({
+      digest: { array: "h_tdigest_signal", product: "percentile" },
+    })
+  ).toBe(DIGEST_WINDOW_MARGIN);
+  expect(DIGEST_WINDOW_MARGIN).toBe(0.25);
+});
+
+it("makes a block no larger than a chunk that is a square of cells", () => {
+  // 256-cell chunks: blocks of 256 cells, four orders up
+  expect(healpixBlockDepth(256)).toBe(4);
+  // large chunks keep the 4^6 block
+  expect(healpixBlockDepth(65536)).toBe(6);
+  // a chunk that is no square keeps it too
+  expect(healpixBlockDepth(1000)).toBe(6);
+  // a derived level is windowed by chunk, whatever its size
+  expect(healpixBlockDepth(16, true)).toBe(2);
+  expect(healpixBlockDepth(16384, true)).toBe(7);
+});
+
+it("never merges blocks across a chunk boundary", () => {
+  // blocks of 4096 cells in chunks of 8192: pairs at most
+  expect(healpixBlockRanges([3, 4, 5, 6, 7], 4096, 8192)).toEqual([
+    { start: 3 * 4096, end: 4 * 4096 },
+    { start: 4 * 4096, end: 6 * 4096 },
+    { start: 6 * 4096, end: 8 * 4096 },
+  ]);
 });

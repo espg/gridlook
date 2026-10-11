@@ -1,18 +1,51 @@
 import type { Grid } from "healpix-geo";
 
 import type { TAxisRange } from "@/lib/data/viewWindow.ts";
+import { digestVariableOf } from "@/lib/digest/digestVariables.ts";
 import type { TViewFootprint } from "@/lib/projection/viewFootprint.ts";
 
 /**
  * A view window of a nested HEALPix level is made of blocks: the cells below
- * one cell this many orders up. A block is 4^6 = 4096 cells, contiguous in
- * nested order and a square on its face.
+ * one cell this many orders up. A block is at most 4^6 = 4096 cells,
+ * contiguous in nested order and a square on its face.
  */
-// ponytail: a fixed block size for stored levels. Derive it from the chunk
-// length if stores with much larger chunks make single blocks wasteful. A
-// level derived from leaf chunks passes its own `depth`: one block, one
-// chunk.
 const HEALPIX_BLOCK_DEPTH = 6;
+
+/**
+ * A view window reaches this fraction of the view's size past every edge,
+ * so that a small pan fetches nothing: 2.25 times the visible area.
+ */
+export const VIEW_WINDOW_MARGIN = 0.5;
+/**
+ * The margin of a variable derived from a t-digest, whose cells cost a few
+ * kilobytes each: a quarter of the view, 1.56 times the visible area, about
+ * 30% fewer bytes than the half-view margin.
+ */
+export const DIGEST_WINDOW_MARGIN = 0.25;
+
+/** The window margin of a variable, from its attributes. */
+export function viewWindowMargin(attributes: unknown) {
+  return digestVariableOf(attributes)
+    ? DIGEST_WINDOW_MARGIN
+    : VIEW_WINDOW_MARGIN;
+}
+
+/**
+ * Orders between a level's cells and its blocks. A block is never larger
+ * than a chunk when the chunk is a square of cells (a power of four): a
+ * window then reads only the chunks it touches, and each chunk is read as
+ * one block. A level derived from leaf chunks is windowed by chunk whatever
+ * the chunk's size: one block, one chunk.
+ */
+export function healpixBlockDepth(chunkCells: number, derived = false) {
+  const orders = Math.log2(chunkCells) / 2;
+  if (derived) {
+    return orders;
+  }
+  return Number.isInteger(orders)
+    ? Math.min(orders, HEALPIX_BLOCK_DEPTH)
+    : HEALPIX_BLOCK_DEPTH;
+}
 
 // side of one of the 12 base faces, sqrt(4π / 12) in degrees
 const FACE_SIDE_DEGREES = 58.63;
@@ -27,13 +60,12 @@ export function healpixBlockLevel(level: number, depth = HEALPIX_BLOCK_DEPTH) {
   return level > depth ? level - depth : 0;
 }
 
-/** Keep the `count` cells of `blockGrid` nearest to a point. */
-function nearestBlocks(
+/** The cells of `blockGrid`, the nearest to a point first. */
+export function blocksByDistance(
   blockGrid: Grid,
   blocks: number[],
   lon: number,
-  lat: number,
-  count: number
+  lat: number
 ) {
   const centres = blockGrid.healpixToLonLat(
     BigUint64Array.from(blocks, (block) => BigInt(block))
@@ -50,8 +82,18 @@ function nearestBlocks(
   return blocks
     .map((block, index) => ({ block, index }))
     .sort((a, b) => distance[a.index] - distance[b.index])
-    .slice(0, count)
     .map(({ block }) => block);
+}
+
+/** Keep the `count` cells of `blockGrid` nearest to a point. */
+function nearestBlocks(
+  blockGrid: Grid,
+  blocks: number[],
+  lon: number,
+  lat: number,
+  count: number
+) {
+  return blocksByDistance(blockGrid, blocks, lon, lat).slice(0, count);
 }
 
 /**
@@ -123,12 +165,25 @@ export function healpixViewBlocks(
   return blocks.sort((a, b) => a - b);
 }
 
-/** Nested cell ranges of ascending block ids, runs of neighbours merged. */
-export function healpixBlockRanges(blocks: number[], cellsPerBlock: number) {
+/**
+ * Nested cell ranges of ascending block ids, runs of neighbours merged. A
+ * run never crosses into another chunk of `chunkCells`: each range is read
+ * on its own, and a chunk is then read once.
+ */
+export function healpixBlockRanges(
+  blocks: number[],
+  cellsPerBlock: number,
+  chunkCells = Infinity
+) {
   const ranges: TAxisRange[] = [];
   for (const block of blocks) {
     const last = ranges[ranges.length - 1];
-    if (last && last.end === block * cellsPerBlock) {
+    const start = block * cellsPerBlock;
+    if (
+      last &&
+      last.end === start &&
+      Math.floor(last.start / chunkCells) === Math.floor(start / chunkCells)
+    ) {
       last.end += cellsPerBlock;
     } else {
       ranges.push({

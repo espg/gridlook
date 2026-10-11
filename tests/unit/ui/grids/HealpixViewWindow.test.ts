@@ -16,6 +16,10 @@ type TStoredLevel = {
   cells?: number[];
   // a level derived from the chunks of finer cells: its cells per chunk
   derivedChunk?: number;
+  // a stored level's cells per chunk (65536 unless given)
+  chunk?: number;
+  // reads land when the test releases them
+  manual?: boolean;
 };
 type THoverLookup = (
   lat: number,
@@ -31,6 +35,7 @@ const { beforeMount, scene, hover, fetches, stored } = vi.hoisted(() => ({
     variable: string;
     start: number;
     stop: number;
+    release?: () => void;
   }[],
   // dataset name -> its order, and the cell ids it stores when it is sparse
   stored: {} as Record<string, TStoredLevel>,
@@ -58,7 +63,7 @@ function describeArray({ dataset }: TSource, variable: string) {
   }
   return {
     shape: [3, cellCount(level)],
-    chunks: [1, level.derivedChunk ?? 65536],
+    chunks: [1, level.derivedChunk ?? level.chunk ?? 65536],
     attrs: {},
   };
 }
@@ -141,8 +146,20 @@ vi.mock("@/lib/grids/gridDataWorkerClient.ts", () => ({
     const slice = request.selection.at(-1);
     const start = slice?.start ?? 0;
     const stop = Math.min(slice?.stop ?? cellCount(level), cellCount(level));
-    fetches.push({ dataset, variable: request.variable, start, stop });
-    await new Promise((resolve) => setTimeout(resolve, 1));
+    const fetch: (typeof fetches)[number] = {
+      dataset,
+      variable: request.variable,
+      start,
+      stop,
+    };
+    fetches.push(fetch);
+    await new Promise<void>((resolve) => {
+      if (level.manual) {
+        fetch.release = resolve;
+      } else {
+        setTimeout(resolve, 1);
+      }
+    });
     const id = (index: number) => level.cells?.[index] ?? index;
     return request.variable === "cell"
       ? Float64Array.from({ length: stop - start }, (_, i) => id(start + i))
@@ -365,4 +382,110 @@ it("loads a level with an unsorted cell coordinate whole", async () => {
   expect(store.wholeLevels).toEqual([0]);
   expect(fetchedCells("t")).toBe(4 ** 10);
   scope.stop();
+});
+
+/** The main meshes drawn (the backdrop is drawn at -0.5). */
+function drawnFaces() {
+  return (scene.current!.children as THREE.Mesh[]).filter(
+    (mesh) => mesh.renderOrder === 0
+  );
+}
+
+function texels(mesh: THREE.Mesh) {
+  const texture = (mesh.material as THREE.ShaderMaterial).uniforms.data
+    .value as THREE.DataTexture;
+  return Array.from(texture.image.data as Float32Array);
+}
+
+/** Let the reads of a dataset land, until none is waiting. */
+async function release(dataset: string) {
+  for (;;) {
+    const waiting = fetches.filter(
+      (fetch) => fetch.dataset === dataset && fetch.release
+    );
+    if (waiting.length === 0) {
+      return;
+    }
+    for (const fetch of waiting) {
+      fetch.release!();
+      fetch.release = undefined;
+    }
+    await wait(30);
+  }
+}
+
+it("draws a window as its blocks land, the block under the camera first", async () => {
+  // 256-cell chunks: the window is made of blocks of one chunk
+  stored.fine = { level: 9, chunk: 256, manual: true };
+  stored.coarse = { level: 3 };
+  const mounting = mount(11, 31);
+  await wait(200);
+  const issued = fetches.filter(({ dataset }) => dataset === "fine");
+  // a few reads in flight, the one under the camera first
+  expect(issued.length).toBeGreaterThanOrEqual(2);
+  expect(issued.length).toBeLessThanOrEqual(8);
+  const under = cellAt(9, 11, 31);
+  expect(issued[0].start).toBeLessThanOrEqual(under);
+  expect(issued[0].stop).toBeGreaterThan(under);
+  expect(issued[0].stop - issued[0].start).toBe(256);
+  expect(drawnFaces()).toHaveLength(0);
+
+  // the first block lands: its face is drawn with that block alone
+  issued[0].release!();
+  issued[0].release = undefined;
+  await wait(50);
+  expect(drawnFaces()).toHaveLength(1);
+  const partial = texels(drawnFaces()[0]);
+  expect(partial).toHaveLength(256);
+  expect(partial.every(Number.isFinite)).toBe(true);
+  expect(partial).toContain(under + 1);
+
+  await release("fine");
+  await mounting;
+  // the window is in: every cell read is drawn (the view straddles faces)
+  const whole = drawnFaces().flatMap((mesh) =>
+    texels(mesh).filter(Number.isFinite)
+  );
+  expect(whole.length).toBeGreaterThan(256);
+  expect(whole.length).toBe(fetchedCells("t"));
+  expect(hover.lookup!(11, 31)!.value).toBe(under + 1);
+});
+
+it("stops reading a window the view has left and draws nothing of it", async () => {
+  stored.fine = { level: 9, chunk: 256, manual: true };
+  stored.coarse = { level: 3 };
+  const mounting = mount(11, 31);
+  await wait(100);
+  const store = useGlobeControlStore();
+  const first = new Set(
+    fetches.filter(({ dataset }) => dataset === "fine").map((f) => f.start)
+  );
+  expect(first.size).toBeGreaterThan(0);
+  // the view moves on before anything has landed
+  store.viewFootprint = {
+    latMin: -42,
+    latMax: -40,
+    lonStart: 170,
+    lonSpan: 2,
+    centreLat: -41,
+    centreLon: 171,
+  };
+  await wait(50);
+  await release("fine");
+  await mounting;
+  await release("fine");
+  await wait(100);
+  // nothing more of the first window was read after the view left it: the
+  // reads around the first place are those that were already in flight
+  const near = (start: number) =>
+    Math.floor(start / 4 ** 9) === Math.floor(cellAt(9, 11, 31) / 4 ** 9);
+  const stale = fetches.filter(
+    ({ dataset, start }) => dataset === "fine" && near(start)
+  );
+  expect(stale.length).toBeGreaterThan(0);
+  expect(stale.every(({ start }) => first.has(start))).toBe(true);
+  // and none of it is drawn
+  expect(hover.lookup!(11, 31)?.value ?? null).toBeNull();
+  expect(hover.lookup!(-41, 171)!.value).toBe(cellAt(9, -41, 171) + 1);
+  expect(drawnFaces()).toHaveLength(1);
 });
