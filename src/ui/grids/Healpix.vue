@@ -55,10 +55,12 @@ import {
 } from "@/lib/grids/gridDataWorkerClient.ts";
 import {
   createFaceAssembly,
+  createWindowRead,
   fetchInOrder,
   orderedBlockRanges,
-  type TBlockRange,
+  readFaceProgressively,
   type TRangeCells,
+  type TWindowRead,
 } from "@/lib/grids/healpixBlockFetch.ts";
 import {
   HEALPIX_NUMCHUNKS,
@@ -184,8 +186,6 @@ let cachedStreamlineKey: string | undefined;
 
 let disposed = false;
 
-// A face loaded by view is redrawn with what has landed this often at most.
-const PROGRESSIVE_DRAW_MS = 150;
 // The level as stored: how many cells, and whether it can be loaded by view
 // (nested, and either dense or with an ascending `cell` coordinate).
 let levelCellCount = 0;
@@ -748,15 +748,12 @@ async function readRanges(
   return assembly.face();
 }
 
-/**
- * The cell ranges of the loaded blocks, those under the camera first, and
- * how many each face has.
- */
+/** The cell ranges of the loaded blocks, those under the camera first. */
 function windowRanges(grid: healpixGeo.Grid) {
   const blockLevel = healpixBlockLevel(grid.level, blockDepth);
   using blockGrid = grid.replace({ level: blockLevel, scheme: "nested" });
   const centre = store.viewFootprint ?? { centreLon: 0, centreLat: 0 };
-  const ranges = orderedBlockRanges(
+  return orderedBlockRanges(
     blockGrid,
     loadedBlocks!,
     4 ** (grid.level - blockLevel),
@@ -764,58 +761,6 @@ function windowRanges(grid: healpixGeo.Grid) {
     centre.centreLon,
     centre.centreLat
   );
-  const perFace = new Map<number, number>();
-  for (const { face } of ranges) {
-    perFace.set(face, (perFace.get(face) ?? 0) + 1);
-  }
-  return { ranges, perFace };
-}
-
-type TWindowRead = {
-  landings: ReturnType<typeof fetchInOrder<TBlockRange, TRangeCells>>;
-  assemblies: Map<number, ReturnType<typeof createFaceAssembly>>;
-  perFace: Map<number, number>;
-};
-
-/**
- * The cells of one face of the window, drawn with what has landed every
- * `PROGRESSIVE_DRAW_MS` until the whole face is in. Ranges of other faces
- * that land meanwhile wait in their assemblies for their turn.
- */
-async function readFaceProgressively(
-  faceIndex: number,
-  read: TWindowRead,
-  draw: (face: TRangeCells & { ranges: TAxisRange[] }) => Promise<void>,
-  isCurrent: () => boolean
-) {
-  const assemblyOf = (face: number) => {
-    let assembly = read.assemblies.get(face);
-    if (!assembly) {
-      assembly = createFaceAssembly();
-      read.assemblies.set(face, assembly);
-    }
-    return assembly;
-  };
-  const assembly = assemblyOf(faceIndex);
-  const expected = read.perFace.get(faceIndex) ?? 0;
-  let drawnAt = Date.now();
-  while (assembly.count < expected) {
-    const landing = await read.landings.next();
-    if (!landing) {
-      break;
-    }
-    assemblyOf(landing.item.face).add(landing.item, landing.result);
-    if (
-      landing.item.face === faceIndex &&
-      assembly.count < expected &&
-      Date.now() - drawnAt >= PROGRESSIVE_DRAW_MS &&
-      isCurrent()
-    ) {
-      await draw(assembly.face());
-      drawnAt = Date.now();
-    }
-  }
-  return assembly.face();
 }
 
 function fetchHealpixVariableData(
@@ -1279,17 +1224,16 @@ async function processHealpixChunks(
   // A window is read nearest the camera first and drawn as it lands, the
   // face under the camera first; with streamlines, the complete replacement
   // is staged.
-  const viewWindow = byView ? windowRanges(grid) : undefined;
-  const read: TWindowRead | undefined = viewWindow && {
-    landings: fetchInOrder(
-      viewWindow.ranges,
-      (range) => fetchCellRange(range, indices),
-      { isCurrent }
-    ),
-    assemblies: new Map(),
-    perFace: viewWindow.perFace,
-  };
-  const faces = [...(viewWindow?.perFace.keys() ?? [])];
+  const ranges = byView ? windowRanges(grid) : undefined;
+  const read: TWindowRead | undefined =
+    ranges &&
+    createWindowRead(
+      fetchInOrder(ranges, (range) => fetchCellRange(range, indices), {
+        isCurrent,
+      }),
+      ranges
+    );
+  const faces = [...(read?.pending.keys() ?? [])];
   for (let face = 0; face < HEALPIX_NUMCHUNKS; face++) {
     if (!faces.includes(face)) {
       faces.push(face);
@@ -1315,7 +1259,7 @@ async function processHealpixChunks(
     const readFace = async (percentile?: number) =>
       read
         ? await readRanges(
-            viewWindow!.ranges.filter((entry) => entry.face === faceIndex),
+            ranges!.filter((entry) => entry.face === faceIndex),
             indices,
             percentile
           )

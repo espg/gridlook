@@ -109,27 +109,30 @@ export function fetchInOrder<TItem, TResult>(
   return { next };
 }
 
+/** A run of cells of a face as read: its range, its values and their ids. */
+export type TFacePart = { range: TAxisRange } & TRangeCells;
+
 /**
  * The cells of one face as its ranges land, kept in ascending cell order
  * however they land: what the face is drawn from before every range is in.
- * A cell not yet landed is absent, as a cell outside the window is.
+ * A cell not yet landed is absent, as a cell outside the window is. `seed`
+ * holds parts read before (the field kept from an earlier window).
  */
-export function createFaceAssembly() {
-  const parts: ({ range: TAxisRange } & TRangeCells)[] = [];
+export function createFaceAssembly(seed: TFacePart[] = []) {
+  const parts: TFacePart[] = [];
   let length = 0;
-  return {
+  const assembly = {
     add(range: TAxisRange, part: TRangeCells) {
       // the ranges are disjoint: keep them by start
       let at = parts.length;
       while (at > 0 && parts[at - 1].range.start > range.start) {
         at--;
       }
-      parts.splice(at, 0, { range, ...part });
+      parts.splice(at, 0, { range, data: part.data, cells: part.cells });
       length += part.data.length;
     },
-    get count() {
-      return parts.length;
-    },
+    /** The parts as read, ascending: the face's field, to keep. */
+    parts: () => parts.slice(),
     face(): TRangeCells & { ranges: TAxisRange[] } {
       const data = new Float32Array(length);
       const cells: number[] = [];
@@ -142,4 +145,84 @@ export function createFaceAssembly() {
       return { data, cells, ranges: parts.map(({ range }) => range) };
     },
   };
+  for (const part of seed) {
+    assembly.add(part.range, part);
+  }
+  return assembly;
+}
+
+/** The parts of a window's faces, by face: the field as read. */
+export type TFaceParts = Map<number, TFacePart[]>;
+
+/** A face loaded by view is redrawn with what has landed this often at most. */
+const PROGRESSIVE_DRAW_MS = 150;
+
+/** A window's reads in flight, and the faces assembled from what landed. */
+export type TWindowRead = {
+  landings: ReturnType<typeof fetchInOrder<TBlockRange, TRangeCells>>;
+  assemblies: Map<number, ReturnType<typeof createFaceAssembly>>;
+  /** Ranges still to land on each face. */
+  pending: Map<number, number>;
+};
+
+/** The reads of a window's ranges, with the parts of `seed` already in. */
+export function createWindowRead(
+  landings: TWindowRead["landings"],
+  ranges: TBlockRange[],
+  seed: TFaceParts = new Map()
+): TWindowRead {
+  const pending = new Map<number, number>();
+  for (const { face } of ranges) {
+    pending.set(face, (pending.get(face) ?? 0) + 1);
+  }
+  const assemblies = new Map(
+    [...seed].map(([face, parts]) => [face, createFaceAssembly(parts)])
+  );
+  return { landings, assemblies, pending };
+}
+
+/**
+ * The cells of one face of the window, drawn with what has landed every
+ * `PROGRESSIVE_DRAW_MS` until the whole face is in (not at all without
+ * `draw`). Ranges of other faces that land meanwhile wait in their
+ * assemblies for their turn.
+ */
+export async function readFaceProgressively(
+  faceIndex: number,
+  read: TWindowRead,
+  draw:
+    | ((face: TRangeCells & { ranges: TAxisRange[] }) => Promise<void>)
+    | undefined,
+  isCurrent: () => boolean
+) {
+  const assemblyOf = (face: number) => {
+    let assembly = read.assemblies.get(face);
+    if (!assembly) {
+      assembly = createFaceAssembly();
+      read.assemblies.set(face, assembly);
+    }
+    return assembly;
+  };
+  const assembly = assemblyOf(faceIndex);
+  let drawnAt = Date.now();
+  while ((read.pending.get(faceIndex) ?? 0) > 0) {
+    const landing = await read.landings.next();
+    if (!landing) {
+      break;
+    }
+    const { face } = landing.item;
+    assemblyOf(face).add(landing.item, landing.result);
+    read.pending.set(face, read.pending.get(face)! - 1);
+    if (
+      draw &&
+      face === faceIndex &&
+      read.pending.get(faceIndex)! > 0 &&
+      Date.now() - drawnAt >= PROGRESSIVE_DRAW_MS &&
+      isCurrent()
+    ) {
+      await draw(assembly.face());
+      drawnAt = Date.now();
+    }
+  }
+  return assembly.face();
 }

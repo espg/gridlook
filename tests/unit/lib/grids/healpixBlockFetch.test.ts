@@ -4,8 +4,10 @@ import { expect, it } from "vitest";
 import "@/utils/disposablePolyfill.ts";
 import {
   createFaceAssembly,
+  createWindowRead,
   fetchInOrder,
   orderedBlockRanges,
+  readFaceProgressively,
 } from "@/lib/grids/healpixBlockFetch.ts";
 import { buildHealpixTexture } from "@/lib/grids/healpixCalculations.ts";
 
@@ -121,7 +123,7 @@ it("draws a face from the blocks landed so far, in cell order", () => {
   const assembly = createFaceAssembly();
   // the second block lands first
   assembly.add(part(blocks[1]).range, part(blocks[1]));
-  expect(assembly.count).toBe(1);
+  expect(assembly.parts()).toHaveLength(1);
   const partial = assembly.face();
   expect(partial.cells).toEqual(part(blocks[1]).cells);
   const texture = buildHealpixTexture(partial.data, face, nside, partial.cells);
@@ -143,4 +145,42 @@ it("draws a face from the blocks landed so far, in cell order", () => {
   expect(whole.data[0]).toBe(blocks[0] * 256);
   expect(whole.data[767]).toBe(blocks[2] * 256 + 255);
   expect(whole.ranges.map(({ start }) => start / 256)).toEqual(blocks);
+  // a face kept from an earlier window seeds the next one's assembly
+  const seeded = createFaceAssembly(assembly.parts().slice(0, 2));
+  seeded.add(part(blocks[2]).range, part(blocks[2]));
+  expect(seeded.face().cells).toEqual(whole.cells);
+});
+
+it("reads a window's faces as their ranges land, the seeded parts first", async () => {
+  const range = (face: number, block: number) => ({
+    face,
+    start: block * 4,
+    end: (block + 1) * 4,
+  });
+  const cells = ({ start, end }: { start: number; end: number }) => ({
+    cells: Array.from({ length: end - start }, (_, i) => start + i),
+    data: Float32Array.from({ length: end - start }, (_, i) => start + i),
+  });
+  const ranges = [range(1, 7), range(0, 1), range(1, 6)];
+  const seed = new Map([[1, [{ range: range(1, 5), ...cells(range(1, 5)) }]]]);
+  const read = createWindowRead(
+    fetchInOrder(ranges, async (item) => cells(item)),
+    ranges,
+    seed
+  );
+  expect(read.pending.get(1)).toBe(2);
+  const drawn: number[][] = [];
+  const face = await readFaceProgressively(
+    1,
+    read,
+    async (partial) => void drawn.push(partial.cells),
+    () => true
+  );
+  // the seeded part and the two ranges that landed, in cell order
+  expect(face.cells).toEqual([20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]);
+  expect(read.pending.get(1)).toBe(0);
+  // the other face's range waits in its assembly
+  expect(read.assemblies.get(0)!.face().cells).toEqual([4, 5, 6, 7]);
+  // nothing drawn within the redraw interval
+  expect(drawn).toEqual([]);
 });
