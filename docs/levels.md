@@ -48,7 +48,7 @@ than two usable levels is opened as a single-level dataset.
 
 In every projection, also while the camera is moving, Gridlook measures the
 ground distance one screen pixel covers at the point below the camera and
-picks the level whose cells come nearest to **16 pixels** on screen (nearest
+picks the level whose cells come nearest to **8 pixels** on screen (nearest
 in log2 of the cell size). The active level is kept unless another level fits
 better by more than **0.35 orders**, so panning along a boundary does not flip
 back and forth. Where a projection stretches the map more one way than the
@@ -195,8 +195,8 @@ and a level index kept from a longer list falls back to the finest level.
   the pooled ones (128 MB), so changing the percentile, or going from one
   derived order to another over the same ground, reads nothing.
 - A chunk costs the same bytes whatever the order derived from it, so a
-  derived level is picked at 32 pixels per cell for every variable, `count`
-  included (a stored level keeps 16 for `count`).
+  derived level is picked at 16 pixels per cell for every variable, `count`
+  included (a stored level is picked at 8).
 
 The distribution panel shows the pooled digest of a derived cell: the
 derived level names the leaf group it is computed from (`derived.dataset`),

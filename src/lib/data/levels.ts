@@ -49,8 +49,12 @@ export function coarsestLevel(
 export const STREAMLINES_NEED_WHOLE_LEVEL =
   "Streamlines read a whole level, and this one is too large to load whole. Pick a coarser level.";
 
-/** Target on-screen size of one cell, in pixels, at the sub-camera point. */
-export const DEFAULT_PIXELS_PER_CELL = 16;
+/**
+ * Target on-screen size of one cell, in pixels, at the sub-camera point.
+ * Eight keeps the outer zooms from looking coarse; a stored cell costs bytes,
+ * so four times the cells of a 16 px target is still a small window.
+ */
+export const DEFAULT_PIXELS_PER_CELL = 8;
 
 /**
  * The target for a variable derived from a t-digest. A cell with data costs
@@ -58,7 +62,7 @@ export const DEFAULT_PIXELS_PER_CELL = 16;
  * so a view is priced by its cell count: twice the cell size is a quarter of
  * the bytes.
  */
-export const DIGEST_PIXELS_PER_CELL = 32;
+export const DIGEST_PIXELS_PER_CELL = 16;
 
 /**
  * Hysteresis in orders (log2 of cell size, so one order is one unit): another

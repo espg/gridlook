@@ -311,23 +311,33 @@ describe("the finest level of a hive store", () => {
     expect(pickResolution(level, DIGEST_PIXELS_PER_CELL)).toBe(
       level.resolution
     );
-    // at 16 px per cell a derived level is picked as if it were twice as fine
+    // at the stored target a derived level is picked as if it were finer by
+    // the ratio of the two targets
+    const ratio = DIGEST_PIXELS_PER_CELL / DEFAULT_PIXELS_PER_CELL;
     expect(pickResolution(level, DEFAULT_PIXELS_PER_CELL)).toBe(
-      level.resolution / 2
+      level.resolution / ratio
     );
-    // loaded by view (no cell cap): order 14 comes on where its cells are 32 px
+    // loaded by view (no cell cap): order 14 comes on where its cells are 16 px
     const levels = [stored, level].map((candidate) => ({
       resolution: pickResolution(candidate, DEFAULT_PIXELS_PER_CELL),
       cellCount: 0,
     }));
     const metersPerPixel = (pixels: number) => level.resolution / pixels;
-    // (16 px is the boundary: either side keeps the level it is on)
-    expect(selectLevel(metersPerPixel(12), levels, 0)).toBe(0);
-    expect(selectLevel(metersPerPixel(32), levels, 0)).toBe(1);
-    expect(selectLevel(metersPerPixel(12), levels, 1)).toBe(0);
-    expect(selectLevel(metersPerPixel(32), levels, 1)).toBe(1);
-    expect(selectLevel(metersPerPixel(16), levels, 0)).toBe(0);
-    expect(selectLevel(metersPerPixel(16), levels, 1)).toBe(1);
+    // the boundary, where the stored cells are 2p px and the derived ones p
+    // px fit their targets equally well; either side keeps the level it is on
+    const boundary = Math.sqrt(
+      (DEFAULT_PIXELS_PER_CELL * DIGEST_PIXELS_PER_CELL) / 2
+    );
+    expect(selectLevel(metersPerPixel(boundary / 1.4), levels, 0)).toBe(0);
+    expect(selectLevel(metersPerPixel(DIGEST_PIXELS_PER_CELL), levels, 0)).toBe(
+      1
+    );
+    expect(selectLevel(metersPerPixel(boundary / 1.4), levels, 1)).toBe(0);
+    expect(selectLevel(metersPerPixel(DIGEST_PIXELS_PER_CELL), levels, 1)).toBe(
+      1
+    );
+    expect(selectLevel(metersPerPixel(boundary), levels, 0)).toBe(0);
+    expect(selectLevel(metersPerPixel(boundary), levels, 1)).toBe(1);
   });
 });
 
