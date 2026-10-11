@@ -263,6 +263,9 @@ export const useGlobeControlStore = defineStore("globeControl", {
       // whether the coarsest level is drawn beneath a level loaded by view;
       // it is still read for the shared colour range either way
       levelBackdrop: false,
+      // whether the window of the level in view was cut by its budget, so
+      // that cells in view are missing (zoom in, or pick a coarser level)
+      viewWindowClipped: false,
       // variables derived from a t-digest: the percentile shown, and the
       // two a percentile range is the difference of (0..100)
       digestPercentile: DEFAULT_PERCENTILE as number,
@@ -364,6 +367,9 @@ export const useGlobeControlStore = defineStore("globeControl", {
     },
     setLevelBackdrop(shown: boolean) {
       this.levelBackdrop = shown;
+    },
+    setViewWindowClipped(clipped: boolean) {
+      this.viewWindowClipped = clipped;
     },
     setDigestPercentile(percentile: number) {
       if (Number.isFinite(percentile)) {

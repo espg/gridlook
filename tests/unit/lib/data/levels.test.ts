@@ -8,7 +8,11 @@ import {
   coarsestLevel,
   currentLevel,
   DEFAULT_MAX_VIEW_CELLS,
+  DEFAULT_VIEW_BUDGET_BYTES,
+  DIGEST_CHUNK_BYTES,
   DIGEST_PIXELS_PER_CELL,
+  digestCellBytes,
+  digestWindowBlocks,
   pickResolution,
   DEFAULT_HYSTERESIS_ORDERS,
   DEFAULT_MAX_LEVEL_CELLS,
@@ -324,5 +328,28 @@ describe("the finest level of a hive store", () => {
     expect(selectLevel(metersPerPixel(32), levels, 1)).toBe(1);
     expect(selectLevel(metersPerPixel(16), levels, 0)).toBe(0);
     expect(selectLevel(metersPerPixel(16), levels, 1)).toBe(1);
+  });
+});
+
+describe("digestWindowBlocks", () => {
+  it("prices a stored level per cell and a derived level per leaf chunk", () => {
+    // order 13 in 256-cell chunks: the budget over the chunks' bytes
+    expect(digestWindowBlocks({}, 13, 256)).toBe(
+      Math.floor(DEFAULT_VIEW_BUDGET_BYTES / (digestCellBytes(13) * 256))
+    );
+    // coarser cells are cheaper, so more of them fit
+    expect(digestWindowBlocks({}, 12, 64)).toBeGreaterThan(
+      digestWindowBlocks({}, 13, 64)
+    );
+    // a derived level costs a leaf chunk per block whatever its order
+    const derived = { derived: { dataset: "leaf", refinement: 2 } };
+    expect(digestWindowBlocks(derived, 15, 256)).toBe(
+      Math.floor(DEFAULT_VIEW_BUDGET_BYTES / DIGEST_CHUNK_BYTES)
+    );
+    expect(digestWindowBlocks(derived, 17, 16)).toBe(
+      digestWindowBlocks(derived, 15, 256)
+    );
+    // a budget below one block still loads one
+    expect(digestWindowBlocks({}, 13, 256, 1)).toBe(1);
   });
 });

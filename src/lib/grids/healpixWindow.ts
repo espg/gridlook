@@ -96,29 +96,26 @@ function nearestBlocks(
   return blocksByDistance(blockGrid, blocks, lon, lat).slice(0, count);
 }
 
+/** A lat/lon box: `[south, north]`, and `span` degrees east of `west`. */
+type TBox = { south: number; north: number; west: number; span: number };
+
 /**
- * Ids of the blocks of a nested level that a view footprint touches, grown
- * by `margin` (a fraction of the footprint's size) on every side, ascending.
- * At most `maxBlocks` are returned, those nearest the centre of the view.
+ * The box a window samples: the footprint grown by `margin` on every side,
+ * then, over the budget, shrunk around the point below the camera. A band
+ * that still reaches a pole keeps every longitude: the cells on the other
+ * side of the pole are among the nearest.
  */
-// eslint-disable-next-line max-lines-per-function
-export function healpixViewBlocks(
-  grid: Grid,
+function windowBox(
   footprint: TViewFootprint,
-  margin = 0,
-  maxBlocks = Infinity,
-  depth?: number
-) {
-  const blockLevel = healpixBlockLevel(grid.level, depth);
-  const side = FACE_SIDE_DEGREES / 2 ** blockLevel;
+  margin: number,
+  side: number,
+  maxBlocks: number
+): TBox {
   const latMargin = (footprint.latMax - footprint.latMin) * margin;
   let south = Math.max(footprint.latMin - latMargin, -90);
   let north = Math.min(footprint.latMax + latMargin, 90);
   let span = Math.min(footprint.lonSpan * (1 + 2 * margin), 360);
   let west = footprint.lonStart - (span - footprint.lonSpan) / 2;
-  // Over the budget, sample only around the point below the camera. A band
-  // that still reaches a pole keeps every longitude: the cells on the other
-  // side of the pole are among the nearest.
   for (let pass = 0; pass < 3; pass++) {
     // blocks the box holds, by area
     const estimate =
@@ -137,32 +134,96 @@ export function healpixViewBlocks(
       west = footprint.centreLon - span / 2;
     }
   }
+  return { south, north, west, span };
+}
+
+/** Whether a point of the box is within the footprint (the view itself). */
+function inView(footprint: TViewFootprint, lon: number, lat: number) {
+  const east = normalizeLon(lon - footprint.lonStart);
+  return (
+    lat >= footprint.latMin &&
+    lat <= footprint.latMax &&
+    (east >= 0 ? east : east + 360) <= footprint.lonSpan
+  );
+}
+
+/**
+ * Ids of the blocks of a nested level that a view footprint touches, grown
+ * by `margin` (a fraction of the footprint's size) on every side, ascending.
+ * At most `maxBlocks` are returned, those nearest the centre of the view;
+ * `clipped` says whether a block in view itself was left out, as opposed to
+ * one of the margin.
+ */
+// eslint-disable-next-line max-lines-per-function
+export function healpixViewWindow(
+  grid: Grid,
+  footprint: TViewFootprint,
+  margin = 0,
+  maxBlocks = Infinity,
+  depth?: number
+) {
+  const blockLevel = healpixBlockLevel(grid.level, depth);
+  const side = FACE_SIDE_DEGREES / 2 ** blockLevel;
+  const { south, north, west, span } = windowBox(
+    footprint,
+    margin,
+    side,
+    maxBlocks
+  );
   // Four samples per block side: a block is only missed where less than a
   // quarter of its side reaches into the box, and the margin covers that.
   const spacing = side / 4;
   const rows = Math.ceil((north - south) / spacing) + 1;
   const coordinates: number[] = [];
+  const visible: boolean[] = [];
   for (let row = 0; row < rows; row++) {
     const lat = rows > 1 ? south + ((north - south) * row) / (rows - 1) : south;
     const columns = Math.ceil((span * Math.cos(lat * RADIANS)) / spacing) + 1;
     for (let column = 0; column < columns; column++) {
       const offset = columns > 1 ? (span * column) / (columns - 1) : span / 2;
-      coordinates.push(normalizeLon(west + offset), lat);
+      const lon = normalizeLon(west + offset);
+      coordinates.push(lon, lat);
+      visible.push(inView(footprint, lon, lat));
     }
   }
   using blockGrid = grid.replace({ level: blockLevel, scheme: "nested" });
-  const sampled = blockGrid.lonLatToHealpix(Float64Array.from(coordinates));
-  let blocks = [...new Set(Array.from(sampled, Number))];
+  const sampled = Array.from(
+    blockGrid.lonLatToHealpix(Float64Array.from(coordinates)),
+    Number
+  );
+  let blocks = [...new Set(sampled)];
+  // the box shrank into the view, or a block in view is over the budget
+  let clipped =
+    south > footprint.latMin ||
+    north < footprint.latMax ||
+    span < footprint.lonSpan;
   if (blocks.length > maxBlocks) {
-    blocks = nearestBlocks(
-      blockGrid,
-      blocks,
-      footprint.centreLon,
-      footprint.centreLat,
-      maxBlocks
+    const kept = new Set(
+      nearestBlocks(
+        blockGrid,
+        blocks,
+        footprint.centreLon,
+        footprint.centreLat,
+        maxBlocks
+      )
     );
+    clipped ||= sampled.some(
+      (block, index) => visible[index] && !kept.has(block)
+    );
+    blocks = [...kept];
   }
-  return blocks.sort((a, b) => a - b);
+  return { blocks: blocks.sort((a, b) => a - b), clipped };
+}
+
+/** The blocks of `healpixViewWindow`. */
+export function healpixViewBlocks(
+  grid: Grid,
+  footprint: TViewFootprint,
+  margin = 0,
+  maxBlocks = Infinity,
+  depth?: number
+) {
+  return healpixViewWindow(grid, footprint, margin, maxBlocks, depth).blocks;
 }
 
 /**

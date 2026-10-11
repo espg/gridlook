@@ -27,7 +27,7 @@ import {
   DEFAULT_MAX_LEVEL_CELLS,
   DEFAULT_MAX_VIEW_CELLS,
   DEFAULT_VIEW_LOAD_CELLS,
-  DEFAULT_MAX_VIEW_CHUNKS,
+  digestWindowBlocks,
   STREAMLINES_NEED_WHOLE_LEVEL,
 } from "@/lib/data/levels.ts";
 import { loadVectorComponents } from "@/lib/data/streamlineData.ts";
@@ -46,6 +46,7 @@ import {
 } from "@/lib/data/vectorMagnitude.ts";
 import type { TAxisRange } from "@/lib/data/viewWindow.ts";
 import { ZarrDataManager } from "@/lib/data/ZarrDataManager.ts";
+import { digestVariableOf } from "@/lib/digest/digestVariables.ts";
 import {
   getGridVariableData,
   terminateGridDataWorker,
@@ -69,7 +70,7 @@ import {
 import {
   healpixBlockDepth,
   healpixBlockLevel,
-  healpixViewBlocks,
+  healpixViewWindow,
   viewWindowMargin,
 } from "@/lib/grids/healpixWindow.ts";
 import {
@@ -189,6 +190,9 @@ let levelWindowable = false;
 // (`healpixBlockDepth`), and the cells of one of its chunks.
 let blockDepth: number | undefined;
 let levelChunkCells = Infinity;
+// whether the variable is derived from a t-digest: its window is priced in
+// bytes, not cells
+let levelDigest = false;
 let sortedCells: ReturnType<typeof createSortedCells> | undefined;
 // The coordinate reader of a sparse level, kept while the level stays the
 // same so that its chunks are read once.
@@ -514,23 +518,31 @@ function loadsByView() {
   );
 }
 
-function viewBlocks(margin: number) {
+/**
+ * The blocks in view at a margin, within the budget: cells for a stored
+ * variable, bytes for one derived from a t-digest. `clipped` says whether
+ * the budget cut into the view itself.
+ */
+function viewWindow(margin: number) {
   const grid = unpackGrid();
-  const maxBlocks = Math.floor(
-    DEFAULT_MAX_VIEW_CELLS /
-      4 ** (grid.level - healpixBlockLevel(grid.level, blockDepth))
-  );
+  const cellsPerBlock =
+    4 ** (grid.level - healpixBlockLevel(grid.level, blockDepth));
+  const maxBlocks = levelDigest
+    ? digestWindowBlocks(
+        currentLevel(props.datasources!),
+        grid.level,
+        cellsPerBlock
+      )
+    : Math.floor(DEFAULT_MAX_VIEW_CELLS / cellsPerBlock);
   return store.viewFootprint
-    ? healpixViewBlocks(
+    ? healpixViewWindow(
         grid,
         store.viewFootprint,
         margin,
-        currentLevel(props.datasources!).derived
-          ? Math.min(maxBlocks, DEFAULT_MAX_VIEW_CHUNKS)
-          : maxBlocks,
+        maxBlocks,
         blockDepth
       )
-    : [];
+    : { blocks: [], clipped: false };
 }
 
 function viewWindowStale() {
@@ -541,7 +553,7 @@ function viewWindowStale() {
     return true;
   }
   const loaded = new Set(loadedBlocks);
-  return viewBlocks(0).some((block) => !loaded.has(block));
+  return viewWindow(0).blocks.some((block) => !loaded.has(block));
 }
 
 /**
@@ -638,9 +650,12 @@ function prepareWindow(
     levelChunkCells,
     currentLevel(sources).derived !== undefined
   );
-  loadedBlocks = loadsByView()
-    ? viewBlocks(viewWindowMargin(datavar.attrs))
+  levelDigest = digestVariableOf(datavar.attrs) !== undefined;
+  const window = loadsByView()
+    ? viewWindow(viewWindowMargin(datavar.attrs))
     : undefined;
+  loadedBlocks = window?.blocks;
+  store.setViewWindowClipped(window?.clipped ?? false);
 }
 
 /** The stored cells with ids in a nested range, and their values. */

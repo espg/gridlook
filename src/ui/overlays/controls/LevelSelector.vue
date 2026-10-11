@@ -107,6 +107,13 @@ function onRangeSharedChange(event: Event) {
         />
         Draw the coarsest level beneath
       </label>
+      <p
+        v-if="store.viewWindowClipped"
+        class="is-size-7 has-text-warning-dark mt-1"
+        title="The cells nearest the centre of the view are loaded, up to the budget of this level"
+      >
+        Max cells at this level reached: zoom in, or pick a coarser level.
+      </p>
     </div>
   </div>
 </template>

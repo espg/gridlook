@@ -145,9 +145,15 @@ gives. The percentiles are part of the shareable URL (`percentile`,
 Such a variable is loaded like any other, by level and by view, but a cell's
 digest is a few kilobytes where a stored value is a few bytes: a view reads
 megabytes, so its window takes a quarter-view margin where a stored variable
-takes half. Decoded digests are kept in memory (up to 256 MB, least recently
-used first out), so moving a percentile slider recomputes the field without
-reading anything.
+takes half, and it is priced in bytes rather than cells. One window reads at
+most **64 MB**: about 1.7 KB per cell at order 13 and 0.5 KB at order 12 (as
+measured on the ATL03 store), or one 34 KB leaf chunk per block of a derived
+level. Over the budget, the window keeps the blocks nearest the point below
+the camera; when that leaves cells in view unloaded (a fine level picked by
+hand from far out) the level panel says so: _Max cells at this level reached:
+zoom in, or pick a coarser level._ Decoded digests are kept in memory (up to
+256 MB, least recently used first out), so moving a percentile slider
+recomputes the field without reading anything.
 
 Clicking a cell pins it in the **Height distribution** panel: the photons per
 metre of height of the signal and, muted, of the noise, with the selected
@@ -180,10 +186,11 @@ and a level index kept from a longer list falls back to the finest level.
   the leaves are lossless (one photon per centroid, all but about one cell in
   100 000) the pooled digest is the exact sample. Only the variable shown is
   read: `count` reads `count`, a signal height reads `h_tdigest_signal`.
-- A derived level is always loaded by view, one leaf chunk per block, and at
-  most 2048 chunks per window (a level picked by hand from far out is cut
-  down around the point below the camera). It is never the backdrop, and
-  with streamlines or a volume on it is left out of automatic selection.
+- A derived level is always loaded by view, one leaf chunk per block, within
+  the 64 MB window budget (about 1900 chunks; a level picked by hand from far
+  out is cut down around the point below the camera and the level panel says
+  so). It is never the backdrop, and with streamlines or a volume on it is
+  left out of automatic selection.
 - A leaf chunk is read once. Its decoded digests stay in memory, and so do
   the pooled ones (128 MB), so changing the percentile, or going from one
   derived order to another over the same ground, reads nothing.

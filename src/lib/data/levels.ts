@@ -94,11 +94,44 @@ export const DEFAULT_VIEW_LOAD_CELLS = 12 * 4 ** 8;
 export const DEFAULT_MAX_VIEW_CELLS = 12 * 4 ** 9;
 
 /**
- * Leaf chunks one window of a derived level reads at most. Such a level is
- * priced by the chunks under its cells, not by its cells: a chunk is about
- * 34 KB of signal digest (120 KB of noise) whatever the order derived.
+ * Bytes one window of a variable derived from a t-digest may read. Such a
+ * variable's cells cost kilobytes where a stored value costs bytes, so its
+ * window is priced in bytes, not cells, and cut around the view's centre;
+ * the cells left out are reported so that the user can zoom in or pick a
+ * coarser level. The decoded-digest cache is sized from the same figure.
  */
-export const DEFAULT_MAX_VIEW_CHUNKS = 2048;
+export const DEFAULT_VIEW_BUDGET_BYTES = 64 * 2 ** 20;
+
+/**
+ * Bytes of one leaf chunk's signal digest, what a level derived from leaf
+ * chunks costs per chunk whatever the order derived (noise is 120 KB).
+ */
+export const DIGEST_CHUNK_BYTES = 34 * 1024;
+
+/**
+ * Bytes a cell of a stored digest level costs, as measured on the ATL03 v3
+ * store: 1.7 KB at order 13, 0.5 KB at 12 and less above, where most cells
+ * are empty. An estimate until the store's chunk index prices each chunk.
+ */
+export function digestCellBytes(order: number) {
+  return order >= 13 ? 1700 : order === 12 ? 512 : 256;
+}
+
+/**
+ * Blocks a window of a digest variable may hold within a byte budget: cells
+ * of `cellsPerBlock` on a stored level, leaf chunks on a derived one.
+ */
+export function digestWindowBlocks(
+  level: Pick<TSourceLevel, "derived">,
+  order: number,
+  cellsPerBlock: number,
+  budget = DEFAULT_VIEW_BUDGET_BYTES
+) {
+  const blockBytes = level.derived
+    ? DIGEST_CHUNK_BYTES
+    : digestCellBytes(order) * cellsPerBlock;
+  return Math.max(Math.floor(budget / blockBytes), 1);
+}
 
 /**
  * The cell size a level is picked at, in pixels, when a level stored and a

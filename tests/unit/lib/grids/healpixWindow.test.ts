@@ -9,6 +9,7 @@ import {
   healpixBlockLevel,
   healpixBlockRanges,
   healpixViewBlocks,
+  healpixViewWindow,
   viewWindowMargin,
 } from "@/lib/grids/healpixWindow.ts";
 import { createSortedCells } from "@/lib/grids/sortedCells.ts";
@@ -56,6 +57,32 @@ it("keeps the blocks nearest the view centre within the budget", () => {
   using blockGrid = new Grid({ scheme: "nested", level: 6 });
   const below = Number(blockGrid.lonLatToHealpix(Float64Array.of(60, 20))[0]);
   expect(blocks).toContain(below);
+});
+
+it("reports a budget that cuts into the view, not one that trims the margin", () => {
+  using grid = new Grid({ scheme: "nested", level: 12 });
+  const whole = healpixViewWindow(grid, box, 0.5);
+  expect(whole.clipped).toBe(false);
+  // room for the view and some of the margin: the margin goes first
+  const inView = healpixViewWindow(grid, box, 0).blocks.length;
+  const trimmed = healpixViewWindow(grid, box, 0.5, inView + 1);
+  expect(trimmed.blocks).toHaveLength(inView + 1);
+  expect(trimmed.clipped).toBe(false);
+  // less room than the view needs: cells in view are missing
+  expect(inView).toBeGreaterThan(1);
+  const cut = healpixViewWindow(grid, box, 0.5, 1);
+  expect(cut.blocks).toHaveLength(1);
+  expect(cut.clipped).toBe(true);
+  // a wide view shrunk around the camera by area is cut too
+  const wide = {
+    latMin: -60,
+    latMax: 60,
+    lonStart: -120,
+    lonSpan: 240,
+    centreLat: 20,
+    centreLon: 60,
+  };
+  expect(healpixViewWindow(grid, wide, 0.5, 16).clipped).toBe(true);
 });
 
 it("cuts a polar view down around the camera, not around longitude 0", () => {
