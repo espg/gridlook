@@ -114,6 +114,7 @@ export function useGridScene(options: UseGridSceneOptions) {
   let mouseDown = false;
   let wheelActive = false;
   const raycaster = new THREE.Raycaster();
+  const GLOBE_SPHERE = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 1);
   const lastRenderedCameraPosition = new THREE.Vector3();
   const lastRenderedCameraQuaternion = new THREE.Quaternion();
   const hoveredGeoPoint = shallowRef<THoverGeoPoint | null>(null);
@@ -340,18 +341,28 @@ export function useGridScene(options: UseGridSceneOptions) {
     );
     raycaster.setFromCamera(pointer, camera);
 
+    if (!projectionHelper.value.isFlat) {
+      // The exact sphere, not the pick mesh: a 64-segment sphere's facets sit
+      // kilometres below the surface, and a ray off the view axis crosses
+      // that gap sideways (hundreds of metres, a screen at a 2 km altitude).
+      const hit = raycaster.ray.intersectSphere(
+        GLOBE_SPHERE,
+        new THREE.Vector3()
+      );
+      if (!hit) {
+        return null;
+      }
+      const { lat, lon } = ProjectionHelper.cartesianToLatLon(
+        hit.x,
+        hit.y,
+        hit.z
+      );
+      return { lat, lon, screenX: clientX, screenY: clientY };
+    }
+
     const [intersection] = raycaster.intersectObject(pickSurface, false);
     if (!intersection) {
       return null;
-    }
-
-    if (!projectionHelper.value.isFlat) {
-      const { lat, lon } = ProjectionHelper.cartesianToLatLon(
-        intersection.point.x,
-        intersection.point.y,
-        intersection.point.z
-      );
-      return { lat, lon, screenX: clientX, screenY: clientY };
     }
 
     const geo = invertFlatProjection(intersection);
