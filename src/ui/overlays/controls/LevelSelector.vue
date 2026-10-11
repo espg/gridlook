@@ -52,13 +52,15 @@ const selected = computed(() =>
 );
 
 const countFormat = new Intl.NumberFormat();
+const POINT_TIER_HINT =
+  "Left drag orbits, right drag pans, the wheel zooms to the cursor";
 const pointTierTitle = computed(() => {
   const stats = store.pointTier ? store.pointTierStats : undefined;
   if (!stats) {
-    return "The observations themselves, drawn at their height over the finest level";
+    return `The observations themselves, drawn at their height in place of the finest level. ${POINT_TIER_HINT}`;
   }
   const thinned = stats.stride > 1 ? ` (every ${stats.stride}th)` : "";
-  return `${countFormat.format(stats.photons)} observations in ${stats.loaded} of ${stats.chunks} chunks, ${countFormat.format(stats.drawn)} drawn${thinned}`;
+  return `${countFormat.format(stats.photons)} observations in ${stats.loaded} of ${stats.chunks} chunks, ${countFormat.format(stats.drawn)} drawn${thinned}. ${POINT_TIER_HINT}`;
 });
 
 function onLevelChange(event: Event) {

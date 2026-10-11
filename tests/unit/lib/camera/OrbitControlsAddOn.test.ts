@@ -36,6 +36,21 @@ it.each(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"])(
   }
 );
 
+it("rotates by the given step whatever the distance", () => {
+  const camera = new PerspectiveCamera();
+  camera.position.set(1.0003, 0, 0);
+  const controls = new OrbitControls(camera);
+  const before = camera.position.clone();
+  handleKeyDown(
+    { key: "ArrowLeft", preventDefault() {} } as KeyboardEvent,
+    controls,
+    false,
+    0.05
+  );
+  controls.update();
+  expect(before.angleTo(camera.position)).toBeCloseTo(0.05, 6);
+});
+
 it("preserves arrow-key panning in flat projections", () => {
   const camera = new PerspectiveCamera();
   camera.position.set(0, 0, 0.1);

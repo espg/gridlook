@@ -224,12 +224,13 @@ It exists on the globe only; a flat projection stops at the finest level.
   `src/lib/points/pointBudget.ts`.
 - **Camera.** On entering, the orbit's target moves from the globe's centre
   to the ground under the view centre and the camera's up to the local
-  vertical, so the left button pans (the pivot slides along the surface),
-  the right button tilts (from nadir to 85°) and turns about the vertical,
-  and the wheel zooms toward the ground under the cursor, which stays under
-  the cursor. The camera comes no closer than 200 m to the pivot and stays
-  at least 100 m above the surface. Leaving puts the camera back on the globe
-  orbit above the pivot at its altitude.
+  vertical, so the left button (one finger, the arrow keys) orbits the
+  pivot: it tilts from nadir to 85° and turns about the vertical, with the
+  horizon kept up; the right button (two fingers) pans, sliding the pivot
+  along the surface; the wheel (+/-) zooms toward the ground under the
+  cursor, which stays under the cursor. The camera comes no closer than
+  200 m to the pivot and stays at least 100 m above the surface. Leaving
+  puts the camera back on the globe orbit above the pivot at its altitude.
 - **Panel.** A click pins the order-17 cell's digest, as on level 17.
 
 ## Filling the gaps between tracks

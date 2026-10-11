@@ -58,8 +58,12 @@ export function useSurfaceZoom(
 
 function getKeyboardRotationSpeed(
   orbitControls: CustomOrbitControls,
-  isFlatProjection: boolean
+  isFlatProjection: boolean,
+  step?: number
 ) {
+  if (step !== undefined) {
+    return step;
+  }
   const distance = orbitControls.object.position.distanceTo(
     orbitControls.target
   );
@@ -71,74 +75,84 @@ function getKeyboardRotationSpeed(
 
 function handleArrowUp(
   orbitControls: CustomOrbitControls,
-  isFlatProjection: boolean
+  isFlatProjection: boolean,
+  step?: number
 ) {
   if (isFlatProjection && orbitControls.enablePan) {
     orbitControls._pan(0, -orbitControls.keyPanSpeed);
   } else {
     orbitControls._rotateUp(
-      getKeyboardRotationSpeed(orbitControls, isFlatProjection)
+      getKeyboardRotationSpeed(orbitControls, isFlatProjection, step)
     );
   }
 }
 
 function handleArrowDown(
   orbitControls: CustomOrbitControls,
-  isFlatProjection: boolean
+  isFlatProjection: boolean,
+  step?: number
 ) {
   if (isFlatProjection && orbitControls.enablePan) {
     orbitControls._pan(0, orbitControls.keyPanSpeed);
   } else {
     orbitControls._rotateUp(
-      -getKeyboardRotationSpeed(orbitControls, isFlatProjection)
+      -getKeyboardRotationSpeed(orbitControls, isFlatProjection, step)
     );
   }
 }
 
 function handleArrowLeft(
   orbitControls: CustomOrbitControls,
-  isFlatProjection: boolean
+  isFlatProjection: boolean,
+  step?: number
 ) {
   if (isFlatProjection && orbitControls.enablePan) {
     orbitControls._pan(-orbitControls.keyPanSpeed, 0);
   } else {
     orbitControls._rotateLeft(
-      getKeyboardRotationSpeed(orbitControls, isFlatProjection)
+      getKeyboardRotationSpeed(orbitControls, isFlatProjection, step)
     );
   }
 }
 
 function handleArrowRight(
   orbitControls: CustomOrbitControls,
-  isFlatProjection: boolean
+  isFlatProjection: boolean,
+  step?: number
 ) {
   if (isFlatProjection && orbitControls.enablePan) {
     orbitControls._pan(orbitControls.keyPanSpeed, 0);
   } else {
     orbitControls._rotateLeft(
-      -getKeyboardRotationSpeed(orbitControls, isFlatProjection)
+      -getKeyboardRotationSpeed(orbitControls, isFlatProjection, step)
     );
   }
 }
 
+/**
+ * The arrows rotate the globe, or pan a flat map, and +/- zoom. With
+ * `rotationStep` (radians) the arrows rotate by that much instead, whatever
+ * the distance: the point tier's pivot camera asks for it.
+ */
 export function handleKeyDown(
   event: KeyboardEvent,
   oC: OrbitControls,
-  isFlatProjection: boolean
+  isFlatProjection: boolean,
+  rotationStep?: number
 ) {
   const orbitControls = oC as CustomOrbitControls;
   switch (event.key) {
     case "ArrowUp":
-      handleArrowUp(orbitControls, isFlatProjection);
+      handleArrowUp(orbitControls, isFlatProjection, rotationStep);
       break;
     case "ArrowDown":
-      handleArrowDown(orbitControls, isFlatProjection);
+      handleArrowDown(orbitControls, isFlatProjection, rotationStep);
       break;
     case "ArrowLeft":
-      handleArrowLeft(orbitControls, isFlatProjection);
+      handleArrowLeft(orbitControls, isFlatProjection, rotationStep);
       break;
     case "ArrowRight":
-      handleArrowRight(orbitControls, isFlatProjection);
+      handleArrowRight(orbitControls, isFlatProjection, rotationStep);
       break;
     case "+":
       orbitControls._dollyIn(orbitControls._getZoomScale(-ZOOM_STEP));

@@ -40,6 +40,7 @@ import {
 } from "@/lib/camera/OrbitControlsAddOn.ts";
 import {
   createPointPivot,
+  POINT_PIVOT_KEY_STEP,
   pivotNearPlane,
   surfacePointNearRay,
   wheelDollyScale,
@@ -1524,11 +1525,13 @@ export function useGridScene(options: UseGridSceneOptions) {
 
       if (navigationKeys.includes(e.key)) {
         onInteractionStart();
-        // on the pivot camera the arrows pan and +/- dolly, as on a flat map
+        // on the pivot camera the arrows orbit the pivot by a fixed step,
+        // as the left button does, and +/- dolly
         handleKeyDown(
           e,
           getOrbitControls()!,
-          projectionHelper.value.isFlat || Boolean(pivotControls?.active)
+          projectionHelper.value.isFlat,
+          pivotControls?.active ? POINT_PIVOT_KEY_STEP : undefined
         );
         onInteractionEnd();
       }
