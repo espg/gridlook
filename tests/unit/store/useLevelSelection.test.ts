@@ -169,7 +169,7 @@ it("picks from the globe's fitted framing before the URL has a camera", () => {
   try {
     pickLevel();
     // A square 1000 px viewport frames the globe ~15 radii up: order-5 cells
-    // are about 16 pixels there and order-6 about 8, so the 4 px target picks
+    // are about 16 pixels there and order-8 about 2, so the 2 px target picks
     // order 8; order 12 is over the renderer's cap anyway.
     expect(store.selectedLevel).toBe(2);
   } finally {
