@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   createByteLru,
   createDigestReader,
+  createWordReader,
   digestArrayFromMetadata,
 } from "@/lib/digest/digestReader.ts";
 
@@ -119,5 +120,55 @@ describe("createByteLru", () => {
     lru.set("small", 6);
     expect(lru.bytes).toBe(6);
     expect(lru.size).toBe(1);
+  });
+});
+
+describe("createWordReader", () => {
+  /** A ragged chunk of uint64 words: `cells` lists each cell's words. */
+  function wordFrame(cells: bigint[][]) {
+    const total = cells.reduce((sum, cell) => sum + cell.length, 0);
+    const bytes = new Uint8Array(4 + 4 * cells.length + 8 * total);
+    const view = new DataView(bytes.buffer);
+    view.setUint32(0, cells.length, true);
+    let at = 4;
+    for (const cell of cells) {
+      view.setUint32(at, 8 * cell.length, true);
+      at += 4;
+      for (const word of cell) {
+        view.setBigUint64(at, word, true);
+        at += 8;
+      }
+    }
+    return bytes;
+  }
+
+  it("decodes the words of every cell, aligned, with their offsets", async () => {
+    const words = [[1n, 2n ** 63n + 5n], [], [0xffffffffffffffffn]];
+    const reader = createWordReader({
+      async get(key) {
+        return key.endsWith("zarr.json")
+          ? encoder.encode(JSON.stringify(metadata([VLEN])))
+          : wordFrame(words);
+      },
+    });
+    const chunk = (await reader.chunk("19/h_locations", 0))!;
+    expect([...chunk.offsets]).toEqual([0, 2, 2, 3]);
+    expect([...chunk.words]).toEqual(words.flat());
+    expect(chunk.words.byteOffset).toBe(0);
+    expect(reader.cachedBytes).toBe(4 * 4 + 3 * 8);
+    expect(reader.peek("19/h_locations", 0)).toBe(chunk);
+  });
+
+  it("refuses a payload that is not whole words", async () => {
+    // one cell of 4 bytes: half a word
+    const half = new Uint8Array([1, 0, 0, 0, 4, 0, 0, 0, 9, 9, 9, 9]);
+    const reader = createWordReader({
+      async get(key) {
+        return key.endsWith("zarr.json")
+          ? encoder.encode(JSON.stringify(metadata([VLEN])))
+          : half;
+      },
+    });
+    await expect(reader.chunk("19/h_locations", 0)).rejects.toThrow(/uint64/);
   });
 });

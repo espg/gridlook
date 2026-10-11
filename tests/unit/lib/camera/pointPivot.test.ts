@@ -1,0 +1,380 @@
+import * as THREE from "three";
+import type { CustomOrbitControls } from "three";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { describe, expect, it } from "vitest";
+
+import { EARTH_RADIUS_METERS } from "@/lib/camera/cameraSettings.ts";
+import { useSurfaceZoom } from "@/lib/camera/OrbitControlsAddOn.ts";
+import {
+  createPointPivot,
+  dollyTowardGround,
+  groundPointOnRay,
+  POINT_PIVOT_MAX_TILT_DEGREES,
+  POINT_PIVOT_MIN_ALTITUDE_METERS,
+  POINT_PIVOT_MIN_DISTANCE_METERS,
+  surfacePointNearRay,
+  wheelDollyScale,
+} from "@/lib/camera/pointPivot.ts";
+
+const R = EARTH_RADIUS_METERS;
+const SIERRA = { lat: 37, lon: -119.5 };
+
+function onSphere(lat: number, lon: number, radius = 1) {
+  const latRad = THREE.MathUtils.degToRad(lat);
+  const lonRad = THREE.MathUtils.degToRad(lon);
+  return new THREE.Vector3(
+    Math.cos(latRad) * Math.cos(lonRad),
+    Math.cos(latRad) * Math.sin(lonRad),
+    Math.sin(latRad)
+  ).multiplyScalar(radius);
+}
+
+/** A globe camera `altitude` metres above a place, looking at the centre. */
+function globeCamera(altitude: number) {
+  const camera = new THREE.PerspectiveCamera(7.5, 1500 / 900, 0.1, 1000);
+  camera.up.set(0, 0, 1);
+  camera.position.copy(onSphere(SIERRA.lat, SIERRA.lon, 1 + altitude / R));
+  camera.lookAt(0, 0, 0);
+  camera.updateMatrixWorld();
+  return camera;
+}
+
+/** The ground point under a screen position (NDC) of a camera. */
+function groundUnder(camera: THREE.Camera, x: number, y: number) {
+  camera.updateMatrixWorld();
+  const raycaster = new THREE.Raycaster();
+  raycaster.setFromCamera(new THREE.Vector2(x, y), camera);
+  return groundPointOnRay(raycaster.ray.origin, raycaster.ray.direction);
+}
+
+function forwardOf(camera: THREE.Camera) {
+  return camera.getWorldDirection(new THREE.Vector3());
+}
+
+function domElement(clientHeight = 900) {
+  return Object.assign(new EventTarget(), {
+    ownerDocument: new EventTarget(),
+    style: { touchAction: "" },
+    getRootNode() {
+      return this.ownerDocument;
+    },
+    clientHeight,
+    clientWidth: 1500,
+    getBoundingClientRect: () => ({
+      left: 0,
+      top: 0,
+      width: 1500,
+      height: clientHeight,
+    }),
+  }) as unknown as HTMLElement;
+}
+
+function pivotControls(altitude: number) {
+  const camera = globeCamera(altitude);
+  const controls: OrbitControls = new OrbitControls(camera, domElement());
+  controls.enablePan = false;
+  controls.minDistance = 1.0002;
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+  const pivot = createPointPivot(controls);
+  useSurfaceZoom(controls, () => pivot.active);
+  return { camera, controls: controls as CustomOrbitControls, pivot };
+}
+
+describe("groundPointOnRay", () => {
+  it("meets the unit sphere on its near side, and misses past the horizon", () => {
+    const origin = new THREE.Vector3(2, 0, 0);
+    expect(
+      groundPointOnRay(origin, new THREE.Vector3(-1, 0, 0))!.toArray()
+    ).toEqual([1, 0, 0]);
+    expect(groundPointOnRay(origin, new THREE.Vector3(0, 1, 0))).toBeNull();
+    // the surface point under the closest approach stands in for a miss
+    expect(
+      surfacePointNearRay(origin, new THREE.Vector3(0, 1, 0)).toArray()
+    ).toEqual([1, 0, 0]);
+  });
+});
+
+// eslint-disable-next-line max-lines-per-function
+describe("dollyTowardGround", () => {
+  it("keeps the ground under the cursor under the cursor", () => {
+    const camera = globeCamera(2000);
+    for (const [x, y] of [
+      [0.6, -0.4],
+      [-0.9, 0.8],
+      [0, 0],
+    ]) {
+      const before = groundUnder(camera, x, y)!;
+      for (const scale of [0.7, 1.3]) {
+        const next = dollyTowardGround(
+          camera.position,
+          forwardOf(camera),
+          before,
+          scale
+        )!;
+        const moved = camera.clone();
+        moved.position.copy(next.position);
+        moved.updateMatrixWorld();
+        const after = groundUnder(moved, x, y)!;
+        expect(after.distanceTo(before) * R).toBeLessThan(1e-3);
+        // the pivot: on the surface, under the view centre
+        expect(next.target.length()).toBeCloseTo(1, 12);
+        expect(
+          next.target.distanceTo(groundUnder(moved, 0, 0)!) * R
+        ).toBeLessThan(1e-3);
+        // the distance to the cursor's ground scaled as asked
+        expect(next.position.distanceTo(before)).toBeCloseTo(
+          camera.position.distanceTo(before) * scale,
+          12
+        );
+      }
+    }
+  });
+
+  it("stops at the altitude floor and refuses to go below it", () => {
+    const camera = globeCamera(400);
+    const ground = groundUnder(camera, 0.5, 0.5)!;
+    const floor = 1 + POINT_PIVOT_MIN_ALTITUDE_METERS / R;
+    const next = dollyTowardGround(
+      camera.position,
+      forwardOf(camera),
+      ground,
+      0.01
+    )!;
+    expect(next.position.length()).toBeCloseTo(floor, 12);
+    expect(next.position.distanceTo(ground)).toBeLessThan(
+      camera.position.distanceTo(ground)
+    );
+    const grounded = globeCamera(POINT_PIVOT_MIN_ALTITUDE_METERS / 2);
+    expect(
+      dollyTowardGround(grounded.position, forwardOf(grounded), ground, 0.9)
+    ).toBeNull();
+    // zooming out is never held back
+    expect(
+      dollyTowardGround(
+        grounded.position,
+        forwardOf(grounded),
+        ground,
+        1.5
+      )!.position.length()
+    ).toBeGreaterThan(grounded.position.length());
+  });
+});
+
+describe("wheelDollyScale", () => {
+  it("reads a wheel event as OrbitControls does", () => {
+    const pixels = { deltaY: -100, deltaMode: 0, ctrlKey: false };
+    expect(wheelDollyScale(pixels)).toBeCloseTo(0.95, 12);
+    expect(wheelDollyScale({ ...pixels, deltaY: 100 })).toBeCloseTo(
+      1 / 0.95,
+      12
+    );
+    expect(wheelDollyScale({ ...pixels, deltaY: -100 }, 2)).toBeCloseTo(
+      0.95 ** 2,
+      12
+    );
+    expect(
+      wheelDollyScale({ deltaY: -1, deltaMode: 1, ctrlKey: false })
+    ).toBeCloseTo(0.95 ** 0.16, 12);
+    expect(
+      wheelDollyScale({ deltaY: -1, deltaMode: 2, ctrlKey: false })
+    ).toBeCloseTo(0.95, 12);
+    expect(
+      wheelDollyScale({ ...pixels, deltaY: -10, ctrlKey: true })
+    ).toBeCloseTo(0.95, 12);
+  });
+});
+
+// eslint-disable-next-line max-lines-per-function
+describe("createPointPivot", () => {
+  it("enters on the ground under the view without moving the camera, north up", () => {
+    const { camera, controls, pivot } = pivotControls(2000);
+    const position = camera.position.clone();
+    const quaternion = camera.quaternion.clone();
+    pivot.enter(surfacePointNearRay(camera.position, forwardOf(camera)));
+    expect(pivot.active).toBe(true);
+    expect(controls.target.length()).toBeCloseTo(1, 12);
+    expect(
+      controls.target.distanceTo(onSphere(SIERRA.lat, SIERRA.lon)) * R
+    ).toBeLessThan(1e-3);
+    expect(camera.position.distanceTo(position) * R).toBeLessThan(0.01);
+    // the roll is kept: north stays up on screen
+    expect(1 - Math.abs(camera.quaternion.dot(quaternion))).toBeLessThan(1e-9);
+    expect(pivot.pivotDistance() * R).toBeCloseTo(2000, 3);
+    expect(controls.enablePan).toBe(true);
+    expect(controls.enableZoom).toBe(false);
+    expect(controls.screenSpacePanning).toBe(false);
+    expect(controls.maxPolarAngle).toBeCloseTo(
+      THREE.MathUtils.degToRad(POINT_PIVOT_MAX_TILT_DEGREES),
+      12
+    );
+    expect(controls.minDistance * R).toBeCloseTo(
+      POINT_PIVOT_MIN_DISTANCE_METERS,
+      6
+    );
+    expect(controls.mouseButtons.LEFT).toBe(THREE.MOUSE.PAN);
+    expect(controls.mouseButtons.RIGHT).toBe(THREE.MOUSE.ROTATE);
+  });
+
+  it("slides the pivot along the surface on a pan", () => {
+    const { camera, controls, pivot } = pivotControls(2000);
+    pivot.enter(surfacePointNearRay(camera.position, forwardOf(camera)));
+    const start = controls.target.clone();
+    const altitude = camera.position.length() - 1;
+    for (let frame = 0; frame < 60; frame++) {
+      // a drag of a tenth of the screen height per frame, down and right
+      controls._pan(150, 90);
+      controls.update();
+      expect(controls.target.length()).toBeCloseTo(1, 12);
+      // the camera follows at its height above the ground, within
+      // centimetres over kilometres: a tangent step sags off the sphere by
+      // its square
+      expect(camera.position.length() - 1).toBeCloseTo(altitude, 8);
+    }
+    const moved = controls.target.distanceTo(start) * R;
+    // the view spans 2 · 2000 m · tan(3.75°) ≈ 262 m: 6 views panned
+    expect(moved).toBeGreaterThan(1000);
+    expect(moved).toBeLessThan(2000);
+    // and the camera still looks at the pivot
+    expect(
+      surfacePointNearRay(camera.position, forwardOf(camera)).distanceTo(
+        controls.target
+      ) * R
+    ).toBeLessThan(1e-3);
+  });
+
+  it("tilts from nadir to the limit and no further, about the local vertical", () => {
+    const { camera, controls, pivot } = pivotControls(2000);
+    pivot.enter(surfacePointNearRay(camera.position, forwardOf(camera)));
+    controls.enableDamping = false;
+    const distance = pivot.pivotDistance();
+    controls._rotateUp(-THREE.MathUtils.degToRad(60));
+    controls.update();
+    const vertical = controls.target.clone().normalize();
+    const offset = camera.position.clone().sub(controls.target);
+    // within the nadir nudge (1e-6 rad)
+    expect(THREE.MathUtils.radToDeg(offset.angleTo(vertical))).toBeCloseTo(
+      60,
+      3
+    );
+    expect(offset.length()).toBeCloseTo(distance, 12);
+    controls._rotateUp(-THREE.MathUtils.degToRad(60));
+    controls.update();
+    const clamped = camera.position.clone().sub(controls.target);
+    expect(THREE.MathUtils.radToDeg(clamped.angleTo(vertical))).toBeCloseTo(
+      POINT_PIVOT_MAX_TILT_DEGREES,
+      3
+    );
+    // the view centre is still the pivot
+    expect(
+      surfacePointNearRay(camera.position, forwardOf(camera)).distanceTo(
+        controls.target
+      ) * R
+    ).toBeLessThan(1e-3);
+  });
+
+  it("zooms toward the cursor and dollies plainly from the keyboard", () => {
+    const { camera, controls, pivot } = pivotControls(2000);
+    pivot.enter(surfacePointNearRay(camera.position, forwardOf(camera)));
+    controls.enableDamping = false;
+    const cursor = new THREE.Vector2(0.7, -0.5);
+    const before = groundUnder(camera, cursor.x, cursor.y)!;
+    const screenUp = new THREE.Vector3(0, 1, 0).applyQuaternion(
+      camera.quaternion
+    );
+    // four turns of the wheel, a frame rendered between them
+    for (let turn = 0; turn < 4; turn++) {
+      pivot.zoom(0.85, cursor);
+      controls.update();
+      camera.updateMatrixWorld();
+      expect(
+        groundUnder(camera, cursor.x, cursor.y)!.distanceTo(before) * R
+      ).toBeLessThan(1e-2);
+      // and the view does not turn: north stays up
+      expect(
+        new THREE.Vector3(0, 1, 0)
+          .applyQuaternion(camera.quaternion)
+          .angleTo(screenUp)
+      ).toBeLessThan(1e-4);
+    }
+    expect(controls.target.length()).toBeCloseTo(1, 12);
+    expect(pivot.pivotDistance() * R).toBeLessThan(2000);
+    // a keyboard dolly scales the distance to the pivot, not the altitude
+    // above the globe's centre as the surface zoom would
+    const distance = pivot.pivotDistance();
+    controls._dollyIn(0.5);
+    controls.update();
+    expect(pivot.pivotDistance()).toBeCloseTo(distance * 0.5, 12);
+    // and never closer than the limit
+    for (let i = 0; i < 20; i++) {
+      controls._dollyIn(0.5);
+      controls.update();
+    }
+    expect(pivot.pivotDistance() * R).toBeCloseTo(
+      POINT_PIVOT_MIN_DISTANCE_METERS,
+      3
+    );
+  });
+
+  it("keeps the horizon up when tilted, whichever way it looks", () => {
+    const { camera, controls, pivot } = pivotControls(2000);
+    pivot.enter(surfacePointNearRay(camera.position, forwardOf(camera)));
+    controls.enableDamping = false;
+    controls._rotateUp(-THREE.MathUtils.degToRad(60));
+    controls.update();
+    for (let step = 0; step < 12; step++) {
+      controls._rotateLeft(Math.PI / 6);
+      controls.update();
+      const screenUp = new THREE.Vector3(0, 1, 0).applyQuaternion(
+        camera.quaternion
+      );
+      const vertical = controls.target.clone().normalize();
+      const forward = forwardOf(camera);
+      // the vertical's part across the view is screen-up, exactly
+      const horizon = vertical.addScaledVector(forward, -vertical.dot(forward));
+      expect(screenUp.angleTo(horizon)).toBeLessThan(1e-6);
+    }
+  });
+
+  it("leaves onto the globe orbit above the pivot at its altitude", () => {
+    const { camera, controls, pivot } = pivotControls(5000);
+    const before = {
+      minDistance: controls.minDistance,
+      enablePan: controls.enablePan,
+      up: camera.up.clone(),
+      buttons: { ...controls.mouseButtons },
+    };
+    pivot.enter(surfacePointNearRay(camera.position, forwardOf(camera)));
+    controls.enableDamping = false;
+    controls._pan(300, 0);
+    controls._rotateUp(-1);
+    controls.update();
+    const pivotPoint = controls.target.clone();
+    const altitude = camera.position.length() - 1;
+    pivot.leave();
+    expect(pivot.active).toBe(false);
+    expect(controls.target.toArray()).toEqual([0, 0, 0]);
+    expect(camera.position.length() - 1).toBeCloseTo(altitude, 9);
+    expect(
+      camera.position.clone().normalize().distanceTo(pivotPoint) * R
+    ).toBeLessThan(1e-3);
+    expect(camera.up.toArray()).toEqual(before.up.toArray());
+    expect(controls.minDistance).toBe(before.minDistance);
+    expect(controls.enablePan).toBe(before.enablePan);
+    expect(controls.mouseButtons).toEqual(before.buttons);
+    // the surface zoom is back in charge: a dolly scales the altitude
+    controls._dollyIn(0.5);
+    controls.update();
+    expect(camera.position.length() - 1).toBeCloseTo(altitude * 0.5, 9);
+  });
+
+  it("gives up when something else moved the pivot off the sphere", () => {
+    const { camera, controls, pivot } = pivotControls(2000);
+    pivot.enter(surfacePointNearRay(camera.position, forwardOf(camera)));
+    controls.target.set(0, 0, 0);
+    controls.update();
+    expect(pivot.active).toBe(false);
+    expect(controls.enableZoom).toBe(true);
+    expect(camera.up.toArray()).toEqual([0, 0, 1]);
+  });
+});

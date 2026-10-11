@@ -61,6 +61,20 @@ export const DEFAULT_PIXELS_PER_CELL = 16;
 export const DIGEST_PIXELS_PER_CELL = 32;
 
 /**
+ * The pick result that stands for the point tier (gridlook#21): past the
+ * finest level the viewer shows the observations themselves, not a level.
+ */
+export const POINT_TIER = "points";
+
+/**
+ * The point tier takes over once one cell of the finest level spans this
+ * many pixels at the sub-camera point: twice the digest target, so the
+ * finest level is drawn at its own target first and the points come on
+ * where the next finer level would have been picked.
+ */
+export const POINT_TIER_PIXELS_PER_CELL = 2 * DIGEST_PIXELS_PER_CELL;
+
+/**
  * Hysteresis in orders (log2 of cell size, so one order is one unit): another
  * level replaces the active one only when it fits the target better by at
  * least this margin. 0.5 would mean "never switch before the midpoint plus
@@ -108,6 +122,25 @@ export function pickResolution(
   return level.derived && level.resolution !== undefined
     ? (level.resolution * pixelsPerCell) / DIGEST_PIXELS_PER_CELL
     : level.resolution;
+}
+
+/**
+ * Index of the level with the smallest cells; undefined without a level that
+ * states its resolution.
+ */
+export function finestLevel(
+  levels: readonly Pick<TSourceLevel, "resolution">[]
+): number | undefined {
+  let finest: number | undefined;
+  for (const [index, level] of levels.entries()) {
+    if (
+      level.resolution! > 0 &&
+      (finest === undefined || level.resolution! < levels[finest].resolution!)
+    ) {
+      finest = index;
+    }
+  }
+  return finest;
 }
 
 export type TLevelSelectionCamera = {
@@ -219,4 +252,29 @@ export function selectLevel(
   }
   const hysteresis = options.hysteresisOrders ?? DEFAULT_HYSTERESIS_ORDERS;
   return mismatch(best) + hysteresis < mismatch(active) ? best : active;
+}
+
+/**
+ * Whether the point tier is on: the finest level's cells, of `resolution`
+ * metres, span `POINT_TIER_PIXELS_PER_CELL` on screen, from the camera or
+ * the ground metres per pixel measured below it. Once on it stays on until
+ * the cells shrink by `hysteresisOrders` below that, so a view at the
+ * boundary does not flap between the points and the level.
+ */
+export function selectPointTier(
+  camera: TLevelSelectionCamera | number,
+  resolution: number,
+  active: boolean,
+  hysteresisOrders = DEFAULT_HYSTERESIS_ORDERS
+): boolean {
+  const metersPerPixel =
+    typeof camera === "number" ? camera : groundMetersPerPixel(camera);
+  if (!(resolution > 0) || !(metersPerPixel > 0)) {
+    return false;
+  }
+  const pixels = resolution / metersPerPixel;
+  const threshold = active
+    ? POINT_TIER_PIXELS_PER_CELL / 2 ** hysteresisOrders
+    : POINT_TIER_PIXELS_PER_CELL;
+  return pixels >= threshold;
 }

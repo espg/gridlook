@@ -14,6 +14,7 @@ import compressedLutFragmentShader from "./glsl/compressedLut.frag.glsl";
 import gpuProjectedMeshVertexShader from "./glsl/gpuProjectedMesh.vert.glsl";
 import gpuProjectedPointVertexShader from "./glsl/gpuProjectedPoint.vert.glsl";
 import gpuProjectedTextureVertexShader from "./glsl/gpuProjectedTexture.vert.glsl";
+import heightPointVertexShader from "./glsl/heightPoint.vert.glsl";
 import pointFalloffFragmentShader from "./glsl/pointFalloff.frag.glsl";
 import scalarColormapFragmentShader from "./glsl/scalarColormap.frag.glsl";
 import screenQuadValueVertexShader from "./glsl/screenQuadValue.vert.glsl";
@@ -208,6 +209,43 @@ export function makeGpuProjectedPointMaterial(
     fragmentShader: pointFalloffFragmentShader,
   });
   return material;
+}
+
+/**
+ * The material of the observation tier's points (globe only): positions
+ * relative to the object's origin on the unit sphere, lifted by their
+ * height, coloured by it with the same colormap uniforms as every grid.
+ * `earthRadius` is the metres one scene unit stands for; the reference
+ * height and the exaggeration are uniforms for the controls to come.
+ */
+export function makeHeightPointMaterial(
+  colormap: TColorMap,
+  addOffset: number,
+  scaleFactor: number,
+  earthRadius: number
+) {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      addOffset: { value: addOffset },
+      scaleFactor: { value: scaleFactor },
+      basePointSize: { value: 1.0 },
+      minPointSize: { value: 1.0 },
+      maxPointSize: { value: 8.0 },
+      posterizeLevels: { value: 0.0 },
+      hideBelowValue: { value: -1e38 },
+      hideAboveValue: { value: 1e38 },
+      colormap: { value: availableColormaps[colormap] },
+      heightReference: { value: 0.0 },
+      heightExaggeration: { value: 1.0 },
+      earthRadius: { value: earthRadius },
+    },
+    transparent: true,
+    depthWrite: false,
+    // the cloud is drawn over the level beneath it, whatever the depth says
+    depthTest: false,
+    vertexShader: heightPointVertexShader,
+    fragmentShader: pointFalloffFragmentShader,
+  });
 }
 
 /**

@@ -1,4 +1,4 @@
-import type { CustomOrbitControls } from "three";
+import type { CustomOrbitControls, Quaternion, Vector3 } from "three";
 import type { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
 import { getGlobeMovementScale } from "./cameraSettings.ts";
@@ -25,6 +25,12 @@ declare module "three" {
     _dollyIn: (scale: number) => void;
     _dollyOut: (scale: number) => void;
     _scale: number;
+    // the frame the spherical coordinates are taken in: `object.up` to +Y,
+    // set once at construction
+    _quat: Quaternion;
+    _quatInverse: Quaternion;
+    // the pan still to be applied, world space
+    _panOffset: Vector3;
   }
 }
 
