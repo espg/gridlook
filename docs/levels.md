@@ -185,9 +185,9 @@ and the digests are read there whether or not that group is a level.
 Past derived order 17 the viewer shows the observations themselves: the
 photons of the leaf chunks under the view, each drawn at its height. The
 tier is a mode of the level selector, not a level: the picker shows
-"points (signal)" while it is on, and the order-17 mesh stays drawn beneath
-the cloud. It exists on the globe only; a flat projection stops at the
-finest level.
+"points (signal)" while it is on, and the order-17 mesh is hidden, so the
+cloud is drawn on black (the level is still read: a click pins its cells).
+It exists on the globe only; a flat projection stops at the finest level.
 
 - **Hand-off.** The tier comes on when a cell of the finest level would span
   **64 pixels** on screen (`POINT_TIER_PIXELS_PER_CELL`, twice the digest

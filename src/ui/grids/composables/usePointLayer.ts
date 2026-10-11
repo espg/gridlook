@@ -46,7 +46,7 @@ import { useLog } from "@/ui/common/useLog.ts";
 const POINT_PIXELS = 3;
 /** Decoded chunks kept across windows, bytes. */
 const POINT_CACHE_BYTES = 64 * 2 ** 20;
-/** Drawn after the level beneath (0) and before the overlays. */
+/** Drawn after the (hidden) level (0) and before the overlays. */
 const POINT_RENDER_ORDER = 0.5;
 
 type TPointLayerOptions = {
@@ -118,10 +118,10 @@ function pointGeometry(chunk: TPointChunk, stride: number) {
 
 /**
  * The point tier (gridlook#21, phase A): past the finest derived level, the
- * observations of the leaf chunks under the view, drawn at their height
- * over that level, which stays on screen beneath them. On while the store
- * says so and the globe is drawn; the camera then pivots on the ground
- * (`pointPivot`). The chunks are those the finest level reads for the same
+ * observations of the leaf chunks under the view, drawn at their height in
+ * place of that level, which the grid hides meanwhile (its data stays for
+ * the probe). On while the store says so and the globe is drawn; the camera
+ * then pivots on the ground (`pointPivot`). The chunks are those the finest level reads for the same
  * view, from the same caches, so a view that just left it reads nothing
  * new; over the point budget every k-th point of every chunk is drawn.
  */
