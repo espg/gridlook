@@ -321,6 +321,8 @@ const pointLayer = usePointLayer({
   registerUpdateLOD,
   onColormapChange,
   updateColormap,
+  updateHistogram,
+  restoreHistogram: scalarCache.restoreHistogram,
   projectionHelper,
   pointPivot,
 });

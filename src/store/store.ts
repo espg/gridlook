@@ -276,6 +276,9 @@ export const useGlobeControlStore = defineStore("globeControl", {
       // over the finest level, which `selectedLevel` then is
       pointTier: false,
       pointTierStats: undefined as TPointTierStats | undefined,
+      // the colour range of the drawn points, in place of the level's data
+      // range while the tier is on (a custom range still wins)
+      pointTierBounds: undefined as TBounds | undefined,
       // whether every level shares the coarsest level's colour range and
       // histogram (right for a mean, e.g. elevation) or each level takes its
       // own (right for a sum, e.g. a count, which grows 4x per level)
@@ -388,6 +391,9 @@ export const useGlobeControlStore = defineStore("globeControl", {
     },
     setPointTierStats(stats: TPointTierStats | undefined) {
       this.pointTierStats = stats;
+    },
+    setPointTierBounds(bounds: TBounds | undefined) {
+      this.pointTierBounds = bounds;
     },
     setLevelAuto(auto: boolean) {
       this.levelAuto = auto;

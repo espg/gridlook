@@ -207,8 +207,14 @@ It exists on the globe only; a flat projection stops at the finest level.
 - **Height.** A point sits at `r = 1 + (h − h_ref) · exaggeration / R` globe
   radii, with `R` the store's semi-major axis; the reference height is 0 and
   the exaggeration 1 for now (both are shader uniforms). Positions are kept
-  relative to each chunk's centre so that float32 resolves millimetres; the
-  colour is the height on the current colormap and range.
+  relative to each chunk's centre so that float32 resolves millimetres.
+- **Colour.** The colour is the height on the current colormap, over the
+  drawn points' own range: their 2nd to 98th percentile
+  (`src/lib/points/pointRange.ts`), read from a uniform sample of at most
+  65 536 of them and refreshed as chunks land or the decimation changes;
+  the histogram in the appearance panel is the same sample's. A custom
+  range still wins. Leaving the tier puts the level's range and histogram
+  back (the shared range across levels, unless that is off).
 - **Budget.** At most `OBSERVATION_POINT_BUDGET` (300 000) points are drawn:
   over it, every k-th centroid of every chunk is drawn, uniformly and
   deterministically, never by place. A window is priced before it is read

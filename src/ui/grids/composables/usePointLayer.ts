@@ -26,6 +26,7 @@ import {
   unitVector,
   type TPointChunk,
 } from "@/lib/points/pointChunk.ts";
+import { pointRange } from "@/lib/points/pointRange.ts";
 import {
   locationsArrayOf,
   pointArrayPath,
@@ -41,6 +42,7 @@ import {
 import type { TSources } from "@/lib/types/GlobeTypes.ts";
 import { useGlobeControlStore } from "@/store/store.ts";
 import { useLog } from "@/ui/common/useLog.ts";
+import type { useGridHistogram } from "@/ui/grids/composables/useGridHistogram.ts";
 
 /** Screen pixels of a point at the pivot's depth. */
 const POINT_PIXELS = 3;
@@ -56,6 +58,9 @@ type TPointLayerOptions = {
   registerUpdateLOD: (update: () => void) => void;
   onColormapChange: (callback: () => void) => void;
   updateColormap: (meshes: (THREE.Points | undefined)[]) => void;
+  updateHistogram: ReturnType<typeof useGridHistogram>["updateHistogram"];
+  /** The level's histogram again, when the tier is left. */
+  restoreHistogram: () => void;
   projectionHelper: ComputedRef<ProjectionHelper>;
   pointPivot: {
     enter: () => void;
@@ -121,9 +126,12 @@ function pointGeometry(chunk: TPointChunk, stride: number) {
  * observations of the leaf chunks under the view, drawn at their height in
  * place of that level, which the grid hides meanwhile (its data stays for
  * the probe). On while the store says so and the globe is drawn; the camera
- * then pivots on the ground (`pointPivot`). The chunks are those the finest level reads for the same
- * view, from the same caches, so a view that just left it reads nothing
- * new; over the point budget every k-th point of every chunk is drawn.
+ * then pivots on the ground (`pointPivot`). The chunks are those the finest
+ * level reads for the same view, from the same caches, so a view that just
+ * left it reads nothing new; over the point budget every k-th point of
+ * every chunk is drawn. The colour range and the histogram are the drawn
+ * heights' (`pointRange`), refreshed as the window changes, until the tier
+ * is left and the level's rule again.
  */
 // eslint-disable-next-line max-lines-per-function
 export function usePointLayer(options: TPointLayerOptions) {
@@ -204,6 +212,29 @@ export function usePointLayer(options: TPointLayerOptions) {
     loaded = undefined;
     stride = 1;
     store.setPointTierStats(undefined);
+    if (store.pointTierBounds) {
+      store.setPointTierBounds(undefined);
+      options.restoreHistogram();
+    }
+  }
+
+  /** The drawn heights' range and histogram, as the store's data range. */
+  function publishRange() {
+    const range = pointRange(
+      drawn().map(
+        ({ geometry }) =>
+          geometry.getAttribute("data_value").array as Float32Array
+      )
+    );
+    if (!range) {
+      return;
+    }
+    store.setPointTierBounds({ low: range.low, high: range.high });
+    options.updateHistogram(
+      range.sample,
+      range.sample[0],
+      range.sample[range.sample.length - 1]
+    );
   }
 
   function publishStats(complete: boolean) {
@@ -381,6 +412,7 @@ export function usePointLayer(options: TPointLayerOptions) {
         redecimate();
         updatePointSize();
         publishStats(false);
+        publishRange();
         options.redraw();
       })
     );
@@ -429,6 +461,15 @@ export function usePointLayer(options: TPointLayerOptions) {
       reload();
     }
   });
+  // a level shown meanwhile (a slice, a window) brings its histogram along
+  watch(
+    () => store.varinfo,
+    () => {
+      if (active.value && window.size) {
+        publishRange();
+      }
+    }
+  );
   options.onColormapChange(() => options.updateColormap(drawn()));
   options.registerUpdateLOD(updatePointSize);
   onScopeDispose(() => {

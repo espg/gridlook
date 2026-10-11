@@ -181,3 +181,26 @@ it("discards pending displays when a new scalar slice is loaded", async () => {
     scope.stop();
   }
 });
+
+it("puts the shown frame's histogram back after another layer's", async () => {
+  const { cache, store, scope } = setupCache();
+  try {
+    // nothing on screen yet: nothing to put back
+    const staged = store.fullHistogram;
+    cache.restoreHistogram();
+    expect(store.fullHistogram).toBe(staged);
+    await cache.restoreScalar();
+    const shown = store.fullHistogram;
+    const summary = store.histogramSummary;
+    scope.run(() => {
+      const { updateHistogram } = useGridHistogram();
+      updateHistogram(new Float32Array([1200, 1300, 1500]), 1200, 1500);
+    });
+    expect(store.histogramSummary).not.toBe(summary);
+    cache.restoreHistogram();
+    expect(store.fullHistogram).toEqual(shown);
+    expect(store.histogramSummary?.min).toBe(270);
+  } finally {
+    scope.stop();
+  }
+});
