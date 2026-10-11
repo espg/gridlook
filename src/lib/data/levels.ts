@@ -235,6 +235,19 @@ export function windowCost(
   return bytes / budget;
 }
 
+/** The coarsest of some levels: the least harmful when nothing fits. */
+function coarsestOf<T extends { level: Pick<TSourceLevel, "resolution"> }>(
+  candidates: T[]
+) {
+  let coarsest = candidates[0];
+  for (const candidate of candidates) {
+    if (candidate.level.resolution! > coarsest.level.resolution!) {
+      coarsest = candidate;
+    }
+  }
+  return coarsest;
+}
+
 export type TViewLevel = Pick<
   TSourceLevel,
   "resolution" | "cellCount" | "derived"
@@ -304,13 +317,5 @@ export function selectViewLevel(
       pick = candidate;
     }
   }
-  if (!pick) {
-    pick = candidates[0];
-    for (const candidate of candidates) {
-      if (candidate.level.resolution! > pick.level.resolution!) {
-        pick = candidate;
-      }
-    }
-  }
-  return pick.index;
+  return (pick ?? coarsestOf(candidates)).index;
 }

@@ -107,6 +107,28 @@ it("measures block distances in degrees, in the order blocks are ranked", () => 
   );
 });
 
+it("leaves out the blocks a store holds nothing for, uncut", () => {
+  using grid = new Grid({ scheme: "nested", level: 12 });
+  using blockGrid = new Grid({ scheme: "nested", level: 6 });
+  const below = Number(
+    blockGrid.lonLatToHealpix(Float64Array.of(-99.5, 40.5))[0]
+  );
+  const only = healpixViewWindow(
+    grid,
+    box,
+    0.5,
+    1,
+    undefined,
+    (b) => b === below
+  );
+  expect(only.blocks).toEqual([below]);
+  expect(only.cut).toBe(false);
+  expect(only.clipped).toBe(false);
+  expect(
+    healpixViewWindow(grid, box, 0.5, 1, undefined, () => false).blocks
+  ).toEqual([]);
+});
+
 it("cuts a polar view down around the camera, not around longitude 0", () => {
   using grid = new Grid({ scheme: "nested", level: 14 });
   // every longitude is in view; the camera is over 88.5°N 120°E

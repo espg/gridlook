@@ -21,6 +21,8 @@ import { useStreamlineLayer } from "./composables/useStreamlineLayer.ts";
 import { useVolume } from "./composables/useVolume.ts";
 
 import { buildDimensionRangesAndIndices } from "@/lib/data/dimensionHandling.ts";
+import { coveredBlocks, hiveNodes } from "@/lib/data/hiveStore.ts";
+import { parseStorePath } from "@/lib/data/icechunkStore.ts";
 import {
   coarsestLevel,
   currentLevel,
@@ -529,8 +531,15 @@ function loadsByView() {
  */
 function viewWindow(margin: number) {
   const grid = unpackGrid();
-  const cellsPerBlock =
-    4 ** (grid.level - healpixBlockLevel(grid.level, blockDepth));
+  const blockLevel = healpixBlockLevel(grid.level, blockDepth);
+  const cellsPerBlock = 4 ** (grid.level - blockLevel);
+  // a hive store says where it has nodes: the window reads nothing elsewhere
+  const source = ZarrDataManager.getDatasetSource(
+    props.datasources!,
+    varnameSelector.value
+  );
+  const nodes =
+    source && hiveNodes(parseStorePath(source.store).url, grid.level);
   const maxBlocks = levelDigest
     ? digestWindowBlocks(
         currentLevel(props.datasources!),
@@ -544,7 +553,8 @@ function viewWindow(margin: number) {
         store.viewFootprint,
         margin,
         maxBlocks,
-        blockDepth
+        blockDepth,
+        nodes && coveredBlocks(nodes, blockLevel)
       )
     : { blocks: [], cut: false, clipped: false };
 }

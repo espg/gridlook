@@ -162,11 +162,20 @@ function inView(footprint: TViewFootprint, lon: number, lat: number) {
 }
 
 /**
+ * With a store that says where it has nodes, the box is sampled this many
+ * times over the budget before it is shrunk by area: the blocks it holds
+ * nothing for cost nothing.
+ */
+const COVERAGE_OVERSAMPLE = 4;
+
+/**
  * Ids of the blocks of a nested level that a view footprint touches, grown
  * by `margin` (a fraction of the footprint's size) on every side, ascending.
  * At most `maxBlocks` are returned, those nearest the centre of the view;
  * `cut` says whether the budget left any block out, `clipped` whether one of
- * them was in view itself rather than in the margin.
+ * them was in view itself rather than in the margin. A block `exists` says
+ * the store holds nothing for is left out before the budget, and never
+ * counts as cut.
  */
 // eslint-disable-next-line max-lines-per-function
 export function healpixViewWindow(
@@ -174,7 +183,8 @@ export function healpixViewWindow(
   footprint: TViewFootprint,
   margin = 0,
   maxBlocks = Infinity,
-  depth?: number
+  depth?: number,
+  exists?: (block: number) => boolean
 ) {
   const blockLevel = healpixBlockLevel(grid.level, depth);
   const side = healpixBlockSide(blockLevel);
@@ -182,7 +192,7 @@ export function healpixViewWindow(
     footprint,
     margin,
     side,
-    maxBlocks
+    exists ? maxBlocks * COVERAGE_OVERSAMPLE : maxBlocks
   );
   // Four samples per block side: a block is only missed where less than a
   // quarter of its side reaches into the box, and the margin covers that.
@@ -205,7 +215,12 @@ export function healpixViewWindow(
     blockGrid.lonLatToHealpix(Float64Array.from(coordinates)),
     Number
   );
-  let blocks = [...new Set(sampled)];
+  const present = exists ? sampled.map(exists) : undefined;
+  let blocks = [
+    ...new Set(
+      present ? sampled.filter((_, index) => present[index]) : sampled
+    ),
+  ];
   // the box shrank into the view, or a block in view is over the budget
   let clipped =
     south > footprint.latMin ||
@@ -223,7 +238,8 @@ export function healpixViewWindow(
       )
     );
     clipped ||= sampled.some(
-      (block, index) => visible[index] && !kept.has(block)
+      (block, index) =>
+        visible[index] && (present?.[index] ?? true) && !kept.has(block)
     );
     blocks = [...kept];
   }

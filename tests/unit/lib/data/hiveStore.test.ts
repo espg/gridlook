@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import * as zarr from "zarrita";
 
-import { createHiveStore } from "@/lib/data/hiveStore.ts";
+import {
+  coveredBlocks,
+  createHiveStore,
+  hiveNodes,
+} from "@/lib/data/hiveStore.ts";
 import { parseMortonDecimal } from "@/lib/morton/decimal.ts";
 import { wordToNested } from "@/lib/morton/word.ts";
 
@@ -437,5 +441,34 @@ describe("createHiveStore through zarrita", () => {
     await expect(createHiveStore("mem://hive", inner)).rejects.toThrow(
       "not supported yet"
     );
+  });
+});
+
+describe("hiveNodes", () => {
+  it("names the nodes it holds at every level, for a window", async () => {
+    await createHiveStore("mem://hive", hive());
+    expect(hiveNodes("mem://hive", 13)).toEqual({
+      nodeOrder: 9,
+      ranks: new Set([r9]),
+    });
+    expect(hiveNodes("mem://hive", 12)).toEqual({
+      nodeOrder: 8,
+      ranks: new Set([r8]),
+    });
+    // a level derived from the leaves is held by the leaves' nodes
+    expect(hiveNodes("mem://hive/", 15)).toEqual({
+      nodeOrder: 9,
+      ranks: new Set([r9]),
+    });
+    expect(hiveNodes("mem://elsewhere", 13)).toBeUndefined();
+    const nodes = hiveNodes("mem://hive", 13)!;
+    // blocks under the node, and the block over it
+    const fine = coveredBlocks(nodes, 11);
+    expect(fine(r9 * 16)).toBe(true);
+    expect(fine(r9 * 16 + 15)).toBe(true);
+    expect(fine(r9 * 16 + 16)).toBe(false);
+    const coarse = coveredBlocks(nodes, 7);
+    expect(coarse(Math.floor(r9 / 16))).toBe(true);
+    expect(coarse(Math.floor(r9 / 16) + 1)).toBe(false);
   });
 });
