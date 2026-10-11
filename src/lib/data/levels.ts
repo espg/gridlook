@@ -50,28 +50,25 @@ export const STREAMLINES_NEED_WHOLE_LEVEL =
   "Streamlines read a whole level, and this one is too large to load whole. Pick a coarser level.";
 
 /**
- * Target on-screen size of one cell, in pixels, at the sub-camera point.
- * Two keeps the outer zooms from looking coarse; a stored cell costs bytes,
- * so 64 times the cells of a 16 px target is still a small window.
+ * The least a cell of a stored level may span on screen, in pixels, for the
+ * level to be picked: finer cells than this are wasted on the screen. The
+ * finest level over this floor whose window fits its budget is shown.
  */
 export const DEFAULT_PIXELS_PER_CELL = 2;
 
 /**
- * The target for a variable derived from a t-digest. A cell with data costs
- * about 3.6 KB of digest whatever its level (against 4 B for a dense value),
- * so a view is priced by its cell count: twice the cell size is a quarter of
- * the bytes.
+ * The floor for a level derived from leaf chunks. Its window costs a leaf
+ * chunk per cell of ground whatever the order derived, so the budget alone
+ * would always pick the finest derived level; this keeps a derived level
+ * from coming on before its cells are worth their decode.
  */
 export const DIGEST_PIXELS_PER_CELL = 16;
 
 /**
- * Hysteresis in orders (log2 of cell size, so one order is one unit): another
- * level replaces the active one only when it fits the target better by at
- * least this margin. 0.5 would mean "never switch before the midpoint plus
- * half an order"; 0.35 keeps the dead band clear of the midpoint while still
- * switching before the mismatch reaches a full order.
+ * The active level keeps this much slack on both tests, so that a slow zoom
+ * across a boundary does not flip the level back and forth.
  */
-export const DEFAULT_HYSTERESIS_ORDERS = 0.35;
+export const LEVEL_SLACK = 1.5;
 
 /**
  * Finest level the camera may pick on a grid that loads its levels whole, as
@@ -113,12 +110,14 @@ export const DEFAULT_VIEW_BUDGET_BYTES = 64 * 2 ** 20;
 export const DIGEST_CHUNK_BYTES = 34 * 1024;
 
 /**
- * Bytes a cell of a stored digest level costs, as measured on the ATL03 v3
- * store: 1.7 KB at order 13, 0.5 KB at 12 and less above, where most cells
- * are empty. An estimate until the store's chunk index prices each chunk.
+ * Bytes a cell of a stored digest level costs, as listed on the ATL03 v3
+ * store: 1.7 KB at order 13 (1.29 GB over 759 000 cells), 2.0 KB at 12
+ * (370 MB over 190 000) and about as much above, where a cell holds more
+ * photons but its digest is capped. An estimate until the store's chunk
+ * index prices each chunk.
  */
 export function digestCellBytes(order: number) {
-  return order >= 13 ? 1700 : order === 12 ? 512 : 256;
+  return order >= 13 ? 1700 : 2000;
 }
 
 /**
@@ -137,20 +136,14 @@ export function digestWindowBlocks(
   return Math.max(Math.floor(budget / blockBytes), 1);
 }
 
-/**
- * The cell size a level is picked at, in pixels, when a level stored and a
- * level derived from it differ: `derived` for the levels computed from leaf
- * chunks, which cost as a digest does whatever the variable. The size is a
- * property of the level, not of the level on screen, so the pick is the
- * same from either side of a boundary.
- */
-export function pickResolution(
-  level: Pick<TSourceLevel, "resolution" | "derived">,
-  pixelsPerCell: number
-) {
-  return level.derived && level.resolution !== undefined
-    ? (level.resolution * pixelsPerCell) / DIGEST_PIXELS_PER_CELL
-    : level.resolution;
+/** Leaf orders one zagg leaf chunk spans: 4^6 leaf cells, an order-13 cell. */
+const DIGEST_CHUNK_ORDERS = 6;
+
+/** The HEALPix order whose cells have `resolution` metres of side. */
+export function healpixOrderOf(resolution: number) {
+  return Math.round(
+    Math.log2((EARTH_RADIUS_METERS * Math.sqrt(Math.PI / 3)) / resolution)
+  );
 }
 
 export type TLevelSelectionCamera = {
@@ -158,12 +151,6 @@ export type TLevelSelectionCamera = {
   altitudeMeters: number;
   viewportHeightPx: number;
   fovDegrees?: number;
-};
-
-export type TLevelSelectionOptions = {
-  pixelsPerCell?: number;
-  hysteresisOrders?: number;
-  maxCells?: number;
 };
 
 /**
@@ -208,22 +195,71 @@ export function exceedsCellCap(
   return estimatedCellCount(level) > maxCells;
 }
 
+/** Cells of a level across the viewport, by area at the scale below the camera. */
+export function cellsInView(
+  resolution: number,
+  metersPerPixel: number,
+  viewportPixels: number
+) {
+  return viewportPixels * (metersPerPixel / resolution) ** 2;
+}
+
 /**
- * The level a camera should render: the level whose cells come nearest to
- * `pixelsPerCell` pixels at the sub-camera point (nearest in log2 cell size),
- * from the camera, or from the ground metres per pixel measured there,
- * skipping levels with more cells than `maxCells`, and keeping the active
- * level unless another fits better by more than `hysteresisOrders`. Returns
- * the index into `levels`; `active` when there is nothing to choose from
- * (fewer than two levels, or levels without a resolution).
+ * The cost of a level's window at a view as a fraction of its budget: for a
+ * variable derived from a t-digest, bytes against the window budget (per
+ * cell on a stored level, per leaf chunk on a derived one); for any other,
+ * cells against the view cap.
  */
-export function selectLevel(
-  camera: TLevelSelectionCamera | number,
-  levels: readonly Pick<TSourceLevel, "resolution" | "cellCount">[],
+export function windowCost(
+  level: Pick<TSourceLevel, "resolution" | "derived">,
+  cells: number,
+  digest: boolean,
+  budget = DEFAULT_VIEW_BUDGET_BYTES
+) {
+  if (!digest) {
+    return cells / DEFAULT_MAX_VIEW_CELLS;
+  }
+  const bytes = level.derived
+    ? (cells / 4 ** (DIGEST_CHUNK_ORDERS - level.derived.refinement)) *
+      DIGEST_CHUNK_BYTES
+    : cells * digestCellBytes(healpixOrderOf(level.resolution!));
+  return bytes / budget;
+}
+
+export type TViewLevel = Pick<
+  TSourceLevel,
+  "resolution" | "cellCount" | "derived"
+> & {
+  /** Whether the level is loaded as the part in view rather than whole. */
+  byView?: boolean;
+};
+
+export type TLevelSelectionOptions = {
+  /** Whether the variable shown is derived from a t-digest. */
+  digest?: boolean;
+  pixelFloor?: number;
+  derivedPixelFloor?: number;
+  budget?: number;
+  slack?: number;
+};
+
+/**
+ * The level a view should render: the finest level whose cells span at least
+ * the pixel floor on screen and whose window, the cells in view priced by
+ * `windowCost`, fits its budget. A level loaded whole must also be under the
+ * whole-level cell cap. The active level keeps `slack` on the floor and the
+ * budget so that a slow zoom does not flip it. With nothing eligible the
+ * coarsest level is the least harmful. Returns the index into `levels`;
+ * `active` when there is nothing to choose from (fewer than two levels, or
+ * levels without a resolution).
+ */
+export function selectViewLevel(
+  metersPerPixel: number,
+  viewportPixels: number,
+  levels: readonly TViewLevel[],
   active: number,
   options: TLevelSelectionOptions = {}
 ): number {
-  const maxCells = options.maxCells ?? DEFAULT_MAX_LEVEL_CELLS;
   const candidates = levels
     .map((level, index) => ({ level, index }))
     .filter(
@@ -232,34 +268,40 @@ export function selectLevel(
   if (levels.length < 2 || candidates.length !== levels.length) {
     return active;
   }
-  const target =
-    (options.pixelsPerCell ?? DEFAULT_PIXELS_PER_CELL) *
-    (typeof camera === "number" ? camera : groundMetersPerPixel(camera));
-  const mismatch = (index: number) =>
-    Math.abs(Math.log2(levels[index].resolution!) - Math.log2(target));
-  const eligible = candidates.filter(
-    ({ level }) => !exceedsCellCap(level, maxCells)
-  );
-  if (eligible.length === 0) {
-    // Nothing fits the renderer: the coarsest level is the least harmful.
-    let coarsest = candidates[0];
+  const slack = options.slack ?? LEVEL_SLACK;
+  const eligible = ({ level, index }: (typeof candidates)[number]) => {
+    const give = index === active ? slack : 1;
+    const floor = level.derived
+      ? (options.derivedPixelFloor ?? DIGEST_PIXELS_PER_CELL)
+      : (options.pixelFloor ?? DEFAULT_PIXELS_PER_CELL);
+    const cells = cellsInView(
+      level.resolution!,
+      metersPerPixel,
+      viewportPixels
+    );
+    return (
+      level.resolution! / metersPerPixel >= floor / give &&
+      windowCost(level, cells, options.digest ?? false, options.budget) <=
+        give &&
+      (level.byView || !exceedsCellCap(level))
+    );
+  };
+  let pick: (typeof candidates)[number] | undefined;
+  for (const candidate of candidates) {
+    if (
+      eligible(candidate) &&
+      (!pick || candidate.level.resolution! < pick.level.resolution!)
+    ) {
+      pick = candidate;
+    }
+  }
+  if (!pick) {
+    pick = candidates[0];
     for (const candidate of candidates) {
-      if (candidate.level.resolution! > coarsest.level.resolution!) {
-        coarsest = candidate;
+      if (candidate.level.resolution! > pick.level.resolution!) {
+        pick = candidate;
       }
     }
-    return coarsest.index;
   }
-  let best = eligible[0].index;
-  for (const { index } of eligible) {
-    if (mismatch(index) < mismatch(best)) {
-      best = index;
-    }
-  }
-  const activeEligible = eligible.some(({ index }) => index === active);
-  if (!activeEligible) {
-    return best;
-  }
-  const hysteresis = options.hysteresisOrders ?? DEFAULT_HYSTERESIS_ORDERS;
-  return mismatch(best) + hysteresis < mismatch(active) ? best : active;
+  return pick.index;
 }

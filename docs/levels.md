@@ -48,14 +48,30 @@ than two usable levels is opened as a single-level dataset.
 
 In every projection, also while the camera is moving, Gridlook measures the
 ground distance one screen pixel covers at the point below the camera and
-picks the level whose cells come nearest to **2 pixels** on screen (nearest
-in log2 of the cell size). The active level is kept unless another level fits
-better by more than **0.35 orders**, so panning along a boundary does not flip
-back and forth. Where a projection stretches the map more one way than the
-other, the coarser of the two directions counts, so cells are never smaller
-than the target. A flat projection also stretches the map unevenly from place
-to place, so away from the point below the camera the cells can be larger or
-smaller on screen than the target.
+picks the **finest level that passes two tests**:
+
+- its cells span at least **2 pixels** on screen (a level derived from leaf
+  chunks, **16 pixels**: its window costs a leaf chunk per cell of ground
+  whatever the order, so the budget alone would always pick the finest);
+- its window fits: the cells the viewport holds at that scale, priced in
+  bytes for a variable derived from a t-digest (per cell on a stored level,
+  per leaf chunk on a derived one) against the 64 MB window budget, or in
+  cells against the view cap for any other variable.
+
+A level loaded whole must also be under the whole-level cell cap. The active
+level keeps **1.5×** slack on both tests, so a slow zoom across a boundary
+does not flip back and forth; with nothing eligible the coarsest level is
+shown. Where a projection stretches the map more one way than the other, the
+coarser of the two directions counts, so cells are never smaller than the
+floor. A flat projection also stretches the map unevenly from place to place,
+so away from the point below the camera the cells can be larger or smaller
+on screen than at the centre.
+
+Over California, the ATL03 store's order-12 level is 370 MB of signal digest
+and order 13 is 1.29 GB: from far enough out to see the whole state a height
+view picks order 9 or 10, and order 13 comes on where its window is under
+the budget, at about 6 pixels per cell on a 1500 × 900 screen. A `count`
+costs bytes per cell and is picked at the pixel floor alone.
 
 A level switch keeps the view: the level on screen stays until the next one
 has loaded and then replaces it in one frame. Triangular grids rebuild their
@@ -195,8 +211,9 @@ and a level index kept from a longer list falls back to the finest level.
   the pooled ones (128 MB), so changing the percentile, or going from one
   derived order to another over the same ground, reads nothing.
 - A chunk costs the same bytes whatever the order derived from it, so a
-  derived level is picked at 16 pixels per cell for every variable, `count`
-  included (a stored level is picked at 2).
+  derived level comes on at 16 pixels per cell for every variable, `count`
+  included, once the chunks under the view fit the budget (a stored level
+  comes on at 2 pixels per cell).
 
 The distribution panel shows the pooled digest of a derived cell: the
 derived level names the leaf group it is computed from (`derived.dataset`),
