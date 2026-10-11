@@ -104,10 +104,10 @@ bytes); `count` and the other stored variables keep the half:
   The blocks of a window are read nearest the point below the camera first,
   a few at a time, and each face is drawn again with the blocks landed so
   far every 150 ms, so the cells under the camera show while the margin is
-  still loading. A cell not yet landed is blank, as a cell outside the
-  window is; the colour range, the histogram and the hover readout follow
-  once the window is in. A level or window change while a window loads
-  stops its reads and draws nothing more of it.
+  still loading. A cell not yet landed shows the level beneath (below), as a
+  cell outside the window does; the colour range, the histogram and the
+  hover readout follow once the window is in. A level or window change
+  while a window loads stops its reads and draws nothing more of it.
 
 The window is reloaded in place once the view leaves it; moving inside it
 fetches nothing. While the camera keeps moving, a window that is already
@@ -115,12 +115,41 @@ loading is shown before the next one is requested. With a level picked by
 hand that is too fine for the view, the window is cut down to the budget
 around the point below the camera.
 
-The coarsest level is the exception: it is always loaded whole. It is drawn
-under a finer level wherever that level has no cells on screen (outside its
-window, or outside the region it covers), and the colour range and histogram
-are taken from it, so colours do not shift as the view moves or the level
-changes. A pyramid whose levels do not state their resolution has no known
-coarsest level, and loads every level whole.
+The coarsest level is the exception: it is always loaded whole, and the
+colour range and histogram are taken from it, so colours do not shift as the
+view moves or the level changes. A pyramid whose levels do not state their
+resolution has no known coarsest level, and loads every level whole.
+
+### The next coarser level beneath
+
+Where a window stops, the screen would be black: beyond the margin, where
+the budget cut the window, and under the camera while the blocks are still
+landing. Instead, a level loaded by view is drawn over its **parent**, the
+next coarser stored level, over the same ground. Before the level's own
+blocks are read, the window of the parent at the same view (its own block
+size, the same margin, the same budget rule) is read and drawn beneath; the
+level's blocks then land over it face by face, and the parent stays visible
+wherever the level has no cell: not yet landed, outside its window, or left
+out by its budget. A parent whose window is itself over its budget at this
+view is skipped for the next coarser level that fits, down to the coarsest,
+which is loaded whole and always fits. A level derived from the leaves is
+never the parent: its window would read the same leaf chunks as the level's
+own, and show nothing sooner. The parent is drawn with the colour range of
+the level above it.
+
+The fields read are kept in memory, at most two: the level on screen and
+the one beneath it, each as the values of one window (one float per cell:
+the digests themselves stream through their working set and are not kept).
+Zooming in by one level, the level on screen becomes the one beneath with
+no read; zooming out, the level beneath comes on screen and reads only the
+blocks its wider window gains. The coarsest level, loaded whole, is kept
+beside these for the colour range.
+
+The hover readout gives the finest value drawn at a place: where only the
+parent is drawn, its cell, marked with the parent's name ("order 12"). The
+"Draw the next coarser level beneath" checkbox in the **Variable** card turns
+the fill off (it is on by default); the colour range is taken from the
+coarsest level either way.
 
 A level that is loaded by view can be of any size, so automatic selection has
 no cap for it. Streamlines and the volume layer read the whole level: while
@@ -207,8 +236,8 @@ and a level index kept from a longer list falls back to the finest level.
 - A derived level is always loaded by view, one leaf chunk per block, within
   the 1 GB window budget (about 30 000 chunks; a level picked by hand from far
   out is cut down around the point below the camera and the level panel says
-  so). It is never the backdrop, and with streamlines or a volume on it is
-  left out of automatic selection.
+  so). It is never drawn beneath another level, and with streamlines or a
+  volume on it is left out of automatic selection.
 - Leaf chunks are a stream like the stored digests: a small working set
   (32 MB) of decoded and pooled chunks serves the cursor and a clicked cell;
   changing the percentile or the derived order reads the window again.
@@ -244,8 +273,8 @@ derived level (it stays in the URL either way).
   cells (0.33 to 5).
 - It runs on the (x, y) grid of each HEALPix face over the cells loaded. A
   cell is not filled from across a face boundary, nor from cells outside the
-  loaded window. While a window loads, the face is filled over the cells
-  landed so far, and once more when it is in.
+  loaded window. While a window loads, a face is drawn as read; it is filled
+  once the window is in. The level drawn beneath is never filled.
 - The colour range and the histogram stay those of the values observed. The
   hover readout marks a filled value as interpolated, and the distribution
   panel says so and shows the filled heights instead of a curve.

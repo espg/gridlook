@@ -19,6 +19,8 @@ export type TGridHoverLookupResult = {
   value: number | null;
   status: THoveredGridPointStatus;
   interpolated?: boolean;
+  /** The level the value is read from, when not the one on screen. */
+  level?: string;
 };
 
 export type TGeoSample = {

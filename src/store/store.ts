@@ -46,6 +46,8 @@ export type THoveredGridPoint = {
   status: THoveredGridPointStatus;
   // the value was filled from neighbouring cells, not observed
   interpolated?: boolean;
+  // the level the value is read from, when not the one on screen
+  level?: string;
   screenX: number;
   screenY: number;
 };
@@ -260,9 +262,9 @@ export const useGlobeControlStore = defineStore("globeControl", {
       // histogram (right for a mean, e.g. elevation) or each level takes its
       // own (right for a sum, e.g. a count, which grows 4x per level)
       levelRangeShared: true,
-      // whether the coarsest level is drawn beneath a level loaded by view;
-      // it is still read for the shared colour range either way
-      levelBackdrop: false,
+      // whether the next coarser level is drawn beneath a level loaded by
+      // view, where its blocks have not landed or the budget left them out
+      levelParentBeneath: true,
       // whether the window of the level in view was cut by its budget, so
       // that cells in view are missing (zoom in, or pick a coarser level)
       viewWindowClipped: false,
@@ -365,8 +367,8 @@ export const useGlobeControlStore = defineStore("globeControl", {
     setLevelRangeShared(shared: boolean) {
       this.levelRangeShared = shared;
     },
-    setLevelBackdrop(shown: boolean) {
-      this.levelBackdrop = shown;
+    setLevelParentBeneath(shown: boolean) {
+      this.levelParentBeneath = shown;
     },
     setViewWindowClipped(clipped: boolean) {
       this.viewWindowClipped = clipped;

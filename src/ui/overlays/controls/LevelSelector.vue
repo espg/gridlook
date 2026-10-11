@@ -41,8 +41,8 @@ function onAutoChange(event: Event) {
   store.setLevelAuto((event.target as HTMLInputElement).checked);
 }
 
-function onBackdropChange(event: Event) {
-  store.setLevelBackdrop((event.target as HTMLInputElement).checked);
+function onParentBeneathChange(event: Event) {
+  store.setLevelParentBeneath((event.target as HTMLInputElement).checked);
 }
 
 function onRangeSharedChange(event: Event) {
@@ -98,14 +98,14 @@ function onRangeSharedChange(event: Event) {
       </label>
       <label
         class="checkbox is-size-7 is-block"
-        title="Fill the area outside the loaded view with the coarsest level"
+        title="Show the next coarser level where this one has not loaded yet or is over its budget"
       >
         <input
-          :checked="store.levelBackdrop"
+          :checked="store.levelParentBeneath"
           type="checkbox"
-          @change="onBackdropChange"
+          @change="onParentBeneathChange"
         />
-        Draw the coarsest level beneath
+        Draw the next coarser level beneath
       </label>
       <p
         v-if="store.viewWindowClipped"
