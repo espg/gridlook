@@ -2,6 +2,10 @@ import {
   CAMERA_VERTICAL_FOV_DEGREES,
   EARTH_RADIUS_METERS,
 } from "@/lib/camera/cameraSettings.ts";
+import {
+  DIGEST_WINDOW_MARGIN,
+  VIEW_WINDOW_MARGIN,
+} from "@/lib/grids/healpixWindow.ts";
 import type { TSourceLevel, TSources } from "@/lib/types/GlobeTypes.ts";
 
 /**
@@ -99,9 +103,11 @@ export const DEFAULT_MAX_VIEW_CELLS = 12 * 4 ** 9;
  * variable's cells cost kilobytes where a stored value costs bytes, so its
  * window is priced in bytes, not cells, and cut around the view's centre;
  * the cells left out are reported so that the user can zoom in or pick a
- * coarser level. The decoded-digest cache is sized from the same figure.
+ * coarser level. The digests are decoded into one value per cell and let
+ * go, so the budget bounds transfer and decode time, not memory: a gigabyte
+ * is a few tens of seconds on a fast link.
  */
-export const DEFAULT_VIEW_BUDGET_BYTES = 64 * 2 ** 20;
+export const DEFAULT_VIEW_BUDGET_BYTES = 1024 * 2 ** 20;
 
 /**
  * Bytes of one leaf chunk's signal digest, what a level derived from leaf
@@ -208,7 +214,8 @@ export function cellsInView(
  * The cost of a level's window at a view as a fraction of its budget: for a
  * variable derived from a t-digest, bytes against the window budget (per
  * cell on a stored level, per leaf chunk on a derived one); for any other,
- * cells against the view cap.
+ * cells against the view cap. `cells` are the cells in view; the window
+ * reaches a margin past the view on every side, and is priced with it.
  */
 export function windowCost(
   level: Pick<TSourceLevel, "resolution" | "derived">,
@@ -216,6 +223,8 @@ export function windowCost(
   digest: boolean,
   budget = DEFAULT_VIEW_BUDGET_BYTES
 ) {
+  const margin = digest ? DIGEST_WINDOW_MARGIN : VIEW_WINDOW_MARGIN;
+  cells *= (1 + 2 * margin) ** 2;
   if (!digest) {
     return cells / DEFAULT_MAX_VIEW_CELLS;
   }

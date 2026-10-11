@@ -39,7 +39,14 @@ type TDenseChunk = Int32Array | Uint32Array | Float32Array | Float64Array;
 const VLEN_BYTES = "vlen-bytes";
 /** Charged for a chunk that does not exist, so that it is remembered. */
 const ABSENT_BYTES = 64;
-const DEFAULT_DIGEST_CACHE_BYTES = 256 * 2 ** 20;
+/**
+ * Decoded digests are a stream, not a resident: a window's chunks are
+ * decoded into one value per cell and let go, so a window may read far more
+ * than the browser could hold decoded. This working set serves the cells
+ * under the cursor and a clicked cell's distribution; a percentile change
+ * reads the window again.
+ */
+const DEFAULT_DIGEST_CACHE_BYTES = 32 * 2 ** 20;
 const DEFAULT_DENSE_CACHE_BYTES = 64 * 2 ** 20;
 const DENSE_TYPES = {
   int32: Int32Array,

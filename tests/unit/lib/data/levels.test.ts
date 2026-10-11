@@ -155,20 +155,27 @@ describe("selectViewLevel", () => {
 
   it("prices a digest variable in bytes and stops where the window would not fit", () => {
     // a 1500 × 900 view of order 12 at 1.5 px per cell: 600 000 cells of
-    // 2 KB, far over the 64 MB budget; order 11 at 3 px is 150 000 cells
+    // 2 KB, with the quarter-view margin 1.9 GB, over the 1 GB budget;
+    // order 11 at 3 px is 150 000 cells, 470 MB with the margin
     const scale = scaleFor(12, 1.5);
     const cells = cellsInView(resolution(12), scale, VIEWPORT_PIXELS);
     expect(cells).toBeCloseTo(600_000, -4);
     expect(windowCost(healpixLevel(12), cells, true)).toBeGreaterThan(1);
     expect(windowCost(healpixLevel(12), cells, false)).toBeLessThan(1);
-    // order 11 (150 000 cells) and 10 (37 500 cells, 75 MB) are over it too
     const options = { digest: true };
     expect(selectViewLevel(scale, VIEWPORT_PIXELS, HIVE, at(4), options)).toBe(
-      at(9)
+      at(11)
     );
-    // closer in, order 13 comes on once its window fits: 64 MB / 1.7 KB
-    const fits = (DEFAULT_VIEW_BUDGET_BYTES / digestCellBytes(13)) * 0.9;
-    const close = resolution(13) / Math.sqrt(VIEWPORT_PIXELS / fits);
+    // closer in, order 13 comes on at its floor, where its window fits too:
+    // 216 000 cells at 2.5 px, 570 MB with the margin
+    const close = scaleFor(13, 2.5);
+    expect(
+      windowCost(
+        healpixLevel(13),
+        cellsInView(resolution(13), close, VIEWPORT_PIXELS),
+        true
+      )
+    ).toBeLessThan(1);
     expect(selectViewLevel(close, VIEWPORT_PIXELS, HIVE, at(4), options)).toBe(
       at(13)
     );
@@ -182,7 +189,8 @@ describe("selectViewLevel", () => {
     const scale = scaleFor(14, DIGEST_PIXELS_PER_CELL);
     const cells = cellsInView(resolution(14), scale, VIEWPORT_PIXELS);
     expect(windowCost(derived(14), cells, true)).toBeCloseTo(
-      ((cells / 4) * DIGEST_CHUNK_BYTES) / DEFAULT_VIEW_BUDGET_BYTES,
+      (((cells * 1.5 ** 2) / 4) * DIGEST_CHUNK_BYTES) /
+        DEFAULT_VIEW_BUDGET_BYTES,
       6
     );
     expect(selectViewLevel(scale, VIEWPORT_PIXELS, HIVE, at(13), options)).toBe(

@@ -55,7 +55,7 @@ picks the **finest level that passes two tests**:
   whatever the order, so the budget alone would always pick the finest);
 - its window fits: the cells the viewport holds at that scale, priced in
   bytes for a variable derived from a t-digest (per cell on a stored level,
-  per leaf chunk on a derived one) against the 64 MB window budget, or in
+  per leaf chunk on a derived one) against the 1 GB window budget, or in
   cells against the view cap for any other variable.
 
 A level loaded whole must also be under the whole-level cell cap. The active
@@ -69,9 +69,9 @@ on screen than at the centre.
 
 Over California, the ATL03 store's order-12 level is 370 MB of signal digest
 and order 13 is 1.29 GB: from far enough out to see the whole state a height
-view picks order 9 or 10, and order 13 comes on where its window is under
-the budget, at about 6 pixels per cell on a 1500 × 900 screen. A `count`
-costs bytes per cell and is picked at the pixel floor alone.
+view picks order 11, and order 13 comes on at its 2 pixel floor, where a
+1500 × 900 window of it is about 700 MB. A `count` costs bytes per cell and is
+picked at the pixel floor alone.
 
 A level switch keeps the view: the level on screen stays until the next one
 has loaded and then replaces it in one frame. Triangular grids rebuild their
@@ -162,14 +162,16 @@ Such a variable is loaded like any other, by level and by view, but a cell's
 digest is a few kilobytes where a stored value is a few bytes: a view reads
 megabytes, so its window takes a quarter-view margin where a stored variable
 takes half, and it is priced in bytes rather than cells. One window reads at
-most **64 MB**: about 1.7 KB per cell at order 13 and 0.5 KB at order 12 (as
-measured on the ATL03 store), or one 34 KB leaf chunk per block of a derived
+most **1 GB**: about 1.7 KB per cell at order 13 and 2 KB at order 12 (as
+listed on the ATL03 store), or one 34 KB leaf chunk per block of a derived
 level. Over the budget, the window keeps the blocks nearest the point below
 the camera; when that leaves cells in view unloaded (a fine level picked by
 hand from far out) the level panel says so: _Max cells at this level reached:
-zoom in, or pick a coarser level._ Decoded digests are kept in memory (up to
-256 MB, least recently used first out), so moving a percentile slider
-recomputes the field without reading anything.
+zoom in, or pick a coarser level._ The digests are a stream: each chunk is decoded into one value per cell and
+let go, so a window may read far more than the browser could hold decoded,
+and a percentile change reads the window again. A small working set of
+decoded chunks (32 MB) serves the cells under the cursor and a clicked cell's
+distribution.
 
 Clicking a cell pins it in the **Height distribution** panel: the photons per
 metre of height of the signal and, muted, of the noise, with the selected
@@ -203,13 +205,13 @@ and a level index kept from a longer list falls back to the finest level.
   100 000) the pooled digest is the exact sample. Only the variable shown is
   read: `count` reads `count`, a signal height reads `h_tdigest_signal`.
 - A derived level is always loaded by view, one leaf chunk per block, within
-  the 64 MB window budget (about 1900 chunks; a level picked by hand from far
+  the 1 GB window budget (about 30 000 chunks; a level picked by hand from far
   out is cut down around the point below the camera and the level panel says
   so). It is never the backdrop, and with streamlines or a volume on it is
   left out of automatic selection.
-- A leaf chunk is read once. Its decoded digests stay in memory, and so do
-  the pooled ones (128 MB), so changing the percentile, or going from one
-  derived order to another over the same ground, reads nothing.
+- Leaf chunks are a stream like the stored digests: a small working set
+  (32 MB) of decoded and pooled chunks serves the cursor and a clicked cell;
+  changing the percentile or the derived order reads the window again.
 - A chunk costs the same bytes whatever the order derived from it, so a
   derived level comes on at 16 pixels per cell for every variable, `count`
   included, once the chunks under the view fit the budget (a stored level
