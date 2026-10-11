@@ -12,6 +12,12 @@ import RangeSlider from "@/ui/common/RangeSlider.vue";
 const props = defineProps<{
   /** The digest the selected variable is derived from. */
   digest: TDigestVariable;
+  /**
+   * Whether the level on screen is derived from the leaves. Only such a
+   * level is smoothed, so the gap controls are shown there alone; the
+   * setting itself is kept across levels.
+   */
+  derivedLevel: boolean;
 }>();
 
 const store = useGlobeControlStore();
@@ -105,7 +111,7 @@ function setHigh(high: number) {
         />
       </div>
     </template>
-    <div class="digest-row">
+    <div v-if="derivedLevel" class="digest-row">
       <label
         class="checkbox is-size-7"
         title="Fill cells without photons from the cells around them (a Gaussian-weighted mean of the values under the kernel). Cells with photons keep their value."

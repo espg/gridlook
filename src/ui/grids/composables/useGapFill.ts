@@ -41,6 +41,9 @@ function histogramOf(data: Float32Array) {
  * its two percentile fields, each filled on its own. The colour range and
  * the histogram stay those of the values observed. Toggling or resizing the
  * kernel calls `reload`, which fills again from the digests in memory.
+ *
+ * Only a level derived from the leaves is filled: a stored level is drawn
+ * as read whatever the setting, which is kept for the next derived level.
  */
 // eslint-disable-next-line max-lines-per-function
 export function useGapFill(options: {
@@ -52,11 +55,13 @@ export function useGapFill(options: {
   const faces = new Map<number, TFilledCells & { percentiles: number[] }>();
   const revision = ref(0);
 
+  /** The digest variable shown, on a level that is smoothed (derived). */
   function displayed() {
     const sources = options.getDatasources();
-    return digestVariableOf(
-      sources && currentLevel(sources).datasources[store.varnameSelector]?.attrs
-    );
+    const level = sources && currentLevel(sources);
+    return level?.derived
+      ? digestVariableOf(level.datasources[store.varnameSelector]?.attrs)
+      : undefined;
   }
 
   /**

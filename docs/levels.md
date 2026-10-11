@@ -183,7 +183,10 @@ and the digests are read there whether or not that group is a level.
 ## Filling the gaps between tracks
 
 At fine levels the cells with photons are ground tracks with blank cells in
-between. **Smooth gaps**, under a height variable, fills the blank cells:
+between. **Smooth gaps**, under a height variable, fills the blank cells. It
+is offered, and applied, on a derived level only: a stored level is drawn as
+read, its controls are not shown there, and the setting waits for the next
+derived level (it stays in the URL either way).
 
 - What is smoothed is the field on screen, the height at the chosen
   percentile in each cell, not the digests. Averaging a percentile over

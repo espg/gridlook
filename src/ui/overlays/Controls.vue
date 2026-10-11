@@ -105,6 +105,11 @@ const {
 const selectedDigest = computed(() =>
   digestVariableOf(props.modelInfo?.vars[varnameSelector.value]?.attrs)
 );
+// whether the level on screen is computed from the leaves (see levels.ts)
+const derivedLevel = computed(() => {
+  const levels = props.modelInfo?.levels ?? [];
+  return Boolean((levels[store.selectedLevel] ?? levels[0])?.derived);
+});
 
 const menuCollapsed: Ref<boolean> = ref(false);
 const mobileMenuCollapsed: Ref<boolean> = ref(true);
@@ -424,7 +429,11 @@ defineExpose({
             v-model="varnameSelector"
             :model-info="modelInfo"
           />
-          <DigestControls v-if="selectedDigest" :digest="selectedDigest" />
+          <DigestControls
+            v-if="selectedDigest"
+            :digest="selectedDigest"
+            :derived-level="derivedLevel"
+          />
           <LevelSelector
             v-if="modelInfo?.levels && modelInfo.levels.length > 1"
             :levels="modelInfo.levels"

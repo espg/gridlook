@@ -22,20 +22,22 @@ function variable(product: string) {
     attrs: { digest: { array: "h_tdigest_signal", product } },
   };
 }
+// one level derived from the leaves (smoothed) and one stored (never)
+const level = {
+  grid: { store: "s", dataset: "8" },
+  time: { store: "s", dataset: "8" },
+  datasources: {
+    count: { store: "s", dataset: "8", attrs: {} },
+    h_percentile_signal: variable("percentile"), // eslint-disable-line camelcase
+    h_range_signal: variable("range"), // eslint-disable-line camelcase
+  },
+};
 const sources = {
   zarr_format: ZARR_FORMAT.V3, // eslint-disable-line camelcase
-  levels: [
-    {
-      grid: { store: "s", dataset: "8" },
-      time: { store: "s", dataset: "8" },
-      datasources: {
-        count: { store: "s", dataset: "8", attrs: {} },
-        h_percentile_signal: variable("percentile"), // eslint-disable-line camelcase
-        h_range_signal: variable("range"), // eslint-disable-line camelcase
-      },
-    },
-  ],
+  levels: [{ ...level, derived: { dataset: "19", refinement: 11 } }, level],
+  selectedLevel: 0,
 };
+const stored = { ...sources, selectedLevel: 1 };
 
 // a whole face: heights on the nested cells 0 and 3, nothing elsewhere
 const low = new Float32Array(NSIDE * NSIDE).fill(NaN);
@@ -48,12 +50,12 @@ const range = high.map((value, index) => value - low[index]);
 const percentileField = async (percentile: number) =>
   percentile === 2 ? low : high;
 
-function setup(varname: string) {
+function setup(varname: string, datasources = sources) {
   const store = useGlobeControlStore();
   store.varnameSelector = varname;
   const reload = vi.fn();
   const gapFill = effectScope().run(() =>
-    useGapFill({ getDatasources: () => sources, reload })
+    useGapFill({ getDatasources: () => datasources, reload })
   )!;
   return { store, reload, gapFill };
 }
@@ -143,4 +145,30 @@ it("leaves a count as read", async () => {
   store.setGapFill(true);
   const shown = await gapFill.fill(FACE, NSIDE, { data: low }, percentileField);
   expect(shown.data).toBe(low);
+});
+
+it("never fills a stored level, and keeps the setting for a derived one", async () => {
+  const { store, reload, gapFill } = setup("h_percentile_signal", stored);
+  store.setGapFill(true);
+  store.setGapFillSize(3);
+  await nextTick();
+  const shown = await gapFill.fill(FACE, NSIDE, { data: low }, percentileField);
+  expect(shown.data).toBe(low);
+  expect(shown.histogramSummary).toBeUndefined();
+  expect(gapFill.interpolated(OFFSET + 1, GRID)).toBeUndefined();
+  // a toggle on a stored level recomputes nothing
+  store.setGapFill(false);
+  store.setGapFill(true);
+  await nextTick();
+  expect(reload).not.toHaveBeenCalled();
+  expect(store.gapFill).toBe(true);
+  // the same setting fills the derived level
+  const derived = setup("h_percentile_signal");
+  const filled = await derived.gapFill.fill(
+    FACE,
+    NSIDE,
+    { data: low },
+    percentileField
+  );
+  expect(filled.data).toEqual(fillFaceGaps({ data: low }, FACE, NSIDE, 3));
 });
