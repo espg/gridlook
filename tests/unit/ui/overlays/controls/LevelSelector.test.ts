@@ -71,3 +71,15 @@ it("shows the points as the current level while the tier is on", async () => {
   expect(store.selectedLevel).toBe(0);
   expect(ZARR_FORMAT.V3).toBe(3);
 });
+
+it("carries the legend of the points' controls while the tier is on", async () => {
+  const store = useGlobeControlStore();
+  store.varnameSelector = "h_percentile_signal";
+  // the option's tooltip carries it always; the legend element only on
+  expect(await render()).not.toContain(">Drag pans");
+  store.selectPointTier(0, false);
+  const html = await render();
+  expect(html).toContain(
+    ">Drag pans · Shift+drag or right-drag orbits · wheel zooms to the cursor<"
+  );
+});

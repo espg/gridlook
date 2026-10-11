@@ -52,15 +52,18 @@ const selected = computed(() =>
 );
 
 const countFormat = new Intl.NumberFormat();
-const POINT_TIER_HINT =
-  "Left drag orbits, right drag pans, the wheel zooms to the cursor";
+// the point tier's controls (docs/levels.md), as a legend while it is on
+const POINT_TIER_LEGEND =
+  "Drag pans · Shift+drag or right-drag orbits · wheel zooms to the cursor";
+const POINT_TIER_LEGEND_TITLE =
+  "The left button slides the ground under the pointer; the right button or shift + left turns about the point under the view and tilts; the wheel zooms toward the ground under the cursor";
 const pointTierTitle = computed(() => {
   const stats = store.pointTier ? store.pointTierStats : undefined;
   if (!stats) {
-    return `The observations themselves, drawn at their height in place of the finest level. ${POINT_TIER_HINT}`;
+    return `The observations themselves, drawn at their height in place of the finest level. ${POINT_TIER_LEGEND}`;
   }
   const thinned = stats.stride > 1 ? ` (every ${stats.stride}th)` : "";
-  return `${countFormat.format(stats.photons)} observations in ${stats.loaded} of ${stats.chunks} chunks, ${countFormat.format(stats.drawn)} drawn${thinned}. ${POINT_TIER_HINT}`;
+  return `${countFormat.format(stats.photons)} observations in ${stats.loaded} of ${stats.chunks} chunks, ${countFormat.format(stats.drawn)} drawn${thinned}. ${POINT_TIER_LEGEND}`;
 });
 
 function onLevelChange(event: Event) {
@@ -111,6 +114,13 @@ function onRangeSharedChange(event: Event) {
           </option>
         </select>
       </div>
+      <p
+        v-if="store.pointTier"
+        class="is-size-7 has-text-grey mb-2"
+        :title="POINT_TIER_LEGEND_TITLE"
+      >
+        {{ POINT_TIER_LEGEND }}
+      </p>
       <label class="checkbox is-size-7">
         <input
           :checked="store.levelAuto"

@@ -11,13 +11,13 @@ import { EARTH_RADIUS_METERS } from "./cameraSettings.ts";
  * - `controls.target` is a point of the unit sphere, the pivot, and the
  *   camera's up is the local vertical there, so the polar angle is the tilt
  *   from nadir (0) to `POINT_PIVOT_MAX_TILT_DEGREES` and the azimuth turns
- *   about the vertical: the left button (one finger, the arrow keys) orbits
- *   the pivot that way;
- * - the right button (two fingers) pans: it moves the pivot in its tangent
- *   plane (`screenSpacePanning` off with a vertical up) and the pivot is put
- *   back on the sphere after every update, so a drag slides it along the
- *   surface; near nadir the roll is carried over from frame to frame rather
- *   than taken from the vertical;
+ *   about the vertical: the right button, shift + left and two fingers
+ *   orbit the pivot that way (espg's ruling, gridlook#25);
+ * - the left button (one finger, the arrow keys) pans: it moves the pivot
+ *   in its tangent plane (`screenSpacePanning` off with a vertical up) and
+ *   the pivot is put back on the sphere after every update, so a drag
+ *   slides it along the ground; near nadir the roll is carried over from
+ *   frame to frame rather than taken from the vertical;
  * - the wheel is handled here, not by OrbitControls: the camera dollies
  *   toward the ground point under the cursor, which therefore stays under
  *   the cursor, and the pivot becomes the ground point under the view
@@ -44,11 +44,6 @@ export const POINT_PIVOT_MIN_ALTITUDE_METERS = 100;
 const POINT_PIVOT_NEAR_FRACTION = 1 / 50;
 /** A full-height drag turns this fraction of a turn about the pivot. */
 const POINT_PIVOT_ROTATE_SPEED = 0.5;
-/**
- * An arrow key turns or tilts this far about the pivot, radians: the globe
- * orbit's step scales with the distance to its target, which is nil here.
- */
-export const POINT_PIVOT_KEY_STEP = 0.05;
 /**
  * The roll: a tilted camera keeps the horizon up (its up is the local
  * vertical), but near nadir the vertical is nearly the view direction and
@@ -284,11 +279,11 @@ export function createPointPivot(controls: OrbitControls) {
     orbit.enableZoom = false;
     orbit.rotateSpeed = POINT_PIVOT_ROTATE_SPEED;
     orbit.mouseButtons = {
-      LEFT: THREE.MOUSE.ROTATE,
+      LEFT: THREE.MOUSE.PAN,
       MIDDLE: THREE.MOUSE.DOLLY,
-      RIGHT: THREE.MOUSE.PAN,
+      RIGHT: THREE.MOUSE.ROTATE,
     };
-    orbit.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
+    orbit.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_ROTATE };
     active = true;
     orbit.update();
   }

@@ -43,9 +43,8 @@ In flat projections such as Equirectangular, Mercator, Robinson, or Mollweide:
 While the observations are shown (the "points" level of a multi-resolution
 dataset, globe only — see [levels](levels.md#the-point-tier)):
 
-- <kbd>←</kbd> <kbd>→</kbd> turn about the point under the view centre
-- <kbd>↑</kbd> <kbd>↓</kbd> tilt, between straight down and 85°
-- <kbd>+</kbd> and <kbd>-</kbd> zoom toward that point
+- Arrow keys pan along the ground
+- <kbd>+</kbd> and <kbd>-</kbd> zoom toward the point under the view centre
 
 ## Mouse Controls
 
@@ -67,10 +66,11 @@ If `Data Picker` is enabled, moving the pointer over the canvas also shows the v
 
 ### Point Tier
 
-- Left drag orbits the point under the view centre: turns about it and tilts
-- Right drag pans, sliding that point along the ground
+- Left drag pans: the ground slides under the pointer
+- Shift+left drag and right drag orbit the point under the view centre:
+  turn about it and tilt (to 85°)
 - Mouse wheel zooms toward the ground under the cursor, which stays put
-- On touch, one finger orbits and two fingers pan and pinch-zoom
+- On touch, one finger pans and two fingers orbit and pinch-zoom
 
 For flat projections, the projection center can also be adjusted numerically in the side panel.
 

@@ -4,15 +4,11 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { describe, expect, it } from "vitest";
 
 import { EARTH_RADIUS_METERS } from "@/lib/camera/cameraSettings.ts";
-import {
-  handleKeyDown,
-  useSurfaceZoom,
-} from "@/lib/camera/OrbitControlsAddOn.ts";
+import { useSurfaceZoom } from "@/lib/camera/OrbitControlsAddOn.ts";
 import {
   createPointPivot,
   dollyTowardGround,
   groundPointOnRay,
-  POINT_PIVOT_KEY_STEP,
   POINT_PIVOT_MAX_TILT_DEGREES,
   POINT_PIVOT_MIN_ALTITUDE_METERS,
   POINT_PIVOT_MIN_DISTANCE_METERS,
@@ -216,44 +212,14 @@ describe("createPointPivot", () => {
       POINT_PIVOT_MIN_DISTANCE_METERS,
       6
     );
-    // the left button orbits the pivot, the right one pans
-    expect(controls.mouseButtons.LEFT).toBe(THREE.MOUSE.ROTATE);
-    expect(controls.mouseButtons.RIGHT).toBe(THREE.MOUSE.PAN);
-    expect(controls.touches.ONE).toBe(THREE.TOUCH.ROTATE);
-    expect(controls.touches.TWO).toBe(THREE.TOUCH.DOLLY_PAN);
-  });
-
-  it("orbits by a fixed step from the arrow keys", () => {
-    const { camera, controls, pivot } = pivotControls(2000);
-    pivot.enter(surfacePointNearRay(camera.position, forwardOf(camera)));
-    controls.enableDamping = false;
-    const press = (key: string) =>
-      handleKeyDown(
-        { key, preventDefault() {} } as KeyboardEvent,
-        controls,
-        false,
-        POINT_PIVOT_KEY_STEP
-      );
-    const vertical = controls.target.clone().normalize();
-    const tiltOf = () =>
-      camera.position.clone().sub(controls.target).angleTo(vertical);
-    press("ArrowDown");
-    controls.update();
-    // within the nadir nudge (1e-6 rad)
-    expect(tiltOf()).toBeCloseTo(POINT_PIVOT_KEY_STEP, 5);
-    const before = camera.position.clone().sub(controls.target);
-    press("ArrowLeft");
-    controls.update();
-    const after = camera.position.clone().sub(controls.target);
-    // turned about the vertical by the step, at the same tilt
-    expect(tiltOf()).toBeCloseTo(POINT_PIVOT_KEY_STEP, 5);
-    const across = (v: THREE.Vector3) =>
-      v.clone().addScaledVector(vertical, -v.dot(vertical)).normalize();
-    expect(across(before).angleTo(across(after))).toBeCloseTo(
-      POINT_PIVOT_KEY_STEP,
-      6
-    );
-    expect(controls.target.distanceTo(vertical)).toBeLessThan(1e-12);
+    // the left button pans, the right one (and shift + left, as
+    // OrbitControls reads a modifier on a pan button) orbits
+    expect(controls.mouseButtons.LEFT).toBe(THREE.MOUSE.PAN);
+    expect(controls.mouseButtons.MIDDLE).toBe(THREE.MOUSE.DOLLY);
+    expect(controls.mouseButtons.RIGHT).toBe(THREE.MOUSE.ROTATE);
+    expect(controls.touches.ONE).toBe(THREE.TOUCH.PAN);
+    expect(controls.touches.TWO).toBe(THREE.TOUCH.DOLLY_ROTATE);
+    expect(controls.enableRotate).toBe(true);
   });
 
   it("slides the pivot along the surface on a pan", () => {
