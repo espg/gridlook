@@ -3,6 +3,8 @@ import { expect, it } from "vitest";
 
 import "@/utils/disposablePolyfill.ts";
 import {
+  blockDistances,
+  blocksByDistance,
   DIGEST_WINDOW_MARGIN,
   VIEW_WINDOW_MARGIN,
   healpixBlockDepth,
@@ -62,11 +64,13 @@ it("keeps the blocks nearest the view centre within the budget", () => {
 it("reports a budget that cuts into the view, not one that trims the margin", () => {
   using grid = new Grid({ scheme: "nested", level: 12 });
   const whole = healpixViewWindow(grid, box, 0.5);
+  expect(whole.cut).toBe(false);
   expect(whole.clipped).toBe(false);
   // room for the view and some of the margin: the margin goes first
   const inView = healpixViewWindow(grid, box, 0).blocks.length;
   const trimmed = healpixViewWindow(grid, box, 0.5, inView + 1);
   expect(trimmed.blocks).toHaveLength(inView + 1);
+  expect(trimmed.cut).toBe(true);
   expect(trimmed.clipped).toBe(false);
   // less room than the view needs: cells in view are missing
   expect(inView).toBeGreaterThan(1);
@@ -83,6 +87,24 @@ it("reports a budget that cuts into the view, not one that trims the margin", ()
     centreLon: 60,
   };
   expect(healpixViewWindow(grid, wide, 0.5, 16).clipped).toBe(true);
+});
+
+it("measures block distances in degrees, in the order blocks are ranked", () => {
+  using blockGrid = new Grid({ scheme: "nested", level: 6 });
+  const blocks = Array.from({ length: 40 }, (_, index) => 3000 + 7 * index);
+  const distance = blockDistances(blockGrid, blocks, 60, 20);
+  for (const d of distance) {
+    expect(d).toBeGreaterThanOrEqual(0);
+    expect(d).toBeLessThanOrEqual(180);
+  }
+  const ranked = blocksByDistance(blockGrid, blocks, 60, 20);
+  const byRank = ranked.map((block) => distance[blocks.indexOf(block)]);
+  expect(byRank).toEqual([...byRank].sort((a, b) => a - b));
+  // the block below the point is at most half a block side away
+  const below = Number(blockGrid.lonLatToHealpix(Float64Array.of(60, 20))[0]);
+  expect(blockDistances(blockGrid, [below], 60, 20)[0]).toBeLessThan(
+    58.63 / 2 ** 6
+  );
 });
 
 it("cuts a polar view down around the camera, not around longitude 0", () => {

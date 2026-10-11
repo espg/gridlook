@@ -60,8 +60,13 @@ export function healpixBlockLevel(level: number, depth = HEALPIX_BLOCK_DEPTH) {
   return level > depth ? level - depth : 0;
 }
 
-/** The cells of `blockGrid`, the nearest to a point first. */
-export function blocksByDistance(
+/** Side of a cell of `blockLevel`, in degrees. */
+export function healpixBlockSide(blockLevel: number) {
+  return FACE_SIDE_DEGREES / 2 ** blockLevel;
+}
+
+/** Great-circle distances from a point to the centres of cells, in degrees. */
+export function blockDistances(
   blockGrid: Grid,
   blocks: number[],
   lon: number,
@@ -70,15 +75,24 @@ export function blocksByDistance(
   const centres = blockGrid.healpixToLonLat(
     BigUint64Array.from(blocks, (block) => BigInt(block))
   );
-  const distance = blocks.map((_, index) => {
+  return blocks.map((_, index) => {
     const dLon = (centres[2 * index] - lon) * RADIANS;
     const blockLat = centres[2 * index + 1] * RADIANS;
-    // great-circle distance through its cosine
-    return -(
+    const cosine =
       Math.sin(blockLat) * Math.sin(lat * RADIANS) +
-      Math.cos(blockLat) * Math.cos(lat * RADIANS) * Math.cos(dLon)
-    );
+      Math.cos(blockLat) * Math.cos(lat * RADIANS) * Math.cos(dLon);
+    return Math.acos(Math.min(Math.max(cosine, -1), 1)) / RADIANS;
   });
+}
+
+/** The cells of `blockGrid`, the nearest to a point first. */
+export function blocksByDistance(
+  blockGrid: Grid,
+  blocks: number[],
+  lon: number,
+  lat: number
+) {
+  const distance = blockDistances(blockGrid, blocks, lon, lat);
   return blocks
     .map((block, index) => ({ block, index }))
     .sort((a, b) => distance[a.index] - distance[b.index])
@@ -151,8 +165,8 @@ function inView(footprint: TViewFootprint, lon: number, lat: number) {
  * Ids of the blocks of a nested level that a view footprint touches, grown
  * by `margin` (a fraction of the footprint's size) on every side, ascending.
  * At most `maxBlocks` are returned, those nearest the centre of the view;
- * `clipped` says whether a block in view itself was left out, as opposed to
- * one of the margin.
+ * `cut` says whether the budget left any block out, `clipped` whether one of
+ * them was in view itself rather than in the margin.
  */
 // eslint-disable-next-line max-lines-per-function
 export function healpixViewWindow(
@@ -163,7 +177,7 @@ export function healpixViewWindow(
   depth?: number
 ) {
   const blockLevel = healpixBlockLevel(grid.level, depth);
-  const side = FACE_SIDE_DEGREES / 2 ** blockLevel;
+  const side = healpixBlockSide(blockLevel);
   const { south, north, west, span } = windowBox(
     footprint,
     margin,
@@ -197,6 +211,7 @@ export function healpixViewWindow(
     south > footprint.latMin ||
     north < footprint.latMax ||
     span < footprint.lonSpan;
+  const cut = clipped || blocks.length > maxBlocks;
   if (blocks.length > maxBlocks) {
     const kept = new Set(
       nearestBlocks(
@@ -212,7 +227,7 @@ export function healpixViewWindow(
     );
     blocks = [...kept];
   }
-  return { blocks: blocks.sort((a, b) => a - b), clipped };
+  return { blocks: blocks.sort((a, b) => a - b), cut, clipped };
 }
 
 /** The blocks of `healpixViewWindow`. */
