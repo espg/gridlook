@@ -44,8 +44,8 @@ import { useGlobeControlStore } from "@/store/store.ts";
 import { useLog } from "@/ui/common/useLog.ts";
 import type { useGridHistogram } from "@/ui/grids/composables/useGridHistogram.ts";
 
-/** Screen pixels of a point at the pivot's depth. */
-const POINT_PIXELS = 3;
+/** Device pixels of a point at the pivot's depth (clamped to 1..8). */
+const POINT_PIXELS = 4;
 /** Decoded chunks kept across windows, bytes. */
 const POINT_CACHE_BYTES = 64 * 2 ** 20;
 /** Drawn after the (hidden) level (0) and before the overlays. */
