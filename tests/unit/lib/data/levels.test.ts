@@ -275,12 +275,13 @@ describe("a level derived from the leaves", () => {
   });
 });
 
-describe("the finest level of a hive store", () => {
-  const derived = (order: number) => ({
-    ...healpixLevel(order),
-    derived: { dataset: "19", refinement: 19 - order },
-  });
+const derived = (order: number) => ({
+  ...healpixLevel(order),
+  derived: { dataset: "19", refinement: 19 - order },
+});
 
+// eslint-disable-next-line max-lines-per-function
+describe("the finest level of a hive store", () => {
   it("is derived 17, where a very close zoom stays; never the leaves", () => {
     // the list a hive store gives, finest first, every level loaded by view
     const orders = [17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4];
