@@ -51,10 +51,10 @@ export const STREAMLINES_NEED_WHOLE_LEVEL =
 
 /**
  * Target on-screen size of one cell, in pixels, at the sub-camera point.
- * Eight keeps the outer zooms from looking coarse; a stored cell costs bytes,
- * so four times the cells of a 16 px target is still a small window.
+ * Four keeps the outer zooms from looking coarse; a stored cell costs bytes,
+ * so sixteen times the cells of a 16 px target is still a small window.
  */
-export const DEFAULT_PIXELS_PER_CELL = 8;
+export const DEFAULT_PIXELS_PER_CELL = 4;
 
 /**
  * The target for a variable derived from a t-digest. A cell with data costs
@@ -62,7 +62,7 @@ export const DEFAULT_PIXELS_PER_CELL = 8;
  * so a view is priced by its cell count: twice the cell size is a quarter of
  * the bytes.
  */
-export const DIGEST_PIXELS_PER_CELL = 16;
+export const DIGEST_PIXELS_PER_CELL = 8;
 
 /**
  * Hysteresis in orders (log2 of cell size, so one order is one unit): another

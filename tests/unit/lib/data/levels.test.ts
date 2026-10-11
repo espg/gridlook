@@ -317,7 +317,12 @@ describe("the finest level of a hive store", () => {
     expect(pickResolution(level, DEFAULT_PIXELS_PER_CELL)).toBe(
       level.resolution / ratio
     );
-    // loaded by view (no cell cap): order 14 comes on where its cells are 16 px
+  });
+
+  it("comes on where its cells reach the digest target", () => {
+    const stored = healpixLevel(13);
+    const level = derived(14);
+    // loaded by view (no cell cap): order 14 comes on where its cells are 8 px
     const levels = [stored, level].map((candidate) => ({
       resolution: pickResolution(candidate, DEFAULT_PIXELS_PER_CELL),
       cellCount: 0,
