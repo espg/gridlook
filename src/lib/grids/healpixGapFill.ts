@@ -1,4 +1,4 @@
-import { fillGaps, type TGapFillMethod } from "./gapFill.ts";
+import { fillGaps } from "./gapFill.ts";
 import { decodeHealpixFaceXY } from "./healpixCalculations.ts";
 
 /**
@@ -29,8 +29,7 @@ export function fillFaceGaps(
   face: { data: Float32Array; cells?: number[] },
   faceIndex: number,
   nside: number,
-  size: number,
-  method?: TGapFillMethod
+  size: number
 ) {
   const { data, cells } = face;
   const faceOffset = faceIndex * nside * nside;
@@ -57,7 +56,7 @@ export function fillFaceGaps(
   for (let index = 0; index < data.length; index++) {
     field[(ys[index] - minY) * width + xs[index] - minX] = data[index];
   }
-  const filled = fillGaps(field, width, size, method);
+  const filled = fillGaps(field, width, size);
   return data.map(
     (_, index) => filled[(ys[index] - minY) * width + xs[index] - minX]
   );

@@ -2,12 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   fillGaps,
-  GAP_FILL_METHODS,
   GAP_FILL_SIZES,
   gaussianSigma,
 } from "@/lib/grids/gapFill.ts";
-
-const { DIRECT, FFT } = GAP_FILL_METHODS;
 
 function random(seed: number) {
   let state = seed;
@@ -79,26 +76,17 @@ describe("fillGaps", () => {
     expect(gaussianSigma(31)).toBe(5);
   });
 
-  it.each([...GAP_FILL_SIZES])(
-    "is the normalised convolution, directly and through the FFT (%i)",
-    (size) => {
-      // not powers of two, and narrower than the largest kernel one way
-      const [width, height] = [53, 20];
-      const field = tracks(width, height);
-      const expected = reference(field, width, size);
-      expectClose(fillGaps(field, width, size, DIRECT), expected);
-      expectClose(fillGaps(field, width, size, FFT), expected);
-    }
-  );
-
-  it("agrees between the two methods on a power-of-two field", () => {
-    const field = tracks(64, 64, 3);
-    expectClose(fillGaps(field, 64, 9, FFT), fillGaps(field, 64, 9, DIRECT));
+  it.each([...GAP_FILL_SIZES])("is the normalised convolution (%i)", (size) => {
+    // not powers of two, and narrower than the largest kernel one way
+    const [width, height] = [53, 20];
+    const field = tracks(width, height);
+    const expected = reference(field, width, size);
+    expectClose(fillGaps(field, width, size), expected);
   });
 
-  it.each([DIRECT, FFT])("keeps every cell that has data (%s)", (method) => {
+  it("keeps every cell that has data", () => {
     const field = tracks(40, 30);
-    const filled = fillGaps(field, 40, 15, method);
+    const filled = fillGaps(field, 40, 15);
     field.forEach((value, index) => {
       if (!Number.isNaN(value)) {
         expect(filled[index]).toBe(value);
@@ -107,34 +95,31 @@ describe("fillGaps", () => {
     expect(field.some(Number.isNaN)).toBe(true);
   });
 
-  it.each([DIRECT, FFT])(
-    "leaves a blank cell blank beyond the kernel's reach (%s)",
-    (method) => {
-      const width = 32;
-      const field = new Float32Array(width * width).fill(NaN);
-      field[5 * width + 5] = 10;
-      const filled = fillGaps(field, width, 5, method);
-      filled.forEach((value, index) => {
-        const reach = Math.max(
-          Math.abs((index % width) - 5),
-          Math.abs(Math.floor(index / width) - 5)
-        );
-        // one cell with data: every cell it reaches takes its value
-        expect(value).toSatisfy((filledValue: number) =>
-          reach <= 2
-            ? Math.abs(filledValue - 10) < 1e-5
-            : Number.isNaN(filledValue)
-        );
-      });
-      // nothing wraps around: the far edges stay blank
-      expect(filled[5 * width + width - 1]).toBeNaN();
-      expect(filled[(width - 1) * width + 5]).toBeNaN();
-    }
-  );
+  it("leaves a blank cell blank beyond the kernel's reach", () => {
+    const width = 32;
+    const field = new Float32Array(width * width).fill(NaN);
+    field[5 * width + 5] = 10;
+    const filled = fillGaps(field, width, 5);
+    filled.forEach((value, index) => {
+      const reach = Math.max(
+        Math.abs((index % width) - 5),
+        Math.abs(Math.floor(index / width) - 5)
+      );
+      // one cell with data: every cell it reaches takes its value
+      expect(value).toSatisfy((filledValue: number) =>
+        reach <= 2
+          ? Math.abs(filledValue - 10) < 1e-5
+          : Number.isNaN(filledValue)
+      );
+    });
+    // nothing wraps around: the far edges stay blank
+    expect(filled[5 * width + width - 1]).toBeNaN();
+    expect(filled[(width - 1) * width + 5]).toBeNaN();
+  });
 
-  it.each([DIRECT, FFT])("returns an empty field unchanged (%s)", (method) => {
+  it("returns an empty field unchanged", () => {
     const blank = new Float32Array(48).fill(NaN);
-    expect(fillGaps(blank, 8, 9, method).every(Number.isNaN)).toBe(true);
+    expect(fillGaps(blank, 8, 9).every(Number.isNaN)).toBe(true);
   });
 
   it("interpolates between two values, never past them", () => {
