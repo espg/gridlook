@@ -75,19 +75,13 @@ export const STREAMLINES_NEED_WHOLE_LEVEL =
   "Streamlines read a whole level, and this one is too large to load whole. Pick a coarser level.";
 
 /**
- * The least a cell of a stored level may span on screen, in pixels, for the
- * level to be picked: finer cells than this are wasted on the screen. The
- * finest level over this floor whose window fits its budget is shown.
+ * The least a cell may span on screen, in pixels, for its level to be
+ * picked, stored or derived from leaf chunks: finer cells than this are
+ * wasted on the screen. The finest level over this floor whose window fits
+ * its budget is shown; the derived levels cost a leaf chunk per cell of
+ * ground whatever the order, so among them the finest over the floor wins.
  */
 export const DEFAULT_PIXELS_PER_CELL = 2;
-
-/**
- * The floor for a level derived from leaf chunks: the same as a stored
- * level's, so every level switches on the one pattern. Its window costs a
- * leaf chunk per cell of ground whatever the order derived, so among the
- * derived levels the budget admits at a view the finest over the floor wins.
- */
-export const DIGEST_PIXELS_PER_CELL = DEFAULT_PIXELS_PER_CELL;
 
 /**
  * The active level keeps this much slack on both tests, so that a slow zoom
@@ -281,7 +275,6 @@ export type TLevelSelectionOptions = {
   /** Whether the variable shown is derived from a t-digest. */
   digest?: boolean;
   pixelFloor?: number;
-  derivedPixelFloor?: number;
   budget?: number;
   slack?: number;
 };
@@ -314,9 +307,7 @@ export function selectViewLevel(
   const slack = options.slack ?? LEVEL_SLACK;
   const eligible = ({ level, index }: (typeof candidates)[number]) => {
     const give = index === active ? slack : 1;
-    const floor = level.derived
-      ? (options.derivedPixelFloor ?? DIGEST_PIXELS_PER_CELL)
-      : (options.pixelFloor ?? DEFAULT_PIXELS_PER_CELL);
+    const floor = options.pixelFloor ?? DEFAULT_PIXELS_PER_CELL;
     const cells = cellsInView(
       level.resolution!,
       metersPerPixel,

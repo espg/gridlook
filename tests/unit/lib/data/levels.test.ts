@@ -14,7 +14,6 @@ import {
   DEFAULT_PIXELS_PER_CELL,
   DEFAULT_VIEW_BUDGET_BYTES,
   DIGEST_CHUNK_BYTES,
-  DIGEST_PIXELS_PER_CELL,
   digestCellBytes,
   digestWindowBlocks,
   exceedsCellCap,
@@ -203,7 +202,7 @@ describe("selectViewLevel", () => {
     // a derived level costs a leaf chunk per cell of ground whatever its
     // order: at 2 px per order-14 cell the view holds 337 000 of them, over
     // 130 000 chunks with the margin, far over the budget
-    const scale = scaleFor(14, DIGEST_PIXELS_PER_CELL);
+    const scale = scaleFor(14, DEFAULT_PIXELS_PER_CELL);
     const cells = cellsInView(resolution(14), scale, VIEWPORT_PIXELS);
     expect(windowCost(derived(14), cells, true)).toBeCloseTo(
       (((cells * 1.5 ** 2) / 4) * DIGEST_CHUNK_BYTES) /
@@ -229,7 +228,7 @@ describe("selectViewLevel", () => {
     );
     // very close in, derived 17; never the leaves (not in the ladder)
     for (const order of [17, 18, 19, 22]) {
-      const scale = scaleFor(order, DIGEST_PIXELS_PER_CELL);
+      const scale = scaleFor(order, DEFAULT_PIXELS_PER_CELL);
       expect(
         selectViewLevel(scale, VIEWPORT_PIXELS, HIVE, at(4), options)
       ).toBe(0);
@@ -327,7 +326,7 @@ describe("a level derived from the leaves", () => {
   it("is kept out of automatic selection while it would be loaded whole", () => {
     const levels = [...[14, 15, 16, 17].map(derived), healpixLevel(8)];
     for (const order of [14, 15, 16, 17]) {
-      const scale = scaleFor(order, DIGEST_PIXELS_PER_CELL);
+      const scale = scaleFor(order, DEFAULT_PIXELS_PER_CELL);
       expect(selectViewLevel(scale, VIEWPORT_PIXELS, levels, 4)).toBe(4);
     }
   });
