@@ -1,6 +1,7 @@
 import type { Grid } from "healpix-geo";
 
 import { decimate, decimatedCount } from "./pointBudget.ts";
+import { wordsToDays } from "./pointTimes.ts";
 import { wordsToNested } from "./pointWords.ts";
 
 import type { TWordChunk } from "@/lib/digest/digestReader.ts";
@@ -13,7 +14,8 @@ import type { TDigestChunk } from "@/lib/digest/tdigest.ts";
  * word names. Positions are on the unit sphere and relative to the chunk's
  * `origin`, so that a float32 offset resolves to millimetres where the
  * absolute coordinate would resolve to half a metre; the renderer adds the
- * origin back through the object's matrix, in double precision.
+ * origin back through the object's matrix, in double precision. The times
+ * (`pointTimes.ts`) come separately, read only when the colour asks.
  */
 export type TPointChunk = {
   count: number;
@@ -21,6 +23,8 @@ export type TPointChunk = {
   offsets: Float32Array;
   /** The centroid means: heights, in the digest's unit. */
   heights: Float32Array;
+  /** Days since the point time epoch, once the times sibling is read. */
+  times?: Float32Array;
   /** A point on the unit sphere near the chunk, e.g. its cell's centre. */
   origin: [number, number, number];
 };
@@ -95,6 +99,16 @@ export function decodePointChunk(
   return { count, offsets, heights: digest.means.slice(), origin };
 }
 
+/** The chunk with the times of the `times` sibling's chunk, one word per point. */
+export function withTimes(chunk: TPointChunk, timed: TWordChunk): TPointChunk {
+  if (timed.words.length !== chunk.count) {
+    throw new Error(
+      `time words (${timed.words.length}) do not match the chunk's points (${chunk.count})`
+    );
+  }
+  return { ...chunk, times: wordsToDays(timed.words) };
+}
+
 /** Every `stride`-th point of a chunk, from its first. */
 export function decimatePointChunk(
   chunk: TPointChunk,
@@ -108,10 +122,15 @@ export function decimatePointChunk(
     count: decimatedCount(chunk.count, stride),
     offsets: decimate(chunk.offsets, stride, 3),
     heights: decimate(chunk.heights, stride),
+    times: chunk.times && decimate(chunk.times, stride),
   };
 }
 
 /** Bytes a decoded chunk holds, for a byte-bounded cache. */
 export function pointChunkBytes(chunk: TPointChunk) {
-  return chunk.offsets.byteLength + chunk.heights.byteLength;
+  return (
+    chunk.offsets.byteLength +
+    chunk.heights.byteLength +
+    (chunk.times?.byteLength ?? 0)
+  );
 }

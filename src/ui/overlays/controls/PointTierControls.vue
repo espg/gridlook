@@ -8,6 +8,7 @@ import {
   POINT_PIVOT_TILTS,
   type TPivotLeftDrag,
 } from "@/lib/camera/pointPivot.ts";
+import { POINT_COLOURS, type TPointColour } from "@/lib/points/pointTimes.ts";
 import { useGlobeControlStore } from "@/store/store.ts";
 
 /**
@@ -16,7 +17,8 @@ import { useGlobeControlStore } from "@/store/store.ts";
  * drag does (shift + left and the right button orbit either way), and the
  * view buttons, which animate the camera's tilt (pointPivot.ts) to the top
  * (nadir) or to a profile (the cloud seen edge-on along the ground),
- * keeping the azimuth and the pivot.
+ * keeping the azimuth and the pivot, and the colour choice: the height,
+ * or the time when the source has one (pointTimes.ts).
  */
 const store = useGlobeControlStore();
 
@@ -24,6 +26,19 @@ const legend = computed(() => pointTierLegend(store.pointTierLeftDrag));
 const legendTitle = computed(() =>
   pointTierLegendTitle(store.pointTierLeftDrag)
 );
+
+const COLOURS: { colour: TPointColour; label: string; title: string }[] = [
+  {
+    colour: POINT_COLOURS.HEIGHT,
+    label: "height",
+    title: "Colour each point by its height",
+  },
+  {
+    colour: POINT_COLOURS.TIME,
+    label: "time",
+    title: "Colour each point by when it was observed",
+  },
+];
 
 const DRAG_MODES: { mode: TPivotLeftDrag; label: string; title: string }[] = [
   {
@@ -55,6 +70,27 @@ const DRAG_MODES: { mode: TPivotLeftDrag; label: string; title: string }[] = [
           :class="{ 'is-selected is-link': store.pointTierLeftDrag === mode }"
           :title="title"
           @click="store.setPointTierLeftDrag(mode)"
+        >
+          {{ label }}
+        </button>
+      </div>
+    </div>
+    <div class="point-tier-row">
+      <span class="is-size-7 has-text-grey point-tier-label">Colour by</span>
+      <div class="buttons has-addons are-small mb-0">
+        <button
+          v-for="{ colour, label, title } in COLOURS"
+          :key="colour"
+          type="button"
+          class="button"
+          :class="{ 'is-selected is-link': store.pointTierColour === colour }"
+          :disabled="colour === POINT_COLOURS.TIME && !store.pointTierTimed"
+          :title="
+            colour === POINT_COLOURS.TIME && !store.pointTierTimed
+              ? 'This store has no times for its observations'
+              : title
+          "
+          @click="store.setPointTierColour(colour)"
         >
           {{ label }}
         </button>

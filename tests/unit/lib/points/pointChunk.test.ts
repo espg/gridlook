@@ -11,12 +11,15 @@ import {
   decodePointChunk,
   pointChunkBytes,
   unitVector,
+  withTimes,
 } from "@/lib/points/pointChunk.ts";
 import {
   locationsArrayOf,
   pointArrayPath,
   pointTierSource,
+  timesArrayOf,
 } from "@/lib/points/pointSource.ts";
+import { POINT_TIME_EPOCH, wordsToDays } from "@/lib/points/pointTimes.ts";
 import { makeHeightPointMaterial } from "@/lib/shaders/gridShaders.ts";
 
 const grids = new Map<number, healpixGeo.Grid>();
@@ -191,7 +194,7 @@ describe("the radius law", () => {
     expect(material.uniforms.heightExaggeration.value).toBe(1);
     expect(material.uniforms.earthRadius.value).toBe(6378137);
     expect(material.vertexShader).toContain(
-      "float lift = (data_value - heightReference) * heightExaggeration / earthRadius;"
+      "float lift = (height - heightReference) * heightExaggeration / earthRadius;"
     );
     expect(material.vertexShader).toContain("position + vertical * lift");
     // the cloud is drawn over the level beneath it and coloured as the grid is
@@ -251,5 +254,55 @@ describe("pointTierSource", () => {
     ).toBe("h_tdigest_signal_locations");
     expect(locationsArrayOf({ attributes: { ragged: {} } })).toBeUndefined();
     expect(locationsArrayOf({})).toBeUndefined();
+  });
+});
+
+describe("withTimes", () => {
+  it("adds the times sibling's words as days, thinned and charged with the points", () => {
+    const { heights, words } = photons(10);
+    const digest = digestOf(heights, 2);
+    const chunk = decodePointChunk(
+      digest,
+      locatedOf(words, digest.offsets),
+      ORIGIN,
+      gridAt
+    );
+    expect(chunk.times).toBeUndefined();
+    const bytes = pointChunkBytes(chunk);
+    // ten timestamp words a day apart from 2018-01-01
+    const dayNs = 86_400e9;
+    const epoch =
+      (BigInt(POINT_TIME_EPOCH - Date.UTC(1850, 0, 1)) * BigInt(dayNs)) /
+      86_400_000n;
+    const stamps = BigUint64Array.from({ length: 10 }, (_, i) => {
+      const ns = epoch + BigInt(i * dayNs);
+      return ((ns >> 31n) << 32n) | (1n << 31n) | (ns & 0x7fffffffn);
+    });
+    const timed = withTimes(chunk, { offsets: digest.offsets, words: stamps });
+    expect(timed.times).toEqual(wordsToDays(stamps));
+    expect(Array.from(timed.times!).map(Math.round)).toEqual([
+      0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+    ]);
+    expect(timed.heights).toBe(chunk.heights);
+    expect(pointChunkBytes(timed)).toBe(bytes + 40);
+    const thinned = decimatePointChunk(timed, 4);
+    expect(Array.from(thinned.times!).map(Math.round)).toEqual([0, 4, 8]);
+    expect(thinned.count).toBe(3);
+    expect(() =>
+      withTimes(chunk, { offsets: digest.offsets, words: stamps.slice(1) })
+    ).toThrow("time words (9) do not match the chunk's points (10)");
+  });
+
+  it("finds the times sibling beside the ragged block", () => {
+    expect(
+      timesArrayOf({
+        attributes: {
+          ragged: { locations: "h_tdigest_signal_locations" },
+          times: "h_tdigest_signal_times",
+        },
+      })
+    ).toBe("h_tdigest_signal_times");
+    expect(timesArrayOf({ attributes: { ragged: {} } })).toBeUndefined();
+    expect(timesArrayOf({})).toBeUndefined();
   });
 });

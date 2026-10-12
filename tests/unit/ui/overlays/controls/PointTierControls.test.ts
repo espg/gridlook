@@ -42,6 +42,22 @@ it("marks the drag mode and words the legend for it", async () => {
   expect(orbit).not.toContain(">Drag pans");
 });
 
+it("offers the colour by time only when the source has times", async () => {
+  const store = useGlobeControlStore();
+  expect(store.pointTierColour).toBe("height");
+  const untimed = await render();
+  expect(untimed).toMatch(
+    /<button[^>]*is-selected[^>]*>\s*height\s*<\/button>/
+  );
+  expect(untimed).toMatch(/<button[^>]*disabled[^>]*>\s*time\s*<\/button>/);
+  expect(untimed).toContain("This store has no times");
+  store.setPointTierTimed(true);
+  store.setPointTierColour("time");
+  const timed = await render();
+  expect(timed).toMatch(/<button[^>]*is-selected[^>]*>\s*time\s*<\/button>/);
+  expect(timed).not.toMatch(/<button[^>]*disabled[^>]*>\s*time\s*<\/button>/);
+});
+
 it("asks the camera for a tilt once per press", () => {
   const store = useGlobeControlStore();
   expect(store.pointTierTilt).toBeUndefined();

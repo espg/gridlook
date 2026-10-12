@@ -30,6 +30,7 @@ import {
   decodePointChunk,
   pointChunkBytes,
   unitVector,
+  withTimes,
   type TPointChunk,
 } from "@/lib/points/pointChunk.ts";
 import { neighbourhoodRange, pointRange } from "@/lib/points/pointRange.ts";
@@ -37,8 +38,10 @@ import {
   locationsArrayOf,
   pointArrayPath,
   pointTierSource,
+  timesArrayOf,
   type TPointSource,
 } from "@/lib/points/pointSource.ts";
+import { POINT_COLOURS, type TPointColour } from "@/lib/points/pointTimes.ts";
 import type { ProjectionHelper } from "@/lib/projection/projectionUtils.ts";
 import type { TViewFootprint } from "@/lib/projection/viewFootprint.ts";
 import {
@@ -118,16 +121,17 @@ function nearestFirst(
     .map(({ chunk }) => chunk);
 }
 
-function pointGeometry(drawn: TPointChunk) {
+/** The drawn points: their places, heights and what colours them. */
+function pointGeometry(drawn: TPointChunk, colour: TPointColour) {
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute(
     "position",
     new THREE.BufferAttribute(drawn.offsets, 3)
   );
-  geometry.setAttribute(
-    "data_value",
-    new THREE.BufferAttribute(drawn.heights, 1)
-  );
+  geometry.setAttribute("height", new THREE.BufferAttribute(drawn.heights, 1));
+  const values =
+    colour === POINT_COLOURS.TIME && drawn.times ? drawn.times : drawn.heights;
+  geometry.setAttribute("data_value", new THREE.BufferAttribute(values, 1));
   return geometry;
 }
 
@@ -140,8 +144,9 @@ function pointGeometry(drawn: TPointChunk) {
  * level reads for the same view, from the same caches, so a view that just
  * left it reads nothing new; over the point budget every k-th point of
  * every chunk is drawn. The colour range and the histogram are the drawn
- * heights' (`pointRange`), refreshed as the window changes, until the tier
- * is left and the level's rule again.
+ * values' (`pointRange`), heights or times (phase B: the times sibling is
+ * read only when the colour asks for it), refreshed as the window changes,
+ * until the tier is left and the level's rule again.
  */
 // eslint-disable-next-line max-lines-per-function
 export function usePointLayer(options: TPointLayerOptions) {
@@ -321,7 +326,7 @@ export function usePointLayer(options: TPointLayerOptions) {
       return;
     }
     const drawn = decimatePointChunk(chunk, stride);
-    const geometry = pointGeometry(drawn);
+    const geometry = pointGeometry(drawn, store.pointTierColour);
     const entry = window.get(index);
     if (entry) {
       entry.points.geometry.dispose();
@@ -377,7 +382,7 @@ export function usePointLayer(options: TPointLayerOptions) {
   }
 
   /** One chunk's points, decoded once per store. */
-  async function pointChunk(
+  async function decodedChunk(
     readers: TLeafReaders,
     from: TPointSource,
     locations: string,
@@ -411,6 +416,40 @@ export function usePointLayer(options: TPointLayerOptions) {
     return chunk;
   }
 
+  /** One chunk's points, with their times when the colour asks for them. */
+  async function pointChunk(
+    readers: TLeafReaders,
+    from: TPointSource,
+    arrays: { locations: string; times?: string; chunkOrder: number },
+    index: number
+  ) {
+    const chunk = await decodedChunk(
+      readers,
+      from,
+      arrays.locations,
+      arrays.chunkOrder,
+      index
+    );
+    if (
+      !chunk ||
+      chunk.times ||
+      !arrays.times ||
+      store.pointTierColour !== POINT_COLOURS.TIME
+    ) {
+      return chunk;
+    }
+    const timed = await readers.words.chunk(
+      pointArrayPath(from, arrays.times),
+      index
+    );
+    if (!timed) {
+      return chunk;
+    }
+    const withTime = withTimes(chunk, timed);
+    cache.set(`${from.store}/${from.dataset}/${from.array}/${index}`, withTime);
+    return withTime;
+  }
+
   /** The leaf readers and what the source's arrays are. */
   async function open(from: TPointSource) {
     const readers = await storeReaders(from.store);
@@ -420,15 +459,17 @@ export function usePointLayer(options: TPointLayerOptions) {
     const metadata = await readers.store.get(
       `/${pointArrayPath(from)}/zarr.json`
     );
-    const locations = metadata
-      ? locationsArrayOf(JSON.parse(new TextDecoder().decode(metadata)))
-      : undefined;
+    const attributes = metadata
+      ? JSON.parse(new TextDecoder().decode(metadata))
+      : {};
+    const locations = locationsArrayOf(attributes);
     if (!locations) {
       throw new Error(`${from.array} has no located centroids`);
     }
+    const times = timesArrayOf(attributes);
     const { chunkCells } = await readers.digests.array(pointArrayPath(from));
     const chunkOrder = Number(from.dataset) - Math.log2(chunkCells) / 2;
-    return { readers, locations, chunkOrder };
+    return { readers, arrays: { locations, times, chunkOrder } };
   }
 
   async function loadWindow() {
@@ -441,10 +482,12 @@ export function usePointLayer(options: TPointLayerOptions) {
     started = performance.now();
     firstPointsMs = undefined;
     decodeMs = 0;
-    const { readers, locations, chunkOrder } = await open(from);
+    const { readers, arrays } = await open(from);
     if (request !== revision) {
       return;
     }
+    store.setPointTierTimed(arrays.times !== undefined);
+    const chunkOrder = arrays.chunkOrder;
     const chunks = windowChunks(footprint, chunkOrder, OBSERVATION_MARGIN);
     const wanted = new Set(chunks);
     for (const index of [...window.keys()]) {
@@ -458,13 +501,7 @@ export function usePointLayer(options: TPointLayerOptions) {
     // chunk is drawn as it lands, thinned again when the total asks for it
     await Promise.all(
       chunks.map(async (index) => {
-        const chunk = await pointChunk(
-          readers,
-          from,
-          locations,
-          chunkOrder,
-          index
-        );
+        const chunk = await pointChunk(readers, from, arrays, index);
         if (request !== revision || !chunk) {
           return;
         }
@@ -522,6 +559,15 @@ export function usePointLayer(options: TPointLayerOptions) {
       reload();
     }
   });
+  // the colour choice: the window is drawn again, its times read if asked
+  watch(
+    () => store.pointTierColour,
+    () => {
+      if (active.value) {
+        reload();
+      }
+    }
+  );
   // the mode buttons: what a plain left drag does
   watch(
     () => store.pointTierLeftDrag,

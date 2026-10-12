@@ -23,6 +23,7 @@ import {
   LAND_SEA_MASK_MODES,
   type TLandSeaMaskMode,
 } from "@/lib/layers/landSeaMask.ts";
+import { POINT_COLOURS, type TPointColour } from "@/lib/points/pointTimes.ts";
 import type { TDistanceScale } from "@/lib/projection/distanceScale.ts";
 import {
   PROJECTION_TYPES,
@@ -285,6 +286,10 @@ export const useGlobeControlStore = defineStore("globeControl", {
       pointTierBounds: undefined as TBounds | undefined,
       // what a plain left drag does on the tier's camera (pointPivot.ts)
       pointTierLeftDrag: POINT_PIVOT_LEFT_DRAGS.PAN as TPivotLeftDrag,
+      // what the points are coloured by (pointTimes.ts), and whether the
+      // source has times to colour by
+      pointTierColour: POINT_COLOURS.HEIGHT as TPointColour,
+      pointTierTimed: false,
       // the tilt the tier's camera is asked to animate to, degrees from
       // nadir (pointPivot.ts); the serial makes every request its own
       pointTierTilt: undefined as
@@ -407,6 +412,12 @@ export const useGlobeControlStore = defineStore("globeControl", {
     },
     setPointTierLeftDrag(mode: TPivotLeftDrag) {
       this.pointTierLeftDrag = mode;
+    },
+    setPointTierColour(colour: TPointColour) {
+      this.pointTierColour = colour;
+    },
+    setPointTierTimed(timed: boolean) {
+      this.pointTierTimed = timed;
     },
     requestPointTierTilt(degrees: number) {
       this.pointTierTilt = {

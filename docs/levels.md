@@ -219,7 +219,14 @@ It exists on the globe only; a flat projection stops at the finest level.
   65 536 of them and refreshed as chunks land or the decimation changes;
   the histogram in the appearance panel is the same sample's. A custom
   range still wins. Leaving the tier puts the level's range and histogram
-  back (the shared range across levels, unless that is off).
+  back (the shared range across levels, unless that is off). **Colour by
+  time** (the panel's choice, offered when the digest declares a `times`
+  sibling) colours each point by when it was observed instead: the
+  sibling's toc words (zagg spec §8.3, one per centroid, read only then
+  and cached with the chunk) decoded to days since 2018-01-01
+  (`src/lib/points/pointTimes.ts`), with the same 2nd to 98th percentile
+  range, labelled as UTC dates on the colour bar; a custom range is typed
+  in those days.
 - **Budget.** At most `OBSERVATION_POINT_BUDGET` (300 000) points are drawn:
   over it, every k-th centroid of every chunk is drawn, uniformly and
   deterministically, never by place. A window is priced before it is read

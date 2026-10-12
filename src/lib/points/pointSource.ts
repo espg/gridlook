@@ -65,3 +65,15 @@ export function locationsArrayOf(metadata: TJson): string | undefined {
   const ragged = isRecord(attributes?.ragged) ? attributes.ragged : undefined;
   return typeof ragged?.locations === "string" ? ragged.locations : undefined;
 }
+
+/**
+ * The name of the times sibling a digest array's attributes declare
+ * (`times`, beside the `ragged` block: zagg spec §8.3); undefined for a
+ * digest without timed centroids.
+ */
+export function timesArrayOf(metadata: TJson): string | undefined {
+  const attributes = isRecord(metadata.attributes)
+    ? metadata.attributes
+    : undefined;
+  return typeof attributes?.times === "string" ? attributes.times : undefined;
+}
