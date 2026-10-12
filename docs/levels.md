@@ -211,7 +211,9 @@ It exists on the globe only; a flat projection stops at the finest level.
   chunks land: the datum floats on the view's lowest height, so the cloud
   always rises from the sphere at the pivot, over a 3 000 m plateau as
   over a beach, and a profile, whose window reaches the horizon, keeps it
-  there. The exaggeration is 1 for now (both are shader uniforms). Positions are kept relative to each chunk's centre so that
+  there. The exaggeration is the panel's slider (1 to 20, 1 by default):
+  it stretches the heights above the datum, and the pivot's height and the
+  gizmo's up bar stretch with them (both are shader uniforms). Positions are kept relative to each chunk's centre so that
   float32 resolves millimetres.
 - **Colour.** The colour is the height on the current colormap, over the
   drawn points' own range: their 2nd to 98th percentile

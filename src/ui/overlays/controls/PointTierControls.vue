@@ -8,7 +8,10 @@ import {
   POINT_PIVOT_TILTS,
   type TPivotLeftDrag,
 } from "@/lib/camera/pointPivot.ts";
-import { POINT_OPACITY_RANGE } from "@/lib/points/pointBudget.ts";
+import {
+  POINT_EXAGGERATION_RANGE,
+  POINT_OPACITY_RANGE,
+} from "@/lib/points/pointBudget.ts";
 import { POINT_COLOURS, type TPointColour } from "@/lib/points/pointTimes.ts";
 import { useGlobeControlStore } from "@/store/store.ts";
 
@@ -19,8 +22,8 @@ import { useGlobeControlStore } from "@/store/store.ts";
  * view buttons, which animate the camera's tilt (pointPivot.ts) to the top
  * (nadir) or to a profile (the cloud seen edge-on along the ground),
  * keeping the azimuth and the pivot, the colour choice: the height, or
- * the time when the source has one (pointTimes.ts), and the points'
- * opacity.
+ * the time when the source has one (pointTimes.ts), the points' opacity
+ * and the heights' vertical exaggeration about the datum.
  */
 const store = useGlobeControlStore();
 
@@ -125,6 +128,33 @@ const DRAG_MODES: { mode: TPivotLeftDrag; label: string; title: string }[] = [
         :step="POINT_OPACITY_RANGE.step"
         :value="store.pointTierOpacity"
         @change="store.setPointTierOpacity(number($event))"
+      />
+    </div>
+    <div class="point-tier-row">
+      <label
+        class="is-size-7 has-text-grey point-tier-label"
+        for="point_exaggeration"
+        title="Stretch the heights above the datum"
+        >Exaggerate</label
+      >
+      <input
+        id="point_exaggeration"
+        class="slider point-tier-slider"
+        type="range"
+        :min="POINT_EXAGGERATION_RANGE.min"
+        :max="POINT_EXAGGERATION_RANGE.max"
+        :step="POINT_EXAGGERATION_RANGE.step"
+        :value="store.pointTierExaggeration"
+        @input="store.setPointTierExaggeration(number($event))"
+      />
+      <input
+        class="input is-small point-tier-number"
+        type="number"
+        :min="POINT_EXAGGERATION_RANGE.min"
+        :max="POINT_EXAGGERATION_RANGE.max"
+        :step="POINT_EXAGGERATION_RANGE.step"
+        :value="store.pointTierExaggeration"
+        @change="store.setPointTierExaggeration(number($event))"
       />
     </div>
     <div class="point-tier-row">
