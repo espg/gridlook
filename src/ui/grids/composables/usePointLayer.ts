@@ -56,6 +56,12 @@ const POINT_PIXELS = 4;
 const POINT_CACHE_BYTES = 64 * 2 ** 20;
 /** Drawn after the (hidden) level (0) and before the overlays. */
 const POINT_RENDER_ORDER = 0.5;
+/**
+ * While a window lands, its colour range, histogram and datum are
+ * refreshed at most this often (a sort of 65 536 values and a pass over
+ * every drawn point each), and once more when it has landed.
+ */
+const RANGE_INTERVAL_MS = 250;
 
 type TPointLayerOptions = {
   getDatasources: () => TSources | undefined;
@@ -149,11 +155,20 @@ export function usePointLayer(options: TPointLayerOptions) {
   const gridAt = createGrids();
   const cache = createByteLru<TPointChunk>(POINT_CACHE_BYTES, pointChunkBytes);
   // the window on screen: its chunks, decoded, what is drawn of each
-  // (every stride-th point) and their objects
+  // (every stride-th point, coloured by time or not) and their objects
   const window = new Map<
     number,
-    { chunk: TPointChunk; drawn: TPointChunk; points: THREE.Points }
+    {
+      chunk: TPointChunk;
+      drawn: TPointChunk;
+      points: THREE.Points;
+      stride: number;
+      byTime: boolean;
+    }
   >();
+  // the drawn values changed since the range was last published, and when
+  let rangeStale = false;
+  let rangePublished = -Infinity;
   let loaded: { chunks: number[]; chunkOrder: number } | undefined;
   let stride = 1;
   // what the window cost so far, for the selector's readout
@@ -220,6 +235,7 @@ export function usePointLayer(options: TPointLayerOptions) {
       entry.points.geometry.dispose();
       options.getScene()?.remove(entry.points);
       window.delete(index);
+      rangeStale = true;
     }
   }
 
@@ -274,6 +290,8 @@ export function usePointLayer(options: TPointLayerOptions) {
 
   /** The drawn heights' range and histogram, as the store's data range. */
   function publishRange() {
+    rangeStale = false;
+    rangePublished = performance.now();
     publishDatum();
     const range = pointRange(
       drawn().map(
@@ -313,11 +331,19 @@ export function usePointLayer(options: TPointLayerOptions) {
 
   function draw(index: number, chunk: TPointChunk) {
     const scene = options.getScene();
-    if (!scene) {
+    const byTime = store.pointTierColouredByTime();
+    const entry = window.get(index);
+    if (
+      !scene ||
+      (entry?.chunk === chunk &&
+        entry.stride === stride &&
+        entry.byTime === byTime)
+    ) {
+      // a chunk already drawn so is left as it is
       return;
     }
+    rangeStale = true;
     const drawn = decimatePointChunk(chunk, stride);
-    const byTime = store.pointTierColouredByTime();
     if (byTime && !drawn.times) {
       // coloured by time, a chunk without its times is not drawn: its
       // heights would be read as dates and mixed into the days' range
@@ -328,12 +354,10 @@ export function usePointLayer(options: TPointLayerOptions) {
       drawn,
       byTime ? drawn.times! : drawn.heights
     );
-    const entry = window.get(index);
     if (entry) {
       entry.points.geometry.dispose();
+      Object.assign(entry, { chunk, drawn, stride, byTime });
       entry.points.geometry = geometry;
-      entry.chunk = chunk;
-      entry.drawn = drawn;
       return;
     }
     const points = new THREE.Points(geometry, pointMaterial());
@@ -341,7 +365,7 @@ export function usePointLayer(options: TPointLayerOptions) {
     points.renderOrder = POINT_RENDER_ORDER;
     points.position.set(...chunk.origin);
     scene.add(points);
-    window.set(index, { chunk, drawn, points });
+    window.set(index, { chunk, drawn, points, stride, byTime });
     options.updateColormap([points]);
   }
 
@@ -485,6 +509,19 @@ export function usePointLayer(options: TPointLayerOptions) {
     return { readers, arrays: { locations, times, chunkOrder } };
   }
 
+  /** A chunk landed: drawn, the window thinned again, the readouts refreshed. */
+  function land(index: number, chunk: TPointChunk) {
+    firstPointsMs ??= performance.now() - started;
+    draw(index, chunk);
+    redecimate();
+    updatePointSize();
+    publishStats(false);
+    if (rangeStale && performance.now() - rangePublished >= RANGE_INTERVAL_MS) {
+      publishRange();
+    }
+    options.redraw();
+  }
+
   async function loadWindow() {
     const from = source.value;
     const footprint = store.viewFootprint;
@@ -523,17 +560,15 @@ export function usePointLayer(options: TPointLayerOptions) {
         if (request !== revision || !chunk) {
           return;
         }
-        firstPointsMs ??= performance.now() - started;
-        draw(index, chunk);
-        redecimate();
-        updatePointSize();
-        publishStats(false);
-        publishRange();
-        options.redraw();
+        land(index, chunk);
       })
     );
     if (request === revision) {
       publishStats(true);
+      if (rangeStale) {
+        publishRange();
+        options.redraw();
+      }
     }
   }
 
@@ -547,9 +582,14 @@ export function usePointLayer(options: TPointLayerOptions) {
       return true;
     }
     const current = new Set(loaded.chunks);
-    return windowChunks(footprint, loaded.chunkOrder, 0).some(
-      (chunk) => !current.has(chunk)
-    );
+    const missing = (margin: number) =>
+      windowChunks(footprint, loaded!.chunkOrder, margin).some(
+        (chunk) => !current.has(chunk)
+      );
+    // the view reaches past the loaded window, and the window it would
+    // load is not the loaded one: under the fetch cap the two are cut
+    // differently, and the view's own chunks may never all be loaded
+    return missing(0) && missing(OBSERVATION_MARGIN);
   }
 
   function reload() {

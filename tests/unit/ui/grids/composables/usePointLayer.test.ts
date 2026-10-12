@@ -7,8 +7,12 @@ import type { TPointChunk } from "@/lib/points/pointChunk.ts";
 import type { TSources } from "@/lib/types/GlobeTypes.ts";
 
 const fake = vi.hoisted(() => ({
-  // the window's chunks, in the order the view asks for them
+  // the window's chunks, in the order the view asks for them, and the
+  // view's own (no margin) when they differ, as under the fetch cap
   window: [] as number[],
+  inView: undefined as number[] | undefined,
+  // windows loaded: each opens the digest array's metadata
+  loads: 0,
   chunks: new Map<number, unknown>(),
   // the times sibling's words per chunk; none: the read finds nothing
   times: new Map<number, BigUint64Array>(),
@@ -23,7 +27,9 @@ vi.mock("@/ui/common/useLog.ts", () => ({
 }));
 vi.mock("@/lib/grids/healpixWindow.ts", async (original) => ({
   ...(await original<typeof import("@/lib/grids/healpixWindow.ts")>()),
-  healpixViewBlocks: () => [...fake.window],
+  healpixViewBlocks: (_grid: unknown, _footprint: unknown, margin: number) => [
+    ...(margin === 0 && fake.inView ? fake.inView : fake.window),
+  ],
 }));
 // a chunk "decodes" to the point chunk its digest read returned
 vi.mock("@/lib/points/pointChunk.ts", async (original) => ({
@@ -35,6 +41,7 @@ vi.mock("@/lib/digest/digestField.ts", async (original) => ({
   storeReaders: () => ({
     store: {
       get: async (key: string) => {
+        fake.loads += key.endsWith("/h_tdigest_signal/zarr.json") ? 1 : 0;
         const metadata = fake.metadata.get(key);
         return metadata
           ? new TextEncoder().encode(JSON.stringify(metadata))
@@ -200,6 +207,8 @@ function drawnCount(scene: THREE.Scene) {
 
 afterEach(() => {
   fake.window = [];
+  fake.inView = undefined;
+  fake.loads = 0;
   fake.chunks.clear();
   fake.times.clear();
   fake.metadata.clear();
@@ -399,5 +408,62 @@ it("falls back to heights on a source without times, and labels them so", async 
   expect(store.pointTierColour).toBe("height");
   expect(store.pointTierColouredByTime()).toBe(false);
   expect(store.pointTierBounds!.low).toBeGreaterThanOrEqual(300);
+  scope.stop();
+});
+
+it("redraws only what a window change adds, and publishes the range once for it", async () => {
+  fake.window = Array.from({ length: 10 }, (_, index) => index);
+  for (let index = 0; index <= 10; index++) {
+    fake.chunks.set(
+      index,
+      chunkOf(100, (i) => 300 + index + i / 100)
+    );
+  }
+  const { store, scene, options, scope } = setup();
+  store.setPointTier(true);
+  await settle();
+  const geometries = new Set(pointsOf(scene).map((points) => points.geometry));
+  options.updateColormap.mockClear();
+  options.updateHistogram.mockClear();
+  // the view moves on by one chunk
+  fake.window = [...fake.window, 10];
+  store.viewFootprint = {
+    centreLat: 0.1,
+    centreLon: 0,
+  } as typeof store.viewFootprint;
+  await settle();
+  const after = pointsOf(scene);
+  expect(after).toHaveLength(11);
+  expect(
+    after.filter((points) => !geometries.has(points.geometry))
+  ).toHaveLength(1);
+  expect(options.updateColormap).toHaveBeenCalledOnce();
+  expect(options.updateHistogram.mock.calls.length).toBeLessThanOrEqual(2);
+  scope.stop();
+});
+
+it("does not reload a capped window over and over for a view it never holds", async () => {
+  // the capped window leaves out a chunk of the view itself
+  fake.window = [0, 1, 2, 3];
+  fake.inView = [0, 1, 2, 3, 99];
+  for (const index of fake.window) {
+    fake.chunks.set(
+      index,
+      chunkOf(10, () => 300)
+    );
+  }
+  const { store, scope } = setup();
+  store.setPointTier(true);
+  await settle();
+  const loads = fake.loads;
+  expect(loads).toBe(1);
+  for (let tick = 1; tick <= 3; tick++) {
+    store.viewFootprint = {
+      centreLat: tick / 1000,
+      centreLon: 0,
+    } as typeof store.viewFootprint;
+    await settle();
+  }
+  expect(fake.loads).toBe(loads);
   scope.stop();
 });
