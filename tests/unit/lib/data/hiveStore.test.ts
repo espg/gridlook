@@ -137,7 +137,9 @@ function hive(leafDir = LEAF, stamp: object = {}) {
     "morton_hive.json": manifest,
     "coverage.moc": coverage,
     [`${LEAF}/zarr.json`]: group({ morton_hive_commit: stamp }), // eslint-disable-line camelcase
-    [`${leafDir}/19/zarr.json`]: group({ dggs: { name: "morton" } }),
+    [`${leafDir}/19/zarr.json`]: group({
+      dggs: { name: "morton", coordinate: "morton" },
+    }),
     [`${leafDir}/19/count/zarr.json`]: sharded,
     [`${leafDir}/19/count/c/0`]: shardObject(new Map([[1, int32s(INNER)]])),
     [`${COLUMN}/13/zarr.json`]: group({ role: "column" }),
@@ -164,9 +166,19 @@ describe("createHiveStore", () => {
       { path: "/12", kind: "group" },
       { path: "/12/count", kind: "array" },
     ]);
+    // the root carries the zarr-conventions object the Icechunk companion root
+    // carries since zagg 0.59.0 (englacial/zagg#618): the `/1` keys plus a
+    // layout, finest first, each level derived from the next finer
     expect(
       decode(await store.get("/zarr.json")).attributes.multiscales
-    ).toEqual(manifest.multiscales);
+    ).toEqual({
+      ...manifest.multiscales[0],
+      layout: [
+        { asset: "19" },
+        { asset: "13", derived_from: "19", transform: { scale: [4096] } }, // eslint-disable-line camelcase
+        { asset: "12", derived_from: "13", transform: { scale: [4] } }, // eslint-disable-line camelcase
+      ],
+    });
     expect(decode(await store.get("/19/zarr.json")).attributes.dggs).toEqual({
       name: "morton",
     });
