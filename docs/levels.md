@@ -205,9 +205,13 @@ It exists on the globe only; a flat projection stops at the finest level.
   centroid (weight above 1, about one cell in 100 000) is one point at its
   mean, at the centre of its ancestor cell. Noise is not read.
 - **Height.** A point sits at `r = 1 + (h − h_ref) · exaggeration / R` globe
-  radii, with `R` the store's semi-major axis; the reference height is 0 and
-  the exaggeration 1 for now (both are shader uniforms). Positions are kept
-  relative to each chunk's centre so that float32 resolves millimetres.
+  radii, with `R` the store's semi-major axis. The reference height `h_ref`
+  is the lowest height drawn, refreshed as chunks land: the datum floats on
+  the view's lowest height, so the cloud always rises from the sphere at
+  the pivot, over a 3 000 m plateau as over a beach (and the profile view
+  below frames it). The exaggeration is 1 for now (both are shader
+  uniforms). Positions are kept relative to each chunk's centre so that
+  float32 resolves millimetres.
 - **Colour.** The colour is the height on the current colormap, over the
   drawn points' own range: their 2nd to 98th percentile
   (`src/lib/points/pointRange.ts`), read from a uniform sample of at most

@@ -26,7 +26,7 @@ import {
   unitVector,
   type TPointChunk,
 } from "@/lib/points/pointChunk.ts";
-import { pointRange } from "@/lib/points/pointRange.ts";
+import { lowestValue, pointRange } from "@/lib/points/pointRange.ts";
 import {
   locationsArrayOf,
   pointArrayPath,
@@ -218,14 +218,20 @@ export function usePointLayer(options: TPointLayerOptions) {
     }
   }
 
-  /** The drawn heights' range and histogram, as the store's data range. */
+  /**
+   * The drawn heights' range and histogram, as the store's data range, and
+   * the lowest of them as the datum the points are lifted from.
+   */
   function publishRange() {
-    const range = pointRange(
-      drawn().map(
-        ({ geometry }) =>
-          geometry.getAttribute("data_value").array as Float32Array
-      )
+    const heights = drawn().map(
+      ({ geometry }) =>
+        geometry.getAttribute("data_value").array as Float32Array
     );
+    const datum = lowestValue(heights);
+    if (material && datum !== undefined) {
+      material.uniforms.heightReference.value = datum;
+    }
+    const range = pointRange(heights);
     if (!range) {
       return;
     }

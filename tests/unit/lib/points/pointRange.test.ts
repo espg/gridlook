@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  lowestValue,
   POINT_RANGE_PERCENTILES,
   POINT_RANGE_SAMPLE,
   pointRange,
@@ -46,5 +47,18 @@ describe("pointRange", () => {
     expect(Array.from(range.sample)).toEqual([1, 2, 3]);
     expect(range.low).toBe(1);
     expect(range.high).toBe(3);
+  });
+});
+
+describe("lowestValue", () => {
+  it("is the lowest finite value over every chunk, the datum", () => {
+    expect(
+      lowestValue([
+        new Float32Array([NaN, 320.5, 400]),
+        new Float32Array([318.75, -Infinity, 500]),
+      ])
+    ).toBe(318.75);
+    expect(lowestValue([])).toBeUndefined();
+    expect(lowestValue([new Float32Array([NaN])])).toBeUndefined();
   });
 });

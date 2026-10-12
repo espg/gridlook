@@ -60,3 +60,21 @@ export function pointRange(
     sample: sorted,
   };
 }
+
+/**
+ * The lowest finite value over every array, the cloud's datum: the drawn
+ * heights are lifted from it, so the lowest point sits on the sphere
+ * whatever the terrain's elevation. Undefined without a finite value.
+ */
+export function lowestValue(values: ArrayLike<number>[]): number | undefined {
+  let min = Infinity;
+  for (const chunk of values) {
+    for (let i = 0; i < chunk.length; i++) {
+      const value = chunk[i];
+      if (value < min && Number.isFinite(value)) {
+        min = value;
+      }
+    }
+  }
+  return min === Infinity ? undefined : min;
+}
