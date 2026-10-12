@@ -574,6 +574,31 @@ describe("createPointPivot", () => {
     expect(camera.position.length() - 1).toBeCloseTo(altitude * 0.5, 9);
   });
 
+  it("leaves and enters without replaying a damped drag's tail", () => {
+    const { camera, controls, pivot } = pivotControls(3000);
+    pivot.enter(surfacePointNearRay(camera.position, forwardOf(camera)));
+    // an orbit flick and a pan, one damped frame of them applied
+    controls._rotateLeft(0.3);
+    controls._pan(100, 0);
+    controls.update();
+    pivot.leave();
+    const position = camera.position.clone();
+    for (let frame = 0; frame < 100; frame++) {
+      controls.update();
+    }
+    expect(camera.position.distanceTo(position) * R).toBeLessThan(1e-3);
+    expect(controls.target.toArray()).toEqual([0, 0, 0]);
+    // and a globe drag's tail is not replayed about the pivot
+    controls._rotateLeft(0.3);
+    controls.update();
+    pivot.enter(surfacePointNearRay(camera.position, forwardOf(camera)));
+    const entered = camera.position.clone();
+    for (let frame = 0; frame < 100; frame++) {
+      controls.update();
+    }
+    expect(camera.position.distanceTo(entered) * R).toBeLessThan(1e-3);
+  });
+
   it("gives up when something else moved the pivot off the sphere", () => {
     const { camera, controls, pivot } = pivotControls(2000);
     pivot.enter(surfacePointNearRay(camera.position, forwardOf(camera)));

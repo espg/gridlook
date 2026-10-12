@@ -427,12 +427,24 @@ export function createPointPivot(controls: OrbitControls) {
     return changed;
   };
 
+  /**
+   * Forget the motion a damped drag still has to apply: it was taken in the
+   * other camera's frame (an orbit about the pivot is not one about the
+   * globe's centre, a pan of the pivot moves the globe's target).
+   */
+  function stopMotion() {
+    orbit._sphericalDelta.set(0, 0, 0);
+    orbit._panOffset.set(0, 0, 0);
+    orbit._scale = 1;
+  }
+
   /** Restore the globe orbit's settings, leaving the camera where it is. */
   function drop() {
     if (!saved) {
       return;
     }
     active = false;
+    stopMotion();
     const { up, ...settings } = saved;
     Object.assign(orbit, settings);
     camera.up.copy(up);
@@ -459,6 +471,7 @@ export function createPointPivot(controls: OrbitControls) {
       up: camera.up.clone(),
     };
     height = 0;
+    stopMotion();
     orbit.target.copy(ground).normalize();
     orbit.minPolarAngle = 0;
     orbit.maxPolarAngle = THREE.MathUtils.degToRad(
