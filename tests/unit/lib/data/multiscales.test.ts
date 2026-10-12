@@ -174,6 +174,7 @@ const zagg = {
   fold: { fold_source: "cascade", exact_levels: 1 },
 };
 
+// eslint-disable-next-line max-lines-per-function
 describe("parseMultiscales for zagg-multiscales/1", () => {
   it("names the level groups by cell order, the base first", () => {
     const levels = parseMultiscales({ multiscales: [zagg] });
@@ -192,6 +193,43 @@ describe("parseMultiscales for zagg-multiscales/1", () => {
       "4",
     ]);
     expect(levels[0].name).toBe("order 19");
+  });
+
+  it("lists the levels derived from the leaves in place of the leaves", () => {
+    const levels = parseMultiscales({
+      multiscales: [zagg],
+      derived_levels: { dataset: "19", cells: [17, 16, 15, 14, 19, 20] },
+    });
+    // the leaves are the source of the derived levels, not a level
+    expect(levels.map((level) => level.path).slice(0, 5)).toEqual([
+      "17",
+      "16",
+      "15",
+      "14",
+      "13",
+    ]);
+    expect(levels.map((level) => level.path)).not.toContain("19");
+    expect(levels).toHaveLength(14);
+    expect(levels[2]).toEqual({
+      path: "15",
+      name: "order 15 (derived)",
+      resolution: levels[4].resolution! / 4,
+      derived: { dataset: "19", refinement: 4 },
+    });
+    expect(levels[0].name).toBe("order 17 (derived)");
+    // finest first, as the picker and the backdrop expect
+    const resolutions = levels.map((level) => level.resolution!);
+    expect(resolutions).toEqual([...resolutions].sort((a, b) => a - b));
+    expect(levels[0].derived).toEqual({ dataset: "19", refinement: 2 });
+    expect(levels[4].derived).toBeUndefined();
+  });
+
+  it("keeps the leaves when the derived levels come from another group", () => {
+    const levels = parseMultiscales({
+      multiscales: [zagg],
+      derived_levels: { dataset: "13", cells: [12] },
+    });
+    expect(levels[0]).toMatchObject({ path: "19", name: "order 19" });
   });
 
   it("sizes the cells by the cell order and never paths by the node order", () => {

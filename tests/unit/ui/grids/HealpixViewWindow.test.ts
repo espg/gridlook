@@ -11,7 +11,12 @@ type TLevelSources = {
   levels: { datasources: Record<string, TSource> }[];
   selectedLevel?: number;
 };
-type TStoredLevel = { level: number; cells?: number[] };
+type TStoredLevel = {
+  level: number;
+  cells?: number[];
+  // a level derived from the chunks of finer cells: its cells per chunk
+  derivedChunk?: number;
+};
 type THoverLookup = (
   lat: number,
   lon: number
@@ -51,7 +56,11 @@ function describeArray({ dataset }: TSource, variable: string) {
       attrs: { healpix_nside: 2 ** level.level, healpix_order: "nest" },
     };
   }
-  return { shape: [3, cellCount(level)], chunks: [1, 65536], attrs: {} };
+  return {
+    shape: [3, cellCount(level)],
+    chunks: [1, level.derivedChunk ?? 65536],
+    attrs: {},
+  };
 }
 
 vi.stubGlobal("localStorage", { getItem: () => null });
@@ -223,6 +232,9 @@ async function mount(lat: number, lon: number) {
       time: from(name),
       datasources: { t: from(name) },
       resolution: 6_500_000 / 2 ** stored[name].level,
+      ...(stored[name].derivedChunk
+        ? { derived: { dataset: "leaves", refinement: 2 } }
+        : {}),
     })),
   }) as unknown as TSources;
   const scope = effectScope();
@@ -293,6 +305,28 @@ it("loads the blocks in view of a dense level over the coarsest level", async ()
     )
   ).toBe(true);
   expect(hover.lookup!(-41, 171)!.value).toBe(-(cellAt(3, -41, 171) + 1));
+  scope.stop();
+});
+
+it("loads a derived level by view, one chunk per block, however small", async () => {
+  // 12 · 4^6 cells: a stored level of this size is loaded whole
+  stored.fine = { level: 6, derivedChunk: 16 };
+  stored.coarse = { level: 3 };
+  const { store, scope } = await mount(11, 31);
+
+  expect(12 * 4 ** 6).toBeLessThan(DEFAULT_MAX_VIEW_CELLS);
+  expect(store.viewLoading).toBe(true);
+  expect(store.wholeLevels).toEqual([]);
+  // blocks of one chunk (16 cells, an order-4 cell), not of 4^6 cells
+  const fine = fetches.filter(({ dataset }) => dataset === "fine");
+  expect(fine.length).toBeGreaterThan(0);
+  for (const { start, stop } of fine) {
+    expect(start % 16).toBe(0);
+    expect(stop % 16).toBe(0);
+  }
+  expect(fetchedCells("t")).toBeLessThan(4 ** 6);
+  expect(hover.lookup!(11, 31)!.value).toBe(cellAt(6, 11, 31) + 1);
+  expect(hover.lookup!(-40, 170)?.value ?? null).toBeNull();
   scope.stop();
 });
 

@@ -1,4 +1,9 @@
-import { createDigestReader, type TDigestReader } from "./digestReader.ts";
+import { createPooledDigests, derivedGroup } from "./derivedLevel.ts";
+import {
+  createDenseReader,
+  createDigestReader,
+  type TDigestSource,
+} from "./digestReader.ts";
 import { DIGEST_PRODUCTS, type TDigestVariable } from "./digestVariables.ts";
 import {
   digestQuantile,
@@ -8,6 +13,7 @@ import {
 
 import { createHiveStore, isHiveStorePath } from "@/lib/data/hiveStore.ts";
 import { parseStorePath } from "@/lib/data/icechunkStore.ts";
+import type { TDataSource, TSourceLevel } from "@/lib/types/GlobeTypes.ts";
 
 /** The percentiles (0..100) the derived variables are computed at. */
 export type TDigestParams = {
@@ -41,7 +47,7 @@ function digestValue(
  * Chunks already decoded are not read again, whatever the percentiles.
  */
 export async function digestField(
-  reader: TDigestReader,
+  reader: TDigestSource,
   path: string,
   variable: Pick<TDigestVariable, "product">,
   params: TDigestParams,
@@ -80,7 +86,7 @@ export async function digestField(
  * has no chunk.
  */
 export async function digestCell(
-  reader: TDigestReader,
+  reader: TDigestSource,
   path: string,
   cell: number,
   cachedOnly = false
@@ -93,23 +99,52 @@ export async function digestCell(
   return chunk && { chunk, cell: cell - index * chunkCells };
 }
 
-let current: { store: string; reader: Promise<TDigestReader> } | undefined;
+function openReaders(storePath: string) {
+  return createHiveStore(parseStorePath(storePath).url).then((store) => {
+    const digests = createDigestReader(store);
+    return {
+      pooled: createPooledDigests(digests),
+      dense: createDenseReader(store),
+    };
+  });
+}
+
+let current:
+  { store: string; readers: ReturnType<typeof openReaders> } | undefined;
 
 /**
- * The digest reader of a store, one at a time (the decoded chunks of the
- * previous store are let go). Only a hive store serves ragged chunks.
+ * The chunk readers of a store, one store at a time (the decoded chunks of
+ * the previous store are let go). Only a hive store serves ragged chunks.
  */
-export function digestReaderFor(storePath: string) {
+function storeReaders(storePath: string) {
   if (!isHiveStorePath(storePath)) {
     return undefined;
   }
   if (current?.store !== storePath) {
-    current = {
-      store: storePath,
-      reader: createHiveStore(parseStorePath(storePath).url).then((store) =>
-        createDigestReader(store)
-      ),
-    };
+    current = { store: storePath, readers: openReaders(storePath) };
   }
-  return current.reader;
+  return current.readers;
+}
+
+/**
+ * Where the variables of a level are computed from: the group its arrays
+ * are read in (the leaves' for a derived level) and the leaf cells pooled
+ * into one of its cells.
+ */
+export function levelSource(
+  level: Pick<TSourceLevel, "derived">,
+  source: Pick<TDataSource, "store" | "dataset">
+) {
+  const readers = storeReaders(source.store);
+  if (!readers) {
+    return undefined;
+  }
+  const group = derivedGroup(level.derived?.refinement ?? 0);
+  const dataset = level.derived?.dataset ?? source.dataset;
+  return {
+    group,
+    path: (array: string) => [dataset, array].filter(Boolean).join("/"),
+    digests: readers.then(({ pooled }) => pooled.at(group)),
+    dense: readers.then(({ dense }) => dense),
+  };
 }

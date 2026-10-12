@@ -1,12 +1,12 @@
 import { watchThrottled } from "@vueuse/core";
 import type * as healpixGeo from "healpix-geo";
-import { watch, type ShallowRef } from "vue";
+import { watch, type Ref, type ShallowRef } from "vue";
 
 import type { THoverGeoPoint } from "./gridHoverUtils.ts";
 
 import { currentLevel } from "@/lib/data/levels.ts";
-import { digestCell, digestReaderFor } from "@/lib/digest/digestField.ts";
-import { digestStrata } from "@/lib/digest/digestProbe.ts";
+import { digestCell, levelSource } from "@/lib/digest/digestField.ts";
+import { digestStrata, type TDigestProbe } from "@/lib/digest/digestProbe.ts";
 import { digestVariableOf } from "@/lib/digest/digestVariables.ts";
 import { ProjectionHelper } from "@/lib/projection/projectionUtils.ts";
 import type { TSources } from "@/lib/types/GlobeTypes.ts";
@@ -21,7 +21,8 @@ const HOVER_THROTTLE_MS = 80;
  * stratum, cached) and resolved again at every level that comes on screen.
  * Without a pin, while a variable derived from a digest is displayed, the
  * panel follows the hovered cell from the chunks already decoded; a hover
- * never reads the store.
+ * never reads the store. A cell of a derived level shows the pooled digests
+ * of its leaf cells.
  */
 // eslint-disable-next-line max-lines-per-function
 export function useDigestProbe(options: {
@@ -29,6 +30,13 @@ export function useDigestProbe(options: {
   /** The grid of the level on screen. */
   getGrid: () => healpixGeo.Grid | null;
   clickedGeoPoint: Readonly<ShallowRef<THoverGeoPoint | null>>;
+  /** The values gap filling gave a cell of the level on screen, if any. */
+  getInterpolated: (
+    cell: number,
+    grid: healpixGeo.Grid
+  ) => TDigestProbe["interpolated"];
+  /** Changes when the filled cells do. */
+  filledRevision: Readonly<Ref<number>>;
 }) {
   const store = useGlobeControlStore();
   const { logError } = useLog();
@@ -40,11 +48,11 @@ export function useDigestProbe(options: {
     if (!sources || !grid || grid.scheme !== "nested") {
       return undefined;
     }
-    const datasources = currentLevel(sources).datasources;
-    const strata = digestStrata(datasources);
-    const storePath = Object.values(datasources)[0]?.store;
-    const reader = storePath && strata.length > 0 && digestReaderFor(storePath);
-    return reader ? { grid, strata, reader } : undefined;
+    const current = currentLevel(sources);
+    const strata = digestStrata(current.datasources, current.derived?.dataset);
+    const source = Object.values(current.datasources)[0];
+    const from = source && strata.length > 0 && levelSource(current, source);
+    return from ? { grid, strata, reader: from.digests } : undefined;
   }
 
   /** Show the cell at a place; `cachedOnly` reads nothing. */
@@ -85,6 +93,7 @@ export function useDigestProbe(options: {
       cell,
       order: grid.level,
       pinned,
+      interpolated: options.getInterpolated(cell, grid),
       strata: strata.map(({ name }, index) => ({
         name,
         digest: digests[index],
@@ -107,9 +116,11 @@ export function useDigestProbe(options: {
     }
   });
   // a pinned place is a cell of whatever level is on screen
-  watch([() => store.digestPin, options.getGrid], showPinned, {
-    immediate: true,
-  });
+  watch(
+    [() => store.digestPin, options.getGrid, options.filledRevision],
+    showPinned,
+    { immediate: true }
+  );
   watchThrottled(
     () => store.hoveredGridPoint,
     (point) => {

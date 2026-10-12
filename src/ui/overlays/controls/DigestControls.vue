@@ -5,12 +5,19 @@ import {
   DIGEST_PRODUCTS,
   type TDigestVariable,
 } from "@/lib/digest/digestVariables.ts";
+import { GAP_FILL_SIZES, gaussianSigma } from "@/lib/grids/gapFill.ts";
 import { useGlobeControlStore } from "@/store/store.ts";
 import RangeSlider from "@/ui/common/RangeSlider.vue";
 
 const props = defineProps<{
   /** The digest the selected variable is derived from. */
   digest: TDigestVariable;
+  /**
+   * Whether the level on screen is derived from the leaves. Only such a
+   * level is smoothed, so the gap controls are shown there alone; the
+   * setting itself is kept across levels.
+   */
+  derivedLevel: boolean;
 }>();
 
 const store = useGlobeControlStore();
@@ -19,6 +26,8 @@ const isRange = computed(() => props.digest.product === DIGEST_PRODUCTS.RANGE);
 
 const number = (event: Event) =>
   Number((event.target as HTMLInputElement).value);
+
+const checked = (event: Event) => (event.target as HTMLInputElement).checked;
 
 function setLow(low: number) {
   store.setDigestPercentileBounds(
@@ -102,6 +111,34 @@ function setHigh(high: number) {
         />
       </div>
     </template>
+    <div v-if="derivedLevel" class="digest-row">
+      <label
+        class="checkbox is-size-7"
+        title="Fill cells without photons from the cells around them (a Gaussian-weighted mean of the values under the kernel). Cells with photons keep their value."
+      >
+        <input
+          :checked="store.gapFill"
+          type="checkbox"
+          @change="store.setGapFill(checked($event))"
+        />
+        Smooth gaps
+      </label>
+      <div class="select is-small">
+        <select
+          aria-label="Smoothing kernel size"
+          :value="store.gapFillSize"
+          :disabled="!store.gapFill"
+          @change="store.setGapFillSize(number($event))"
+        >
+          <option v-for="size in GAP_FILL_SIZES" :key="size" :value="size">
+            {{ size }}×{{ size }}
+          </option>
+        </select>
+      </div>
+      <span class="is-size-7 has-text-grey">
+        σ = {{ gaussianSigma(store.gapFillSize).toFixed(2) }} cells
+      </span>
+    </div>
     <div class="is-size-7 has-text-grey">
       Computed in the browser from each cell's t-digest. Click a cell to see its
       distribution.

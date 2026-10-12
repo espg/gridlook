@@ -7,6 +7,9 @@ import {
 import {
   coarsestLevel,
   currentLevel,
+  DEFAULT_MAX_VIEW_CELLS,
+  DIGEST_PIXELS_PER_CELL,
+  pickResolution,
   DEFAULT_HYSTERESIS_ORDERS,
   DEFAULT_MAX_LEVEL_CELLS,
   DEFAULT_PIXELS_PER_CELL,
@@ -68,6 +71,13 @@ describe("currentLevel", () => {
   it("reads the selected level", () => {
     expect(currentLevel({ ...sources, selectedLevel: 1 })).toBe(
       sources.levels[1]
+    );
+  });
+
+  it("reads the finest level for an index the list does not have", () => {
+    // kept from a list with the leaves on it, or from a longer pyramid
+    expect(currentLevel({ ...sources, selectedLevel: 2 })).toBe(
+      sources.levels[0]
     );
   });
 });
@@ -232,4 +242,87 @@ it("names the coarsest level, when every level states its resolution", () => {
   ).toBe(1);
   expect(coarsestLevel([{ resolution: 100 }])).toBeUndefined();
   expect(coarsestLevel([{ resolution: 100 }, {}])).toBeUndefined();
+});
+
+describe("a level derived from the leaves", () => {
+  const derived = (order: number) => ({
+    ...healpixLevel(order),
+    derived: { dataset: "19", refinement: 19 - order },
+  });
+  // the finest level is derived 17: 18 and the leaves are the point tier's
+  const ORDERS = [14, 15, 16, 17];
+
+  it.each(ORDERS)("is never whole-loadable at order %i", (order) => {
+    const level = derived(order);
+    // over the cap of a level loaded whole, and of a view: always a window
+    expect(exceedsCellCap(level)).toBe(true);
+    expect(exceedsCellCap(level, DEFAULT_MAX_VIEW_CELLS)).toBe(true);
+    // never the backdrop, the one level that is always loaded whole
+    expect(coarsestLevel([level, healpixLevel(13)])).toBe(1);
+    expect(coarsestLevel([level, derived(order - 1)])).toBeUndefined();
+    expect(coarsestLevel([level, healpixLevel(13), healpixLevel(12)])).toBe(2);
+  });
+
+  it("is kept out of automatic selection while it would be loaded whole", () => {
+    const levels = [...ORDERS.map(derived), healpixLevel(8)];
+    for (const order of ORDERS) {
+      expect(selectLevel(cameraFor(resolution(order)), levels, 4)).toBe(4);
+    }
+  });
+});
+
+describe("the finest level of a hive store", () => {
+  const derived = (order: number) => ({
+    ...healpixLevel(order),
+    derived: { dataset: "19", refinement: 19 - order },
+  });
+
+  it("is derived 17, where a very close zoom stays; never the leaves", () => {
+    // the list a hive store gives, finest first, every level loaded by view
+    const orders = [17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4];
+    const levels = orders.map((order) => ({
+      resolution: pickResolution(
+        order > 13 ? derived(order) : healpixLevel(order),
+        DIGEST_PIXELS_PER_CELL
+      ),
+      cellCount: 0,
+    }));
+    const options = { pixelsPerCell: DIGEST_PIXELS_PER_CELL };
+    for (const order of [17, 18, 19, 22]) {
+      const scale = resolution(order) / DIGEST_PIXELS_PER_CELL;
+      expect(selectLevel(scale, levels, 4, options)).toBe(0);
+      expect(selectLevel(scale, levels, 0, options)).toBe(0);
+    }
+    expect(
+      selectLevel(resolution(13) / DIGEST_PIXELS_PER_CELL, levels, 0, options)
+    ).toBe(4);
+  });
+
+  it("is picked at the digest cell size whatever the variable", () => {
+    const stored = healpixLevel(13);
+    const level = derived(14);
+    expect(pickResolution(stored, DEFAULT_PIXELS_PER_CELL)).toBe(
+      stored.resolution
+    );
+    expect(pickResolution(level, DIGEST_PIXELS_PER_CELL)).toBe(
+      level.resolution
+    );
+    // at 16 px per cell a derived level is picked as if it were twice as fine
+    expect(pickResolution(level, DEFAULT_PIXELS_PER_CELL)).toBe(
+      level.resolution / 2
+    );
+    // loaded by view (no cell cap): order 14 comes on where its cells are 32 px
+    const levels = [stored, level].map((candidate) => ({
+      resolution: pickResolution(candidate, DEFAULT_PIXELS_PER_CELL),
+      cellCount: 0,
+    }));
+    const metersPerPixel = (pixels: number) => level.resolution / pixels;
+    // (16 px is the boundary: either side keeps the level it is on)
+    expect(selectLevel(metersPerPixel(12), levels, 0)).toBe(0);
+    expect(selectLevel(metersPerPixel(32), levels, 0)).toBe(1);
+    expect(selectLevel(metersPerPixel(12), levels, 1)).toBe(0);
+    expect(selectLevel(metersPerPixel(32), levels, 1)).toBe(1);
+    expect(selectLevel(metersPerPixel(16), levels, 0)).toBe(0);
+    expect(selectLevel(metersPerPixel(16), levels, 1)).toBe(1);
+  });
 });

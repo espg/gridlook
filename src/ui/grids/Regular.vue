@@ -33,6 +33,7 @@ import {
   currentLevel,
   DEFAULT_MAX_LEVEL_CELLS,
   DEFAULT_MAX_VIEW_CELLS,
+  DEFAULT_VIEW_LOAD_CELLS,
   STREAMLINES_NEED_WHOLE_LEVEL,
 } from "@/lib/data/levels.ts";
 import { loadVectorComponents } from "@/lib/data/streamlineData.ts";
@@ -266,7 +267,7 @@ function loadsByView() {
     canLoadByView() &&
     (sources.selectedLevel ?? 0) !== coarsestLevel(sources.levels) &&
     levelLatitudes.length * levelLongitudes.length >
-      (wholeLevelLayers ? DEFAULT_MAX_LEVEL_CELLS : DEFAULT_MAX_VIEW_CELLS)
+      (wholeLevelLayers ? DEFAULT_MAX_LEVEL_CELLS : DEFAULT_VIEW_LOAD_CELLS)
   );
 }
 

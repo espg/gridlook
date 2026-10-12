@@ -18,6 +18,7 @@ export type TGridHoverLookupResult = {
   lon: number;
   value: number | null;
   status: THoveredGridPointStatus;
+  interpolated?: boolean;
 };
 
 export type TGeoSample = {

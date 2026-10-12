@@ -26,6 +26,11 @@ export type TDigestProbe = {
   order: number;
   /** Shown until another cell is clicked, not the cell under the cursor. */
   pinned: boolean;
+  /**
+   * The cell has no observations and is drawn with a value filled from its
+   * neighbours: the heights at the percentiles displayed.
+   */
+  interpolated?: { percentile: number; value: number }[];
   strata: {
     name: string;
     /** Null: the cell has no digest. Undefined: it was not read. */
@@ -51,10 +56,12 @@ const PLOT_PADDING = 0.04;
 
 /**
  * The digest arrays of a level, from the variables derived from them; the
- * signal first, as it sets the range of the plot.
+ * signal first, as it sets the range of the plot. `dataset` is the group
+ * they are read in when it is not the level's own (a derived level).
  */
 export function digestStrata(
-  datasources: Record<string, TDataSource>
+  datasources: Record<string, TDataSource>,
+  dataset?: string
 ): TDigestStratum[] {
   const strata = new Map<string, TDigestStratum>();
   for (const source of Object.values(datasources)) {
@@ -62,7 +69,9 @@ export function digestStrata(
     if (digest) {
       strata.set(digest.array, {
         name: digest.stratum ?? digest.array,
-        path: [source.dataset, digest.array].filter(Boolean).join("/"),
+        path: [dataset ?? source.dataset, digest.array]
+          .filter(Boolean)
+          .join("/"),
       });
     }
   }

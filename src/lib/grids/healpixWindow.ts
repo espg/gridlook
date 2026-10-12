@@ -8,8 +8,10 @@ import type { TViewFootprint } from "@/lib/projection/viewFootprint.ts";
  * one cell this many orders up. A block is 4^6 = 4096 cells, contiguous in
  * nested order and a square on its face.
  */
-// ponytail: a fixed block size. Derive it from the chunk length if stores
-// with much larger chunks make single blocks wasteful.
+// ponytail: a fixed block size for stored levels. Derive it from the chunk
+// length if stores with much larger chunks make single blocks wasteful. A
+// level derived from leaf chunks passes its own `depth`: one block, one
+// chunk.
 const HEALPIX_BLOCK_DEPTH = 6;
 
 // side of one of the 12 base faces, sqrt(4π / 12) in degrees
@@ -21,8 +23,8 @@ function normalizeLon(lon: number) {
 }
 
 /** Order of the cells a level's view window is made of. */
-export function healpixBlockLevel(level: number) {
-  return level > HEALPIX_BLOCK_DEPTH ? level - HEALPIX_BLOCK_DEPTH : 0;
+export function healpixBlockLevel(level: number, depth = HEALPIX_BLOCK_DEPTH) {
+  return level > depth ? level - depth : 0;
 }
 
 /** Keep the `count` cells of `blockGrid` nearest to a point. */
@@ -62,9 +64,10 @@ export function healpixViewBlocks(
   grid: Grid,
   footprint: TViewFootprint,
   margin = 0,
-  maxBlocks = Infinity
+  maxBlocks = Infinity,
+  depth?: number
 ) {
-  const blockLevel = healpixBlockLevel(grid.level);
+  const blockLevel = healpixBlockLevel(grid.level, depth);
   const side = FACE_SIDE_DEGREES / 2 ** blockLevel;
   const latMargin = (footprint.latMax - footprint.latMin) * margin;
   let south = Math.max(footprint.latMin - latMargin, -90);

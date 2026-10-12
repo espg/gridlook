@@ -11,7 +11,9 @@ import {
 } from "@/lib/camera/cameraSettings.ts";
 import {
   currentLevel,
+  DEFAULT_PIXELS_PER_CELL,
   DIGEST_PIXELS_PER_CELL,
+  pickResolution,
   selectLevel,
 } from "@/lib/data/levels.ts";
 import { digestVariableOf } from "@/lib/digest/digestVariables.ts";
@@ -26,11 +28,11 @@ export const LEVEL_PICK_INTERVAL_MS = 200;
 export type TViewportSize = { width: number; height: number };
 
 /** A variable derived from a t-digest is picked at a coarser cell size. */
-function pickOptions(datasources: TSources, varname: string) {
+function pixelsPerCell(datasources: TSources, varname: string) {
   const attrs = currentLevel(datasources).datasources[varname]?.attrs;
   return digestVariableOf(attrs)
-    ? { pixelsPerCell: DIGEST_PIXELS_PER_CELL }
-    : {};
+    ? DIGEST_PIXELS_PER_CELL
+    : DEFAULT_PIXELS_PER_CELL;
 }
 
 /**
@@ -66,17 +68,19 @@ export function useLevelSelection(
       return;
     }
     const viewport = getViewport();
+    const target = pixelsPerCell(datasources.value!, store.varnameSelector);
     const next = selectLevel(
       store.metersPerPixel ?? {
         altitudeMeters: altitudeMeters(viewport),
         viewportHeightPx: viewport.height,
       },
       // no level is too large where the grid loads only the view of it
-      levels.map((level, index) =>
-        store.loadsLevelByView(index) ? { ...level, cellCount: 0 } : level
-      ),
+      levels.map((level, index) => ({
+        resolution: pickResolution(level, target),
+        cellCount: store.loadsLevelByView(index) ? 0 : level.cellCount,
+      })),
       store.selectedLevel,
-      pickOptions(datasources.value!, store.varnameSelector)
+      { pixelsPerCell: target }
     );
     store.selectLevel(next, false);
   }

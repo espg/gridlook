@@ -97,12 +97,19 @@ const {
   paramPercentile,
   paramPercentileLow,
   paramPercentileHigh,
+  paramSmooth,
+  paramSmoothKernel,
 } = storeToRefs(urlParameterStore);
 
 // the digest the selected variable is derived from, if it is
 const selectedDigest = computed(() =>
   digestVariableOf(props.modelInfo?.vars[varnameSelector.value]?.attrs)
 );
+// whether the level on screen is computed from the leaves (see levels.ts)
+const derivedLevel = computed(() => {
+  const levels = props.modelInfo?.levels ?? [];
+  return Boolean((levels[store.selectedLevel] ?? levels[0])?.derived);
+});
 
 const menuCollapsed: Ref<boolean> = ref(false);
 const mobileMenuCollapsed: Ref<boolean> = ref(true);
@@ -338,6 +345,10 @@ function initFromParams() {
       Number(paramPercentileHigh.value ?? store.digestPercentileHigh)
     );
   }
+  store.setGapFill(paramSmooth.value === "true");
+  if (paramSmoothKernel.value) {
+    store.setGapFillSize(Number(paramSmoothKernel.value));
+  }
   if (paramBoundHigh.value && paramBoundLow.value) {
     const low = parseFloat(paramBoundLow.value);
     const high = parseFloat(paramBoundHigh.value);
@@ -418,7 +429,11 @@ defineExpose({
             v-model="varnameSelector"
             :model-info="modelInfo"
           />
-          <DigestControls v-if="selectedDigest" :digest="selectedDigest" />
+          <DigestControls
+            v-if="selectedDigest"
+            :digest="selectedDigest"
+            :derived-level="derivedLevel"
+          />
           <LevelSelector
             v-if="modelInfo?.levels && modelInfo.levels.length > 1"
             :levels="modelInfo.levels"

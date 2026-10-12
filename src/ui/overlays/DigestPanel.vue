@@ -147,6 +147,28 @@ const hasData = computed(
   () => probe.value !== undefined && probeDigests(probe.value).length > 0
 );
 
+// a cell drawn with a filled value: the heights it was given
+const interpolated = computed(() => {
+  const values = hasData.value ? undefined : probe.value?.interpolated;
+  if (!values?.length) {
+    return undefined;
+  }
+  return [
+    ...values.map(({ percentile, value }) => ({
+      label: `p${percentile}`,
+      value: metres(value),
+    })),
+    ...(values.length === 2
+      ? [
+          {
+            label: `p${values[1].percentile} − p${values[0].percentile}`,
+            value: metres(values[1].value - values[0].value),
+          },
+        ]
+      : []),
+  ];
+});
+
 function close() {
   store.setDigestPin(undefined);
   store.setDigestProbe(undefined);
@@ -177,7 +199,19 @@ function close() {
       </button>
     </header>
 
-    <div v-if="!hasData" class="digest-empty">No photons in this cell.</div>
+    <div v-if="interpolated" class="digest-empty">
+      Interpolated — no photons in this cell.
+      <div class="digest-summary">
+        <span class="digest-summary-label">filled from neighbouring cells</span>
+        <span v-for="entry in interpolated" :key="entry.label">
+          {{ entry.label }}
+          <span class="digest-value">{{ entry.value }}</span>
+        </span>
+      </div>
+    </div>
+    <div v-else-if="!hasData" class="digest-empty">
+      No photons in this cell.
+    </div>
     <template v-else>
       <svg
         class="digest-plot"

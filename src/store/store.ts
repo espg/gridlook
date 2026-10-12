@@ -14,6 +14,7 @@ import {
   DEFAULT_PERCENTILE_HIGH,
   DEFAULT_PERCENTILE_LOW,
 } from "@/lib/digest/digestVariables.ts";
+import { DEFAULT_GAP_FILL_SIZE, GAP_FILL_SIZES } from "@/lib/grids/gapFill.ts";
 import {
   LAND_SEA_MASK_MODES,
   type TLandSeaMaskMode,
@@ -43,6 +44,8 @@ export type THoveredGridPoint = {
   lon: number;
   value: number | null;
   status: THoveredGridPointStatus;
+  // the value was filled from neighbouring cells, not observed
+  interpolated?: boolean;
   screenX: number;
   screenY: number;
 };
@@ -265,6 +268,10 @@ export const useGlobeControlStore = defineStore("globeControl", {
       digestPercentile: DEFAULT_PERCENTILE as number,
       digestPercentileLow: DEFAULT_PERCENTILE_LOW as number,
       digestPercentileHigh: DEFAULT_PERCENTILE_HIGH as number,
+      // whether the blank cells of a digest variable are filled from their
+      // neighbours, and the size of the Gaussian kernel, in cells across
+      gapFill: false,
+      gapFillSize: DEFAULT_GAP_FILL_SIZE as number,
       // the place whose distribution the panel keeps showing (a click), and
       // the cell it shows now: the pinned place at the level on screen, or
       // the cell under the cursor
@@ -371,6 +378,14 @@ export const useGlobeControlStore = defineStore("globeControl", {
       const clamped = [low, high].map((v) => Math.min(Math.max(v, 0), 100));
       this.digestPercentileLow = Math.min(...clamped);
       this.digestPercentileHigh = Math.max(...clamped);
+    },
+    setGapFill(enabled: boolean) {
+      this.gapFill = enabled;
+    },
+    setGapFillSize(size: number) {
+      if ((GAP_FILL_SIZES as readonly number[]).includes(size)) {
+        this.gapFillSize = size;
+      }
     },
     setDigestPin(pin: { lat: number; lon: number } | undefined) {
       this.digestPin = pin;

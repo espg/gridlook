@@ -7,25 +7,33 @@ import type { TSourceLevel, TSources } from "@/lib/types/GlobeTypes.ts";
 /**
  * The level every consumer of a dataset reads: `levels[selectedLevel]`, or
  * the first level while nothing has been selected (single-level datasets
- * never select anything, so they keep reading `levels[0]`).
+ * never select anything, so they keep reading `levels[0]`). An index the
+ * list does not have (kept from a dataset with more levels) also reads the
+ * first level, the finest.
  */
 export function currentLevel(datasources: TSources): TSourceLevel {
-  return datasources.levels[datasources.selectedLevel ?? 0];
+  return (
+    datasources.levels[datasources.selectedLevel ?? 0] ?? datasources.levels[0]
+  );
 }
 
 /**
  * Index of the level with the largest cells. Grids that load only the view
  * draw it whole under a finer level and take the colour range from it, so
  * neither changes as the view moves. Undefined for a single level, or when a
- * level does not state its resolution.
+ * level does not state its resolution. Never a derived level.
  */
 export function coarsestLevel(
-  levels: readonly Pick<TSourceLevel, "resolution">[]
+  levels: readonly Pick<TSourceLevel, "resolution" | "derived">[]
 ) {
   let coarsest: number | undefined;
   for (const [index, level] of levels.entries()) {
     if (levels.length < 2 || !(level.resolution! > 0)) {
       return undefined;
+    }
+    if (level.derived) {
+      // computed from the leaves: never loaded whole
+      continue;
     }
     if (
       coarsest === undefined ||
@@ -72,12 +80,41 @@ export const DEFAULT_HYSTERESIS_ORDERS = 0.35;
 export const DEFAULT_MAX_LEVEL_CELLS = 12 * 4 ** 10;
 
 /**
- * Cells a grid that loads only the view keeps on screen at once. A level
- * with more cells than this is loaded as a window around the view, reloaded
- * as the camera moves; the window is shrunk to this many cells when a level
- * picked by hand is too fine for the view.
+ * A level with more cells than this is loaded as a window around the view,
+ * reloaded as the camera moves, rather than whole.
  */
-export const DEFAULT_MAX_VIEW_CELLS = 12 * 4 ** 8;
+export const DEFAULT_VIEW_LOAD_CELLS = 12 * 4 ** 8;
+
+/**
+ * Cells one such window holds at most: the window is shrunk to this many
+ * when a level picked by hand is too fine for the view. Generous on purpose
+ * (espg, 2026-10-11): a level finer than the zoom asks for is a deliberate
+ * pick, and the picker never lands there on its own.
+ */
+export const DEFAULT_MAX_VIEW_CELLS = 12 * 4 ** 9;
+
+/**
+ * Leaf chunks one window of a derived level reads at most. Such a level is
+ * priced by the chunks under its cells, not by its cells: a chunk is about
+ * 34 KB of signal digest (120 KB of noise) whatever the order derived.
+ */
+export const DEFAULT_MAX_VIEW_CHUNKS = 2048;
+
+/**
+ * The cell size a level is picked at, in pixels, when a level stored and a
+ * level derived from it differ: `derived` for the levels computed from leaf
+ * chunks, which cost as a digest does whatever the variable. The size is a
+ * property of the level, not of the level on screen, so the pick is the
+ * same from either side of a boundary.
+ */
+export function pickResolution(
+  level: Pick<TSourceLevel, "resolution" | "derived">,
+  pixelsPerCell: number
+) {
+  return level.derived && level.resolution !== undefined
+    ? (level.resolution * pixelsPerCell) / DIGEST_PIXELS_PER_CELL
+    : level.resolution;
+}
 
 export type TLevelSelectionCamera = {
   /** Height of the camera above the globe's surface, metres. */
