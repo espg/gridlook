@@ -189,7 +189,8 @@ function geoZarrEntries(
 
 /**
  * zagg: `base` (the leaves) and then `datasets`, finest first as declared. A
- * level's group is named by its cell order, `cells[0]`, never by `order`,
+ * level's group is named by its cell order, one per entry of `cells` (a
+ * column object holds several: `[16, 15, 14, 13]`), never by `order`,
  * which is the HEALPix node order the sweep built it at. The cell order also
  * gives the resolution: the HEALPix cell size at nside 2^cellOrder.
  *
@@ -207,10 +208,11 @@ function zaggEntries(
   const datasets = Array.isArray(multiscale.datasets)
     ? multiscale.datasets
     : [];
-  const cellOrder = (dataset: unknown) =>
-    Number(
-      isRecord(dataset) && Array.isArray(dataset.cells) ? dataset.cells[0] : NaN
-    );
+  const cellOrders = (dataset: unknown) =>
+    isRecord(dataset) && Array.isArray(dataset.cells)
+      ? dataset.cells.map(Number)
+      : [NaN];
+  const cellOrder = (dataset: unknown) => cellOrders(dataset)[0];
   const source = isRecord(derived) ? Number(derived.dataset) : NaN;
   const cells =
     isRecord(derived) && Array.isArray(derived.cells) ? derived.cells : [];
@@ -225,7 +227,9 @@ function zaggEntries(
         refinement: source - Number(order),
       })
     ),
-    ...datasets.flatMap((dataset) => zaggEntry(cellOrder(dataset))),
+    ...datasets.flatMap((dataset) =>
+      cellOrders(dataset).flatMap((order) => zaggEntry(order))
+    ),
   ];
 }
 

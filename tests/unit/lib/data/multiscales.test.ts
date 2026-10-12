@@ -195,6 +195,29 @@ describe("parseMultiscales for zagg-multiscales/1", () => {
     expect(levels[0].name).toBe("order 19");
   });
 
+  it("lists a level per cell order of a dataset that holds several", () => {
+    const datasets = (zagg as { datasets: { cells: number[] }[] }).datasets;
+    const levels = parseMultiscales({
+      multiscales: [
+        {
+          ...zagg,
+          datasets: [
+            { ...datasets[0], cells: [16, 15, 14, 13] },
+            ...datasets.slice(1),
+          ],
+        },
+      ],
+    });
+    expect(levels.map((level) => level.path).slice(0, 6)).toEqual([
+      "19",
+      "16",
+      "15",
+      "14",
+      "13",
+      "12",
+    ]);
+  });
+
   it("lists the levels derived from the leaves in place of the leaves", () => {
     const levels = parseMultiscales({
       multiscales: [zagg],
