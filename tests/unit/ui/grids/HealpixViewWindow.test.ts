@@ -2,7 +2,7 @@ import "@/utils/disposablePolyfill.ts";
 import { Grid, type GridOptions } from "healpix-geo";
 import * as THREE from "three";
 import { expect, it, vi } from "vitest";
-import { effectScope, reactive, watch } from "vue";
+import { effectScope, onBeforeUnmount, reactive, watch } from "vue";
 
 import { ZARR_FORMAT, type TSources } from "@/lib/types/GlobeTypes.ts";
 
@@ -682,4 +682,15 @@ it("draws nothing beneath with the fill off", async () => {
   expect(drawnFaces(-0.5)).toHaveLength(0);
   expect(hover.lookup!(11, 31)!.value).toBe(cellAt(10, 11, 31) + 1);
   expect(hover.lookup!(-40, 170)).toBeNull();
+});
+
+it("clears the cut-window notice when the grid goes", async () => {
+  stored.fine = { level: 10 };
+  stored.coarse = { level: 3 };
+  const { store, scope } = await mount(11, 31);
+  store.setViewWindowClipped(true);
+  // the grid's own unmount hook, registered last in its setup
+  vi.mocked(onBeforeUnmount).mock.calls.at(-1)![0]();
+  expect(store.viewWindowClipped).toBe(false);
+  scope.stop();
 });

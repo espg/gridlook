@@ -1666,6 +1666,8 @@ onBeforeMount(async () => {
 
 onBeforeUnmount(() => {
   disposed = true;
+  // the notice is this grid's: the next dataset starts without it
+  store.setViewWindowClipped(false);
   streamlineRequestRevision++;
   terminateHealpixWorker();
   terminateGridDataWorker();
