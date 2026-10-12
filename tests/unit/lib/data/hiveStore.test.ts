@@ -6,6 +6,11 @@ import {
   createHiveStore,
   hiveNodes,
 } from "@/lib/data/hiveStore.ts";
+import {
+  digestChunkFromVlen,
+  vlenFromDigestChunk,
+} from "@/lib/digest/tdigest.ts";
+import { decodeVlenChunk, encodeVlenChunk } from "@/lib/digest/vlenChunk.ts";
 import { parseMortonDecimal } from "@/lib/morton/decimal.ts";
 import { wordToNested } from "@/lib/morton/word.ts";
 
@@ -441,18 +446,166 @@ describe("createHiveStore through zarrita", () => {
     expect(Array.from(slab.data as Int32Array)).toEqual([0, 0, 0, 1, 2]);
   });
 
-  it("refuses a windowed hive", async () => {
+  it("refuses a windowed hive it cannot enumerate", async () => {
     const inner = memoryStore({
       "morton_hive.json": {
         ...manifest,
         spec: "morton-hive/2",
-        temporal: { schedule: "yearly" },
+        temporal: { schedule: "monthly", epoch: "2024-01-01T00:00:00+00:00" },
       },
       "coverage.moc": coverage,
     });
     await expect(createHiveStore("mem://hive", inner)).rejects.toThrow(
-      "not supported yet"
+      "monthly schedule"
     );
+  });
+});
+
+// eslint-disable-next-line max-lines-per-function
+describe("createHiveStore on a windowed hive", () => {
+  const NODE = "4/3/3/1/4/2/2/2/3/3";
+  const leaf = (year: string) => `${NODE}/${SHARD}_${year}.zarr`;
+  const column = (year: string) => `${NODE}/${year}.pyramid.zarr`;
+  const int64 = (shape: number[], codecs: unknown[]) => ({
+    ...array(shape, codecs),
+    data_type: "int64", // eslint-disable-line camelcase
+  });
+  const int64s = (count: number, offset: number) =>
+    new Uint8Array(
+      BigInt64Array.from({ length: count }, (_, i) => BigInt(i + offset)).buffer
+    );
+  const digestArray = {
+    ...array([256], [{ name: "vlen-bytes", configuration: {} }]),
+    data_type: "variable_length_bytes", // eslint-disable-line camelcase
+    fill_value: "", // eslint-disable-line camelcase
+    attributes: {
+      ragged: {
+        spec: "zagg-ragged/1",
+        element: { dtype: "float32", shape: [-1, 2] },
+        locations: "h_tdigest_signal_locations",
+      },
+    },
+  };
+  /** A 256-cell digest chunk: cell 0 holds `centroids`, the rest nothing. */
+  const digestChunk = (centroids: [number, number][]) =>
+    encodeVlenChunk(
+      vlenFromDigestChunk({
+        offsets: Uint32Array.from({ length: 257 }, (_, i) =>
+          i === 0 ? 0 : centroids.length
+        ),
+        means: Float32Array.from(centroids, ([mean]) => mean),
+        weights: Float32Array.from(centroids, ([, weight]) => weight),
+      })
+    );
+  const yearly = (year: string, leafOffset: number, columnOffset: number) => ({
+    [`${leaf(year)}/zarr.json`]: group({
+      morton_hive_commit: { window: year }, // eslint-disable-line camelcase
+    }),
+    [`${leaf(year)}/19/zarr.json`]: group({ dggs: { name: "morton" } }),
+    [`${leaf(year)}/19/count/zarr.json`]: {
+      ...sharded,
+      data_type: "int64", // eslint-disable-line camelcase
+    },
+    [`${leaf(year)}/19/count/c/0`]: shardObject(
+      new Map([[1, int64s(INNER, leafOffset)]])
+    ),
+    [`${leaf(year)}/19/h_tdigest_signal/zarr.json`]: digestArray,
+    [`${leaf(year)}/19/composition/zarr.json`]: int64(
+      [CELLS_PER_LEAF],
+      [BYTES]
+    ),
+    [`${column(year)}/zarr.json`]: group({ role: "column", window: year }),
+    [`${column(year)}/13/zarr.json`]: group({ role: "column" }),
+    [`${column(year)}/13/count/zarr.json`]: int64([256], [BYTES]),
+    [`${column(year)}/13/count/c/0`]: int64s(256, columnOffset),
+    [`${column(year)}/13/h_tdigest_signal/zarr.json`]: digestArray,
+    [`${column(year)}/13/composition/zarr.json`]: int64([256], [BYTES]),
+    [`${column(year)}/13/composition/c/0`]: int64s(256, 7),
+  });
+  const windowed = () =>
+    memoryStore({
+      "morton_hive.json": {
+        ...manifest,
+        spec: "morton-hive/2",
+        multiscales: [
+          {
+            ...manifest.multiscales[0],
+            fields: {
+              count: "exact",
+              h_tdigest_signal: "approximate", // eslint-disable-line camelcase
+              composition: "packed",
+            },
+          },
+        ],
+        temporal: { schedule: "yearly", epoch: "2024-01-01T00:00:00+00:00" },
+      },
+      "coverage.moc": coverage,
+      // 2025 is absent at this node
+      ...yearly("2024", 0, 1000),
+      ...yearly("2026", 100, 3000),
+      [`${column("2024")}/13/h_tdigest_signal/c/0`]: digestChunk([
+        [5, 1],
+        [9, 2],
+      ]),
+      [`${column("2026")}/13/h_tdigest_signal/c/0`]: digestChunk([[7, 1]]),
+      [`${OVERVIEW}/12/zarr.json`]: group({ role: "overview" }),
+      [`${OVERVIEW}/12/count/zarr.json`]: int64([256], [BYTES]),
+      [`${OVERVIEW}/12/count/c/0`]: int64s(256, 2000),
+    });
+
+  it("probes the years from the epoch and counts those present", async () => {
+    const inner = windowed();
+    await createHiveStore("mem://windowed", inner);
+    for (const year of ["2024", "2025", "2026"]) {
+      expect(inner.log).toContain(`get /${leaf(year)}/zarr.json`);
+    }
+    expect(hiveNodes("mem://windowed", 13)).toMatchObject({ windows: 2 });
+    expect(hiveNodes("mem://windowed", 19)).toMatchObject({ windows: 2 });
+    expect(hiveNodes("mem://windowed", 12)).toMatchObject({ windows: 1 });
+  });
+
+  it("sums a summed field over the years present, as float64", async () => {
+    const store = await createHiveStore("mem://windowed", windowed());
+    const meta = decode(await store.get("/13/count/zarr.json"));
+    expect(meta.data_type).toBe("float64");
+    expect(meta.codecs).toEqual([BYTES]);
+    const column = await store.get(`/13/count/c/0/${r9}`);
+    expect(new Float64Array(column!.buffer, column!.byteOffset, 2)).toEqual(
+      Float64Array.from([4000, 4002])
+    );
+    const leafChunk = await store.get(`/19/count/c/0/${r9 * CHUNKS + 1}`);
+    expect(leafChunk).toHaveLength(INNER * 8);
+    expect(
+      new Float64Array(leafChunk!.buffer, leafChunk!.byteOffset, 3)
+    ).toEqual(Float64Array.from([100, 102, 104]));
+    // the overviews are folded over all time in the store: read as stored
+    expect(decode(await store.get("/12/count/zarr.json")).data_type).toBe(
+      "int64"
+    );
+  });
+
+  it("merges the years' digests cell by cell, sorted by mean", async () => {
+    const store = await createHiveStore("mem://windowed", windowed());
+    const meta = decode(await store.get("/13/h_tdigest_signal/zarr.json"));
+    expect(meta.codecs).toEqual([{ name: "vlen-bytes", configuration: {} }]);
+    const chunk = await store.get(`/13/h_tdigest_signal/c/0/${r9}`);
+    const digest = digestChunkFromVlen(decodeVlenChunk(chunk!));
+    expect(digest.offsets.length).toBe(257);
+    expect(Array.from(digest.means.subarray(0, 3))).toEqual([5, 7, 9]);
+    expect(Array.from(digest.weights.subarray(0, 3))).toEqual([1, 1, 2]);
+    expect(digest.offsets[1]).toBe(3);
+    expect(digest.offsets[256]).toBe(3);
+  });
+
+  it("serves no chunk of a packed or located array on a merged level", async () => {
+    const store = await createHiveStore("mem://windowed", windowed());
+    expect(store.contents().map(({ path }) => path)).toContain(
+      "/13/composition"
+    );
+    expect(await store.get(`/13/composition/c/0/${r9}`)).toBeUndefined();
+    expect(
+      await store.get(`/13/h_tdigest_signal_locations/c/0/${r9}`)
+    ).toBeUndefined();
   });
 });
 
@@ -462,15 +615,18 @@ describe("hiveNodes", () => {
     expect(hiveNodes("mem://hive", 13)).toEqual({
       nodeOrder: 9,
       ranks: new Set([r9]),
+      windows: 1,
     });
     expect(hiveNodes("mem://hive", 12)).toEqual({
       nodeOrder: 8,
       ranks: new Set([r8]),
+      windows: 1,
     });
     // a level derived from the leaves is held by the leaves' nodes
     expect(hiveNodes("mem://hive/", 15)).toEqual({
       nodeOrder: 9,
       ranks: new Set([r9]),
+      windows: 1,
     });
     expect(hiveNodes("mem://elsewhere", 13)).toBeUndefined();
     const nodes = hiveNodes("mem://hive", 13)!;

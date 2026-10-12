@@ -4,6 +4,12 @@ import {
   digestVariableMetadata,
   digestVariablesOf,
 } from "@/lib/digest/digestVariables.ts";
+import { mergeDigestChunks } from "@/lib/digest/strata.ts";
+import {
+  digestChunkFromVlen,
+  vlenFromDigestChunk,
+} from "@/lib/digest/tdigest.ts";
+import { decodeVlenChunk, encodeVlenChunk } from "@/lib/digest/vlenChunk.ts";
 import { parseRootCoverage, rangesShardIds } from "@/lib/morton/coverage.ts";
 import { decimalBase, parseMortonDecimal } from "@/lib/morton/decimal.ts";
 import { hiveComponents, leafPath } from "@/lib/morton/hive.ts";
@@ -41,6 +47,18 @@ import { wordToNested } from "@/lib/morton/word.ts";
  * Nothing is listed: the manifest plus the root coverage name every node.
  * The per-cell `morton` coordinate is never read (a windowed leaf has none:
  * the cell is the nested index).
+ *
+ * A windowed store (a manifest with a `temporal` schedule) holds its leaves
+ * and its leaf column per window (`{shard}_{window}.zarr`,
+ * `{window}.pyramid.zarr`) and only the overviews folded over all time
+ * (`all.zarr`). The hierarchy shows the all-time product at every level:
+ * a leaf or column chunk is read from every window present at its node and
+ * merged cell by cell, a summed field by addition and a t-digest by
+ * concatenating the centroids (`mergeDigestChunks`), and served
+ * uncompressed; the located, timed and packed arrays of those levels have
+ * no chunk there. The windows are not listed: a generative schedule's
+ * labels are enumerated from its epoch (yearly: every year to the present)
+ * and probed per node, an absent window adding nothing.
  */
 
 export const HIVE_PREFIX = "hive+";
@@ -62,6 +80,20 @@ const ABSENT = 0xffffffffffffffffn;
  */
 const POINT_TIER_ORDERS = 2;
 
+const LITTLE_ENDIAN_BYTES = {
+  name: "bytes",
+  configuration: { endian: "little" },
+};
+const VLEN_BYTES = { name: "vlen-bytes", configuration: {} };
+const DENSE_TYPES = {
+  int32: Int32Array,
+  uint32: Uint32Array,
+  int64: BigInt64Array,
+  uint64: BigUint64Array,
+  float32: Float32Array,
+  float64: Float64Array,
+} as const;
+
 const CHUNK_KEY = /^\/(\d+)\/([^/]+)\/c\/(\d+)\/(\d+)$/;
 const GROUP_KEY = /^\/(\d+)\/zarr\.json$/;
 const ARRAY_KEY = /^\/(\d+)\/([^/]+)\/zarr\.json$/;
@@ -77,9 +109,21 @@ type THiveLevel = {
   cellOrder: number;
   nodeOrder: number;
   artifact: THiveArtifact;
-  // nested rank at `nodeOrder` -> store-relative directory holding
-  // `{cellOrder}/{name}/...` for that node
-  nodes: Map<number, string>;
+  // nested rank at `nodeOrder` -> store-relative directories holding
+  // `{cellOrder}/{name}/...` for that node: one, or one per window of a
+  // windowed store (merged on read)
+  nodes: Map<number, string[]>;
+  // whether the level's chunks are merged from per-window objects
+  merged: boolean;
+};
+/** How the per-window chunks of an array merge; undefined for no merge. */
+type TMergeKind = "sum" | "digest";
+type TArrayView = {
+  metadata: TJson;
+  innerChunk: number;
+  /** The inner codecs of the store's objects (before any rewrite). */
+  innerCodecs: unknown[];
+  merge?: TMergeKind;
 };
 
 type TJson = Record<string, unknown>;
@@ -106,7 +150,10 @@ function ancestorId(shardId: string, order: number) {
 }
 
 /** The nodes present at every level of each store opened, by root URL. */
-const nodesByRoot = new Map<string, THiveLevel[]>();
+const nodesByRoot = new Map<
+  string,
+  { levels: THiveLevel[]; windows: number }
+>();
 
 const rootKey = (rootUrl: string) => rootUrl.replace(/\/+$/, "");
 
@@ -116,6 +163,11 @@ export type THiveNodes = {
   nodeOrder: number;
   /** The nested ranks at `nodeOrder` of every node present. */
   ranks: Set<number>;
+  /**
+   * Objects read per chunk: the windows of a windowed store merged on read
+   * for a leaf or column level, 1 where one object holds the level.
+   */
+  windows: number;
 };
 
 /**
@@ -128,20 +180,55 @@ export function hiveNodes(
   rootUrl: string,
   cellOrder: number
 ): THiveNodes | undefined {
-  const levels = nodesByRoot.get(rootKey(rootUrl));
-  if (!levels) {
+  const opened = nodesByRoot.get(rootKey(rootUrl));
+  if (!opened) {
     return undefined;
   }
+  const { levels, windows } = opened;
   const level =
     levels.find((entry) => entry.cellOrder === cellOrder) ?? levels[0];
-  return { nodeOrder: level.nodeOrder, ranks: new Set(level.nodes.keys()) };
+  return {
+    nodeOrder: level.nodeOrder,
+    ranks: new Set(level.nodes.keys()),
+    windows: level.merged ? windows : 1,
+  };
+}
+
+/**
+ * The window labels of a windowed store's per-window objects, or undefined
+ * for an unwindowed one: the manifest's list, else every label a yearly
+ * schedule can have generated from its epoch to the present (the manifest
+ * does not list them; a node is probed for each).
+ */
+function windowLabels(manifest: HiveManifest): string[] | undefined {
+  if (manifest.schedule === "none") {
+    return undefined;
+  }
+  if (manifest.windows) {
+    return manifest.windows;
+  }
+  if (manifest.schedule !== "yearly") {
+    throw new Error(
+      `windowed hive stores with a ${manifest.schedule} schedule are not supported`
+    );
+  }
+  const temporal = isRecord(manifest.raw.temporal) ? manifest.raw.temporal : {};
+  const epoch = new Date(String(temporal.epoch)).getUTCFullYear();
+  if (!Number.isInteger(epoch)) {
+    throw new Error("a yearly hive schedule needs a temporal epoch");
+  }
+  const now = new Date().getUTCFullYear();
+  return Array.from({ length: now - epoch + 1 }, (_, i) => String(epoch + i));
 }
 
 /**
  * Whether a block (a nested cell of `blockLevel`) of a level's window lies
  * under a node the store holds, or holds one.
  */
-export function coveredBlocks(nodes: THiveNodes, blockLevel: number) {
+export function coveredBlocks(
+  nodes: Pick<THiveNodes, "nodeOrder" | "ranks">,
+  blockLevel: number
+) {
   if (blockLevel >= nodes.nodeOrder) {
     const perNode = 4 ** (blockLevel - nodes.nodeOrder);
     return (block: number) => nodes.ranks.has(Math.floor(block / perNode));
@@ -215,12 +302,14 @@ function rootMultiscales(manifest: HiveManifest, levels: THiveLevel[]) {
  * the `zagg-multiscales/1` datasets (finest first) when it carries them.
  */
 function manifestLevels(manifest: HiveManifest): THiveLevel[] {
+  const windowed = manifest.schedule !== "none";
   const levels: THiveLevel[] = [
     {
       cellOrder: manifest.cellOrder,
       nodeOrder: manifest.shardOrder,
       artifact: HiveArtifact.LEAF,
       nodes: new Map(),
+      merged: windowed,
     },
   ];
   const multiscales = manifest.raw.multiscales;
@@ -240,10 +329,37 @@ function manifestLevels(manifest: HiveManifest): THiveLevel[] {
         ? HiveArtifact.COLUMN
         : HiveArtifact.OVERVIEW;
     if (Number.isInteger(cellOrder) && Number.isInteger(nodeOrder)) {
-      levels.push({ cellOrder, nodeOrder, artifact, nodes: new Map() });
+      levels.push({
+        cellOrder,
+        nodeOrder,
+        artifact,
+        nodes: new Map(),
+        merged: windowed && artifact === HiveArtifact.COLUMN,
+      });
     }
   }
   return levels;
+}
+
+/** The directories a node's level may be read from (one per window merged). */
+function nodeDirs(
+  level: THiveLevel,
+  shardId: string,
+  components: string,
+  manifest: HiveManifest,
+  windows: string[] | undefined
+) {
+  if (level.artifact === HiveArtifact.LEAF) {
+    return level.merged && windows
+      ? windows.map((window) => leafPath(manifest, shardId, window))
+      : [leafPath(manifest, shardId)];
+  }
+  if (level.artifact === HiveArtifact.COLUMN) {
+    return level.merged && windows
+      ? windows.map((window) => `${components}/${window}.pyramid.zarr`)
+      : [`${components}/all.pyramid.zarr`];
+  }
+  return [`${components}/all.zarr`];
 }
 
 /** Fill every level's node map from the covered shard ids. */
@@ -252,6 +368,7 @@ function placeNodes(
   shardIds: string[],
   manifest: HiveManifest
 ) {
+  const windows = windowLabels(manifest);
   for (const level of levels) {
     for (const shardId of shardIds) {
       const id = ancestorId(shardId, level.nodeOrder);
@@ -262,12 +379,100 @@ function placeNodes(
       const components = hiveComponents(id, manifest.pathGrouping).join("/");
       level.nodes.set(
         rank,
-        level.artifact === HiveArtifact.LEAF
-          ? leafPath(manifest, shardId)
-          : `${components}/${level.artifact === HiveArtifact.COLUMN ? "all.pyramid" : "all"}.zarr`
+        nodeDirs(level, shardId, components, manifest, windows)
       );
     }
   }
+}
+
+/**
+ * How a merged level's array merges across windows: a field the manifest
+ * sums exactly by addition, a t-digest by concatenation; anything else (the
+ * located and timed siblings, a packed field) is not merged and has no chunk.
+ */
+function mergeKind(
+  manifest: HiveManifest,
+  name: string,
+  attributes: unknown
+): TMergeKind | undefined {
+  const multiscales = manifest.raw.multiscales;
+  const block = Array.isArray(multiscales) ? multiscales[0] : undefined;
+  const fields = isRecord(block) && isRecord(block.fields) ? block.fields : {};
+  if (
+    fields[name] === "exact" ||
+    (!Object.keys(fields).length && name === "count")
+  ) {
+    return "sum";
+  }
+  return Object.keys(digestVariablesOf(name, attributes)).length
+    ? "digest"
+    : undefined;
+}
+
+/**
+ * A merged array as served: a sum as float64 (the per-window `count` is
+ * int64, which no texture holds), a digest as plain `vlen-bytes`; both
+ * uncompressed, since the merge re-encodes.
+ */
+function mergedMetadata(metadata: TJson, merge: TMergeKind): TJson {
+  return merge === "sum"
+    ? { ...metadata, data_type: "float64", codecs: [LITTLE_ENDIAN_BYTES] } // eslint-disable-line camelcase
+    : { ...metadata, codecs: [VLEN_BYTES] };
+}
+
+/** Undo an inner codec list's bytes-to-bytes codecs, last to first. */
+async function bytesDecoder(codecs: unknown[]) {
+  const stages: {
+    decode(bytes: Uint8Array): Promise<Uint8Array> | Uint8Array;
+  }[] = [];
+  for (const codec of codecs.slice(1)) {
+    if (!isRecord(codec) || typeof codec.name !== "string") {
+      continue;
+    }
+    const entry = await zarr.registry.get(codec.name)?.();
+    if (!entry) {
+      throw new Error(`unknown codec ${codec.name}`);
+    }
+    stages.unshift(
+      (await entry.fromConfig(codec.configuration ?? {}, {} as never)) as never
+    );
+  }
+  return async (bytes: Uint8Array) => {
+    let decoded = bytes;
+    for (const stage of stages) {
+      decoded = await stage.decode(decoded);
+    }
+    return decoded;
+  };
+}
+
+/** The per-window chunks of a merged array, merged, as the view's bytes. */
+async function mergeChunks(
+  parts: Uint8Array[],
+  view: TArrayView,
+  dataType: string
+): Promise<Uint8Array> {
+  const unpack = await bytesDecoder(view.innerCodecs);
+  const raw = await Promise.all(parts.map((part) => unpack(part)));
+  if (view.merge === "digest") {
+    const merged = mergeDigestChunks(
+      raw.map((bytes) => digestChunkFromVlen(decodeVlenChunk(bytes)))
+    );
+    return encodeVlenChunk(vlenFromDigestChunk(merged!));
+  }
+  const type = DENSE_TYPES[dataType as keyof typeof DENSE_TYPES];
+  if (!type) {
+    throw new Error(`unsupported data type ${dataType}`);
+  }
+  let out: Float64Array | undefined;
+  for (const bytes of raw) {
+    const values = new type(bytes.slice().buffer);
+    out ??= new Float64Array(values.length);
+    for (let i = 0; i < values.length; i++) {
+      out[i] += Number(values[i]);
+    }
+  }
+  return new Uint8Array(out!.buffer);
 }
 
 /**
@@ -278,7 +483,7 @@ function viewArrayMetadata(
   meta: TJson,
   cellOrder: number,
   rows: number
-): { metadata: TJson; innerChunk: number } {
+): TArrayView {
   const codecs = Array.isArray(meta.codecs) ? meta.codecs : [];
   const sharding = codecs.find(
     (codec) => isRecord(codec) && codec.name === "sharding_indexed"
@@ -317,6 +522,7 @@ function viewArrayMetadata(
       storage_transformers: [],
     },
     innerChunk: inner[0],
+    innerCodecs: Array.isArray(config?.codecs) ? config.codecs : codecs,
   };
 }
 
@@ -364,24 +570,36 @@ function createHiveReader(
   function level(cellOrder: number) {
     return levels.find((candidate) => candidate.cellOrder === cellOrder);
   }
-  /** The directory of a node's arrays; a versioned leaf names its run. */
-  function nodeDir(target: THiveLevel, rank: number) {
-    const dir = target.nodes.get(rank);
-    if (dir === undefined || target.artifact !== HiveArtifact.LEAF) {
-      return Promise.resolve(dir);
-    }
+  /**
+   * The directory of one of a node's objects: a versioned leaf names its
+   * run; undefined where the object is absent (a window the node lacks)
+   * and `probe` says to look.
+   */
+  function objectDir(dir: string, probe: boolean) {
     return once(`dir:${dir}`, async () => {
       const stamp = (await json(`${dir}/zarr.json`))?.attributes;
+      if (stamp === undefined && probe) {
+        return undefined;
+      }
       const commit = isRecord(stamp) ? stamp.morton_hive_commit : undefined;
       const current = isRecord(commit) ? commit.current : undefined;
       return typeof current === "string" ? `${dir}/${current}` : dir;
     });
   }
-  function templateDir(target: THiveLevel) {
+  /** The directories of a node's arrays present: one, or one per window. */
+  async function nodeDirs(target: THiveLevel, rank: number) {
+    const dirs = target.nodes.get(rank) ?? [];
+    if (!target.merged || dirs.length === 0) {
+      return target.artifact === HiveArtifact.LEAF && dirs.length
+        ? [await objectDir(dirs[0], false)]
+        : dirs;
+    }
+    const present = await Promise.all(dirs.map((dir) => objectDir(dir, true)));
+    return present.filter((dir) => dir !== undefined);
+  }
+  async function templateDir(target: THiveLevel) {
     const first = target.nodes.keys().next();
-    return first.done
-      ? Promise.resolve(undefined)
-      : nodeDir(target, first.value);
+    return first.done ? undefined : (await nodeDirs(target, first.value))[0];
   }
   function arrayView(target: THiveLevel, name: string) {
     return once(`array:${target.cellOrder}/${name}`, async () => {
@@ -390,8 +608,24 @@ function createHiveReader(
         dir === undefined
           ? undefined
           : await json(`${dir}/${target.cellOrder}/${name}/zarr.json`);
-      return meta && viewArrayMetadata(meta, target.cellOrder, rows);
+      if (!meta) {
+        return undefined;
+      }
+      const view = viewArrayMetadata(meta, target.cellOrder, rows);
+      const merge = target.merged
+        ? mergeKind(manifest, name, meta.attributes)
+        : undefined;
+      return merge
+        ? { ...view, merge, metadata: mergedMetadata(view.metadata, merge) }
+        : view;
     });
+  }
+  /** The windows the template leaf node holds (1 for an unwindowed store). */
+  async function windowCount() {
+    const first = levels[0].nodes.keys().next();
+    return first.done || !levels[0].merged
+      ? 1
+      : Math.max((await nodeDirs(levels[0], first.value)).length, 1);
   }
   /** A leaf array on the grid of a derived level: chunk for chunk. */
   async function pooledView(order: number, name: string) {
@@ -449,6 +683,18 @@ function createHiveReader(
       return bytes ? parseShardIndex(bytes, chunks) : [];
     });
   }
+  /** One object's inner chunk, as stored. */
+  async function objectChunk(
+    objectKey: string,
+    perNode: number,
+    index: number
+  ) {
+    if (perNode === 1) {
+      return await inner.get(`/${objectKey}`);
+    }
+    const entry = (await shardIndex(objectKey, perNode))[index % perNode];
+    return entry && (await inner.getRange!(`/${objectKey}`, entry));
+  }
   async function chunk(match: RegExpMatchArray) {
     const [, order, name, row, index] = match;
     const target = level(Number(order));
@@ -456,23 +702,30 @@ function createHiveReader(
       return undefined;
     }
     const view = await arrayView(target, name);
-    if (!view) {
+    if (!view || (target.merged && !view.merge)) {
       return undefined;
     }
     const perNode =
       4 ** (target.cellOrder - target.nodeOrder) / view.innerChunk;
-    const dir = await nodeDir(target, Math.floor(Number(index) / perNode));
-    if (dir === undefined) {
-      return undefined;
+    const dirs = await nodeDirs(target, Math.floor(Number(index) / perNode));
+    const parts = await Promise.all(
+      dirs.map((dir) =>
+        dir === undefined
+          ? undefined
+          : objectChunk(
+              `${dir}/${target.cellOrder}/${name}/c/0`,
+              perNode,
+              Number(index)
+            )
+      )
+    );
+    const present = parts.filter((part) => part !== undefined);
+    if (!view.merge || present.length === 0) {
+      return present[0];
     }
-    const objectKey = `${dir}/${target.cellOrder}/${name}/c/0`;
-    if (perNode === 1) {
-      return await inner.get(`/${objectKey}`);
-    }
-    const entry = (await shardIndex(objectKey, perNode))[
-      Number(index) % perNode
-    ];
-    return entry && (await inner.getRange!(`/${objectKey}`, entry));
+    const dir = await templateDir(target);
+    const meta = await json(`${dir}/${target.cellOrder}/${name}/zarr.json`);
+    return await mergeChunks(present, view, String(meta?.data_type));
   }
   function rootMetadata() {
     return encoder.encode(
@@ -536,7 +789,7 @@ function createHiveReader(
     const match = CHUNK_KEY.exec(key);
     return match ? await chunk(match) : undefined;
   }
-  return { get, arrayView, derived, pooled };
+  return { get, arrayView, derived, pooled, windowCount };
 }
 
 /**
@@ -648,12 +901,10 @@ async function readRoot(store: zarr.AsyncReadable, rootUrl: string) {
     );
   }
   const manifest = parseHiveManifest(JSON.parse(decoder.decode(manifestBytes)));
-  if (manifest.version !== 1) {
-    // ponytail: windowed stores add a row per window (spec §11.2).
-    throw new Error(
-      `windowed hive stores (${manifest.spec}) are not supported yet`
-    );
-  }
+  // a windowed store is read as its all-time product: the per-window
+  // objects merged on read (see the module note); `windowLabels` refuses a
+  // schedule it cannot enumerate
+  windowLabels(manifest);
   const coverage = coverageBytes
     ? parseRootCoverage(JSON.parse(decoder.decode(coverageBytes)))
     : null;
@@ -682,8 +933,11 @@ export async function createHiveStore(
   const { manifest, coverage } = await readRoot(store, rootUrl);
   const levels = manifestLevels(manifest);
   placeNodes(levels, rangesShardIds(coverage), manifest);
-  nodesByRoot.set(rootKey(rootUrl), levels);
   const reader = createHiveReader(store, manifest, levels, 1);
+  nodesByRoot.set(rootKey(rootUrl), {
+    levels,
+    windows: await reader.windowCount(),
+  });
   const names = await arrayNames(reader, manifest, levels[0]);
   Object.assign(reader.pooled, await pooledLevels(reader, manifest, levels));
   const contents = listContents(levels, names, reader.pooled);

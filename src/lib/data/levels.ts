@@ -182,7 +182,9 @@ const SIGNAL_ALONE: TStrataBytes = { cell: 1, chunk: 1 };
  * much to fetch whatever is read of it); on a stored level, cells of
  * `cellsPerBlock` within the byte budget for a digest variable, within the
  * view cap for any other. A digest variable's blocks are priced at every
- * stratum the choice reads (`strata`).
+ * stratum the choice reads (`strata`) and at every object merged per chunk
+ * (`windows`: the years of a windowed store's leaf and column levels,
+ * fetched and merged client-side).
  */
 export function windowBlocks(
   level: Pick<TSourceLevel, "derived">,
@@ -190,14 +192,16 @@ export function windowBlocks(
   cellsPerBlock: number,
   digest: boolean,
   budget = DEFAULT_VIEW_BUDGET_BYTES,
-  strata = SIGNAL_ALONE
+  strata = SIGNAL_ALONE,
+  windows = 1
 ) {
   if (!level.derived && !digest) {
     return Math.floor(DEFAULT_MAX_VIEW_CELLS / cellsPerBlock);
   }
-  const blockBytes = level.derived
-    ? DIGEST_CHUNK_BYTES * (digest ? strata.chunk : 1)
-    : digestCellBytes(order, strata.cell) * cellsPerBlock;
+  const blockBytes =
+    (level.derived
+      ? DIGEST_CHUNK_BYTES * (digest ? strata.chunk : 1)
+      : digestCellBytes(order, strata.cell) * cellsPerBlock) * windows;
   return Math.max(Math.floor(budget / blockBytes), 1);
 }
 
@@ -295,27 +299,34 @@ export function cellsInView(
  * variable derived from a t-digest, and cells against the view cap for any
  * other. `cells` are the cells in view; the window reaches a margin past the
  * view on every side, and is priced with it, a digest variable at every
- * stratum the choice reads (`strata`, relative to the signal alone).
+ * stratum the choice reads (`strata`, relative to the signal alone) and at
+ * every object merged per chunk (`windows`, as `windowBlocks`).
  */
 export function windowCost(
   level: Pick<TSourceLevel, "resolution" | "derived">,
   cells: number,
   digest: boolean,
   budget = DEFAULT_VIEW_BUDGET_BYTES,
-  strata = SIGNAL_ALONE
+  strata = SIGNAL_ALONE,
+  windows = 1
 ) {
   const margin = digest ? DIGEST_WINDOW_MARGIN : VIEW_WINDOW_MARGIN;
   cells *= (1 + 2 * margin) ** 2;
   if (level.derived) {
     const chunks =
       cells / 4 ** (DIGEST_CHUNK_ORDERS - level.derived.refinement);
-    return (chunks * DIGEST_CHUNK_BYTES * (digest ? strata.chunk : 1)) / budget;
+    return (
+      (chunks * DIGEST_CHUNK_BYTES * (digest ? strata.chunk : 1) * windows) /
+      budget
+    );
   }
   if (!digest) {
     return cells / DEFAULT_MAX_VIEW_CELLS;
   }
   return (
-    (cells * digestCellBytes(healpixOrderOf(level.resolution!), strata.cell)) /
+    (cells *
+      digestCellBytes(healpixOrderOf(level.resolution!), strata.cell) *
+      windows) /
     budget
   );
 }
@@ -339,6 +350,8 @@ export type TViewLevel = Pick<
 > & {
   /** Whether the level is loaded as the part in view rather than whole. */
   byView?: boolean;
+  /** Objects merged per chunk of the level (`windowCost`); 1 when absent. */
+  windows?: number;
 };
 
 export type TLevelSelectionOptions = {
@@ -392,7 +405,8 @@ export function selectViewLevel(
         cells,
         options.digest ?? false,
         options.budget,
-        options.strata
+        options.strata,
+        level.windows
       ) <= give &&
       (level.byView || !exceedsCellCap(level))
     );

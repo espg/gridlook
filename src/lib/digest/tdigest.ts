@@ -48,6 +48,22 @@ export function digestChunkFromVlen(chunk: TVlenChunk): TDigestChunk {
   return { offsets, means, weights };
 }
 
+/** A chunk as little-endian float32 `(mean, weight)` pairs: the inverse. */
+export function vlenFromDigestChunk(chunk: TDigestChunk): TVlenChunk {
+  const cells = chunk.offsets.length - 1;
+  const offsets = new Uint32Array(cells + 1);
+  for (let cell = 0; cell <= cells; cell++) {
+    offsets[cell] = chunk.offsets[cell] * CENTROID_BYTES;
+  }
+  const bytes = new Uint8Array(offsets[cells]);
+  const view = new DataView(bytes.buffer);
+  for (let index = 0; index < chunk.offsets[cells]; index++) {
+    view.setFloat32(index * CENTROID_BYTES, chunk.means[index], true);
+    view.setFloat32(index * CENTROID_BYTES + 4, chunk.weights[index], true);
+  }
+  return { offsets, bytes };
+}
+
 export function digestCentroidCount(chunk: TDigestChunk, cell: number) {
   return chunk.offsets[cell + 1] - chunk.offsets[cell];
 }

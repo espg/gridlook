@@ -43,3 +43,22 @@ export function decodeVlenChunk(frame: Uint8Array): TVlenChunk {
   }
   return { offsets, bytes };
 }
+
+/** The wire form of a chunk: the inverse of `decodeVlenChunk`. */
+export function encodeVlenChunk(chunk: TVlenChunk): Uint8Array {
+  const items = chunk.offsets.length - 1;
+  const frame = new Uint8Array(
+    LENGTH_BYTES * (items + 1) + chunk.bytes.byteLength
+  );
+  const view = new DataView(frame.buffer);
+  view.setUint32(0, items, true);
+  let at = LENGTH_BYTES;
+  for (let item = 0; item < items; item++) {
+    const [from, to] = [chunk.offsets[item], chunk.offsets[item + 1]];
+    view.setUint32(at, to - from, true);
+    at += LENGTH_BYTES;
+    frame.set(chunk.bytes.subarray(from, to), at);
+    at += to - from;
+  }
+  return frame;
+}

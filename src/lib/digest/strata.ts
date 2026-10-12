@@ -147,8 +147,10 @@ const splitMergedPath = (path: string) => path.split(MERGED_SEPARATOR);
  * every chunk, sorted by mean with their weights, so the quantile law reads
  * the merged sample as it reads a pooled one. A chunk the store does not
  * have (null) adds nothing; null when none is there. One chunk is itself.
+ * The strata of a `both` choice merge this way, and so do the windows of a
+ * windowed store's all-time view (`hiveStore.ts`): any number of sources.
  */
-function mergeDigestChunks(
+export function mergeDigestChunks(
   chunks: (TDigestChunk | null)[]
 ): TDigestChunk | null {
   const present = chunks.filter((chunk) => chunk !== null);

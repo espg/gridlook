@@ -9,10 +9,13 @@ import {
   EARTH_RADIUS_METERS,
   getGlobeFitCameraDistance,
 } from "@/lib/camera/cameraSettings.ts";
+import { hiveNodes } from "@/lib/data/hiveStore.ts";
+import { parseStorePath } from "@/lib/data/icechunkStore.ts";
 import {
   currentLevel,
   finestLevel,
   groundMetersPerPixel,
+  healpixOrderOf,
   selectPointTier,
   selectViewLevel,
 } from "@/lib/data/levels.ts";
@@ -34,6 +37,26 @@ export type TViewportSize = { width: number; height: number };
 function isDigest(datasources: TSources, varname: string) {
   const attrs = currentLevel(datasources).datasources[varname]?.attrs;
   return digestVariableOf(attrs) !== undefined;
+}
+
+/**
+ * Objects merged per chunk of a level (a windowed hive store's years on its
+ * leaf and column levels), for the level's window to be priced at them.
+ */
+function levelWindows(
+  datasources: TSources,
+  varname: string,
+  level: TSources["levels"][number]
+) {
+  const source = currentLevel(datasources).datasources[varname];
+  if (!source || !(level.resolution! > 0)) {
+    return 1;
+  }
+  const nodes = hiveNodes(
+    parseStorePath(source.store).url,
+    healpixOrderOf(level.resolution!)
+  );
+  return nodes?.windows ?? 1;
 }
 
 /**
@@ -96,6 +119,7 @@ function viewLevel(
       cellCount: level.cellCount,
       derived: level.derived,
       byView: store.loadsLevelByView(index),
+      windows: levelWindows(datasources, store.varnameSelector, level),
     })),
     store.selectedLevel,
     {

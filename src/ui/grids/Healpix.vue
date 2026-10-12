@@ -627,7 +627,8 @@ function levelWindow(
     cellsPerBlock,
     level.digest,
     DEFAULT_VIEW_BUDGET_BYTES,
-    strataBytesFactor(store.digestStratum)
+    strataBytesFactor(store.digestStratum),
+    nodes?.windows
   );
   return store.viewFootprint
     ? healpixViewWindow(

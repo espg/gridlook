@@ -480,3 +480,64 @@ describe("selectPointTier", () => {
     expect(selectPointTier(scaleAt(300), NaN, true)).toBe(false);
   });
 });
+
+// eslint-disable-next-line max-lines-per-function
+describe("the windows merged per chunk", () => {
+  const cells = 100_000;
+  it("price a stored digest level and a derived level at every window", () => {
+    const one = windowCost(healpixLevel(13), cells, true);
+    expect(
+      windowCost(healpixLevel(13), cells, true, undefined, undefined, 8)
+    ).toBeCloseTo(one * 8);
+    expect(
+      windowCost(derived(15), cells, true, undefined, undefined, 8)
+    ).toBeCloseTo(windowCost(derived(15), cells, true) * 8);
+    // a stored value is capped in cells, whatever is merged
+    expect(
+      windowCost(healpixLevel(13), cells, false, undefined, undefined, 8)
+    ).toBe(windowCost(healpixLevel(13), cells, false));
+    expect(
+      windowBlocks(
+        { derived: undefined },
+        13,
+        64,
+        true,
+        undefined,
+        undefined,
+        8
+      )
+    ).toBe(Math.floor(windowBlocks({ derived: undefined }, 13, 64, true) / 8));
+    expect(
+      windowBlocks(
+        { derived: undefined },
+        13,
+        64,
+        false,
+        undefined,
+        undefined,
+        8
+      )
+    ).toBe(windowBlocks({ derived: undefined }, 13, 64, false));
+  });
+
+  it("make the picker fall back to a coarser level", () => {
+    const levels = [
+      { ...healpixLevel(13), byView: true, windows: 8 },
+      { ...healpixLevel(12), byView: true },
+    ];
+    const metersPerPixel = resolution(13) / 4;
+    // 1.5 M px: order 13 alone fits the budget, eight years of it do not
+    expect(
+      selectViewLevel(
+        metersPerPixel,
+        1_500_000,
+        [{ ...levels[0], windows: 1 }, levels[1]],
+        1,
+        { digest: true }
+      )
+    ).toBe(0);
+    expect(
+      selectViewLevel(metersPerPixel, 1_500_000, levels, 1, { digest: true })
+    ).toBe(1);
+  });
+});

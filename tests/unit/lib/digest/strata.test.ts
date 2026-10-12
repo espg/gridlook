@@ -11,6 +11,7 @@ import {
   duplicateStratumVariables,
   isStratumChoice,
   mergeDigestCells,
+  mergeDigestChunks,
   mergedPath,
   NOISE_BYTES_RATIO,
   primaryStratum,
@@ -138,6 +139,26 @@ describe("the stratum choice", () => {
     ]);
     const only = { h_range_noise: vars.h_range_noise }; // eslint-disable-line camelcase
     expect(duplicateStratumVariables(only).size).toBe(0);
+  });
+});
+
+describe("the merged digests of any number of sources", () => {
+  it("merges three chunks cell by cell, sorted by mean, a null adding nothing", () => {
+    const chunk = (means: number[], weights: number[]) => ({
+      offsets: Uint32Array.of(0, means.length),
+      means: Float32Array.from(means),
+      weights: Float32Array.from(weights),
+    });
+    const merged = mergeDigestChunks([
+      chunk([9, 1], [1, 2]),
+      null,
+      chunk([5], [3]),
+      chunk([7, 3], [1, 1]),
+    ])!;
+    expect(Array.from(merged.offsets)).toEqual([0, 5]);
+    expect(Array.from(merged.means)).toEqual([1, 3, 5, 7, 9]);
+    expect(Array.from(merged.weights)).toEqual([2, 1, 3, 1, 1]);
+    expect(mergeDigestChunks([null, null])).toBeNull();
   });
 });
 
