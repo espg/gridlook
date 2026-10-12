@@ -249,6 +249,35 @@ describe("parseMultiscales for zagg-multiscales/1", () => {
   });
 });
 
+describe("parseMultiscales for a zagg-multiscales/1 object with a layout", () => {
+  it("still names the levels by cell order through the block, not the layout", () => {
+    // The hive root (and the Icechunk companion root since zagg 0.59.0)
+    // carries the block as an object plus a zarr-conventions layout; the
+    // block's spec decides, so the leaves and the ladder are named by cell
+    // order and sized, not taken bare from the layout.
+    const layout = [
+      { asset: "19" },
+      { asset: "13", derived_from: "19", transform: { scale: [4096] } },
+    ];
+    const levels = parseMultiscales({ multiscales: { ...zagg, layout } });
+    expect(levels.map((level) => level.path)).toEqual([
+      "19",
+      "13",
+      "12",
+      "11",
+      "10",
+      "9",
+      "8",
+      "7",
+      "6",
+      "5",
+      "4",
+    ]);
+    expect(levels[1]).toMatchObject({ name: "order 13" });
+    expect(levels[1].resolution).toBeGreaterThan(0);
+  });
+});
+
 describe("parseMultiscales for malformed zagg-multiscales/1", () => {
   it("skips levels without a cell order", () => {
     const { datasets, ...rest } = zagg;
