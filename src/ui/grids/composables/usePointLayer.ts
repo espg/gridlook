@@ -11,6 +11,7 @@ import {
 import { CAMERA_VERTICAL_FOV_DEGREES } from "@/lib/camera/cameraSettings.ts";
 import {
   POINT_PIVOT_TILTS,
+  viewHeightAt,
   type TPivotLeftDrag,
 } from "@/lib/camera/pointPivot.ts";
 import { currentLevel } from "@/lib/data/levels.ts";
@@ -18,7 +19,6 @@ import { storeReaders, type TLeafReaders } from "@/lib/digest/digestField.ts";
 import { createByteLru } from "@/lib/digest/digestReader.ts";
 import { healpixViewBlocks } from "@/lib/grids/healpixWindow.ts";
 import { MORTON_STORE_ELLIPSOID } from "@/lib/morton/convention.ts";
-import { viewHeightAt } from "@/lib/points/pointAxes.ts";
 import {
   decimatedCount,
   decimationStride,
@@ -52,7 +52,6 @@ import type { TSources } from "@/lib/types/GlobeTypes.ts";
 import { useGlobeControlStore } from "@/store/store.ts";
 import { useLog } from "@/ui/common/useLog.ts";
 import type { useGridHistogram } from "@/ui/grids/composables/useGridHistogram.ts";
-import { usePointAxes } from "@/ui/grids/composables/usePointAxes.ts";
 
 /** Device pixels of a point at the pivot's depth (clamped to 1..8). */
 const POINT_PIXELS = 4;
@@ -154,7 +153,6 @@ export function usePointLayer(options: TPointLayerOptions) {
   const { logError } = useLog();
   const gridAt = createGrids();
   const cache = createByteLru<TPointChunk>(POINT_CACHE_BYTES, pointChunkBytes);
-  const axes = usePointAxes({ getScene: options.getScene });
   // the window on screen: its chunks, decoded, what is drawn of each
   // (every stride-th point) and their objects
   const window = new Map<
@@ -216,20 +214,12 @@ export function usePointLayer(options: TPointLayerOptions) {
     );
   }
 
-  /** The point size and the axes follow the camera's distance to the pivot. */
   function updatePointSize() {
     const distance = options.pointPivot.distance();
-    const pivot = options.pointPivot.direction();
-    if (!material || distance === undefined || !pivot) {
-      axes.update(undefined);
+    if (!material || distance === undefined) {
       return;
     }
     material.uniforms.basePointSize.value = POINT_PIXELS * distance;
-    axes.update({
-      pivot,
-      distance,
-      exaggeration: material.uniforms.heightExaggeration.value,
-    });
   }
 
   function remove(index: number) {
@@ -249,7 +239,6 @@ export function usePointLayer(options: TPointLayerOptions) {
     loaded = undefined;
     stride = 1;
     band = undefined;
-    axes.update(undefined);
     store.setPointTierStats(undefined);
     if (store.pointTierBounds) {
       store.setPointTierBounds(undefined);

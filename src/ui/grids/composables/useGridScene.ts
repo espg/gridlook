@@ -41,6 +41,7 @@ import {
 import {
   createPointPivot,
   pivotNearPlane,
+  screenPointOf,
   surfacePointNearRay,
   wheelDollyScale,
   type TPivotLeftDrag,
@@ -380,15 +381,25 @@ export function useGridScene(options: UseGridSceneOptions) {
       pivotControls?.active ? pivotControls.pivotDistance() : undefined,
   };
 
+  /**
+   * The distance scale under the cursor; on the pivot camera, at the pivot
+   * itself, so that the tier's scale bar reads the ground scale at the
+   * view's depth whether or not the pointer is over the canvas.
+   */
   function refreshDistanceScale() {
+    const rect = canvas.value?.getBoundingClientRect();
+    const at =
+      pivotControls?.active && orbitControls && camera && rect
+        ? screenPointOf(orbitControls.target, camera, rect)
+        : lastPointerPosition;
     store.distanceScale =
-      lastPointerPosition && camera && canvas.value
+      at && camera && rect
         ? getDistanceScale(
             camera,
             projectionHelper.value,
-            canvas.value.getBoundingClientRect(),
-            lastPointerPosition.clientX,
-            lastPointerPosition.clientY,
+            rect,
+            at.clientX,
+            at.clientY,
             EARTH_RADIUS_METERS
           )
         : null;
@@ -1435,7 +1446,9 @@ export function useGridScene(options: UseGridSceneOptions) {
       () => {
         lastPointerPosition = null;
         hoveredGeoPoint.value = null;
-        store.distanceScale = null;
+        if (!pivotControls?.active) {
+          store.distanceScale = null;
+        }
       },
       { passive: true }
     );

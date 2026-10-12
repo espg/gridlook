@@ -260,14 +260,11 @@ It exists on the globe only; a flat projection stops at the finest level.
 - **Opacity.** The panel's slider (0.05 to 1, 1 by default) scales the
   points' alpha (`pointOpacity`, a uniform of the falloff fragment shader),
   so dense tracks show their depth; the splat's soft edge stays.
-- **Axes.** A gizmo at the datum under the pivot: east, north and up bars
-  ticked at half and full length in metres (km from 1 km), the up bar
-  scaled like the points. The bars are the largest nice length (1, 2, 5 ×
-  10^k m) within a quarter of the view's height at the pivot's depth, so
-  they rescale with the zoom (`src/lib/points/pointAxes.ts`,
-  `usePointAxes.ts`). The gizmo is drawn over the points and never answers
-  a click. The distance scale at the bottom left measures under the cursor
-  as everywhere else.
+- **Scale bar.** While the tier is on, the distance scale sits in the
+  view's upper-left corner and reads the ground scale at the pivot (at the
+  view's depth), whether or not the pointer is over the canvas and whether
+  or not the distance-scale toggle is on; elsewhere it follows the cursor
+  as before. There is no vertical scale.
 - **View buttons.** Under the legend, **Top** and **Profile** animate the
   tilt (0.6 s, eased) to nadir and to 90°, a side elevation of the cloud
   with the up axis in view, keeping the azimuth and the pivot; from nadir

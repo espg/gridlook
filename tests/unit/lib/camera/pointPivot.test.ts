@@ -15,7 +15,9 @@ import {
   POINT_PIVOT_MIN_ALTITUDE_METERS,
   POINT_PIVOT_MIN_DISTANCE_METERS,
   POINT_PIVOT_TILTS,
+  screenPointOf,
   surfacePointNearRay,
+  viewHeightAt,
   wheelDollyScale,
 } from "@/lib/camera/pointPivot.ts";
 
@@ -183,6 +185,30 @@ describe("dollyTowardGround", () => {
       6
     );
     expect(dollyTowardGround(held.position, forward, pivot, 0.5)).toBeNull();
+  });
+});
+
+describe("the view's geometry", () => {
+  it("spans 393 m at 3 km under the 7.5° lens, and puts the pivot mid-canvas", () => {
+    expect(viewHeightAt(3000, 7.5)).toBeCloseTo(393.26, 1);
+    const { camera, controls, pivot } = pivotControls(3000);
+    pivot.enter(surfacePointNearRay(camera.position, forwardOf(camera)));
+    camera.updateMatrixWorld();
+    const rect = { left: 10, top: 20, width: 1500, height: 900 };
+    const at = screenPointOf(controls.target, camera, rect)!;
+    expect(at.clientX).toBeCloseTo(760, 6);
+    expect(at.clientY).toBeCloseTo(470, 6);
+    // the ground a view-height below the pivot is at the bottom edge
+    const down = new THREE.Vector3(0, -1, 0)
+      .applyQuaternion(camera.quaternion)
+      .multiplyScalar(viewHeightAt(3000, 7.5) / 2 / R);
+    expect(
+      screenPointOf(controls.target.clone().add(down), camera, rect)!.clientY
+    ).toBeCloseTo(920, 3);
+    // behind the camera is nowhere
+    expect(
+      screenPointOf(camera.position.clone().multiplyScalar(2), camera, rect)
+    ).toBeNull();
   });
 });
 
