@@ -64,7 +64,7 @@ const pointTierTitle = computed(() => {
   if (!stats) {
     return `The observations themselves, drawn at their height in place of the finest level. ${legend}`;
   }
-  const thinned = stats.stride > 1 ? ` (every ${stats.stride}th)` : "";
+  const thinned = stats.stride > 1 ? ` (1 in ${stats.stride})` : "";
   return `${countFormat.format(stats.photons)} observations in ${stats.loaded} of ${stats.chunks} chunks, ${countFormat.format(stats.drawn)} drawn${thinned}. ${legend}`;
 });
 

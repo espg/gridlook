@@ -88,3 +88,20 @@ it("carries the legend of the points' controls while the tier is on", async () =
     ">Drag pans · Shift+drag or right-drag orbits · wheel zooms to the cursor<"
   );
 });
+
+it("says how thinly the points are drawn in the option's tooltip", async () => {
+  const store = useGlobeControlStore();
+  store.varnameSelector = "h_percentile_signal";
+  store.selectPointTier(0, false);
+  store.setPointTierStats({
+    chunks: 12,
+    loaded: 12,
+    photons: 600_000,
+    drawn: 300_000,
+    stride: 2,
+    decodeMs: 0,
+  });
+  const html = await render();
+  expect(html).toContain(" drawn (1 in 2).");
+  expect(html).not.toContain("2th");
+});
