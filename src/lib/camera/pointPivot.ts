@@ -10,9 +10,17 @@ import { EARTH_RADIUS_METERS } from "./cameraSettings.ts";
  *
  * - `controls.target` is a point of the unit sphere, the pivot, and the
  *   camera's up is the local vertical there, so the polar angle is the tilt
- *   from nadir (0) to `POINT_PIVOT_MAX_TILT_DEGREES` and the azimuth turns
- *   about the vertical: the right button, shift + left and two fingers
- *   orbit the pivot that way (espg's ruling, gridlook#25);
+ *   from nadir (0) to `POINT_PIVOT_MAX_TILT_DEGREES` (90, a profile: the
+ *   camera at ground level looking along the ground at the pivot) and the
+ *   azimuth turns about the vertical: the right button, shift + left and
+ *   two fingers orbit the pivot that way (espg's ruling, gridlook#25);
+ *   `tiltTo` animates the tilt to a given angle, the Top and Profile
+ *   buttons, keeping the azimuth and the pivot (a profile also backs off
+ *   to fit the cloud's height in the view);
+ * - the pivot is lifted off the sphere by `setHeight`, to the cloud's
+ *   mid-height, so that an orbit turns about the cloud and a profile
+ *   centres it rather than the ground; the lifted pivot keeps its place
+ *   on the sphere's vertical, so a nadir view does not notice;
  * - the left button (one finger, the arrow keys) pans: it moves the pivot
  *   in its tangent plane (`screenSpacePanning` off with a vertical up) and
  *   the pivot is put back on the sphere after every update, so a drag
@@ -30,8 +38,14 @@ import { EARTH_RADIUS_METERS } from "./cameraSettings.ts";
  * the azimuth go.
  */
 
-/** The farthest the camera tilts from nadir, degrees. */
-export const POINT_PIVOT_MAX_TILT_DEGREES = 85;
+/** The farthest the camera tilts from nadir, degrees: a side elevation. */
+export const POINT_PIVOT_MAX_TILT_DEGREES = 90;
+/** The tilts the view buttons animate to, degrees from nadir. */
+export const POINT_PIVOT_TILTS = { TOP: 0, PROFILE: 90 } as const;
+/** Seconds a view button's tilt animation takes. */
+const TILT_ANIMATION_SECONDS = 0.6;
+/** A profile fits the cloud's height band in this fraction of the view. */
+const PROFILE_FIT_FRACTION = 0.8;
 /** The camera comes no closer than this to the pivot, metres. */
 export const POINT_PIVOT_MIN_DISTANCE_METERS = 200;
 /** The camera stays this far above the surface when zooming in, metres. */
@@ -39,7 +53,8 @@ export const POINT_PIVOT_MIN_ALTITUDE_METERS = 100;
 /**
  * The near plane as a fraction of the camera's altitude above the sphere:
  * the cloud reaches from the sphere up to the camera, and the depth buffer
- * is not needed for the points themselves.
+ * is not needed for the points themselves. A camera tilted to the profile
+ * sits at ground level: its near plane is taken at the altitude floor.
  */
 const POINT_PIVOT_NEAR_FRACTION = 1 / 50;
 /** A full-height drag turns this fraction of a turn about the pivot. */
@@ -76,34 +91,42 @@ type TSavedControls = Pick<
 > & { up: THREE.Vector3 };
 
 /** The camera's near plane on the pivot, at `altitude` above the sphere. */
-export function pivotNearPlane(altitude: number) {
-  return Math.max(altitude, 0) * POINT_PIVOT_NEAR_FRACTION;
+export function pivotNearPlane(
+  altitude: number,
+  minAltitude = POINT_PIVOT_MIN_ALTITUDE_METERS / EARTH_RADIUS_METERS
+) {
+  return Math.max(altitude, minAltitude) * POINT_PIVOT_NEAR_FRACTION;
 }
 
-/** Where a ray meets the unit sphere, nearest first; null when it misses. */
+/**
+ * Where a ray meets the sphere of `radius` (the unit sphere, the ground),
+ * nearest first; null when it misses.
+ */
 export function groundPointOnRay(
   origin: THREE.Vector3,
-  direction: THREE.Vector3
+  direction: THREE.Vector3,
+  radius = 1
 ): THREE.Vector3 | null {
   return new THREE.Ray(origin, direction).intersectSphere(
-    UNIT_SPHERE,
+    radius === 1 ? UNIT_SPHERE : new THREE.Sphere(UNIT_SPHERE.center, radius),
     new THREE.Vector3()
   );
 }
 
 /**
- * The point of the surface a ray looks at: where it meets the sphere, else
- * the surface point under its closest approach to the centre.
+ * The point of the sphere of `radius` a ray looks at: where it meets it,
+ * else the point under its closest approach to the centre.
  */
 export function surfacePointNearRay(
   origin: THREE.Vector3,
-  direction: THREE.Vector3
+  direction: THREE.Vector3,
+  radius = 1
 ): THREE.Vector3 {
   return (
-    groundPointOnRay(origin, direction) ??
+    groundPointOnRay(origin, direction, radius) ??
     new THREE.Ray(origin, direction)
       .closestPointToPoint(UNIT_SPHERE.center, new THREE.Vector3())
-      .normalize()
+      .setLength(radius)
   );
 }
 
@@ -112,26 +135,34 @@ export function surfacePointNearRay(
  * the cursor: its distance to the ground point scales by `scale` (below 1
  * zooms in) along the line between them, so the ground point stays under
  * the cursor, and the pivot becomes the surface point under the view centre
- * (the `forward` ray from the new position). Zooming in stops at
- * `minAltitude` above the surface, in scene units; null when the camera is
- * already there.
+ * (the `forward` ray from the new position, on the sphere of
+ * `pivotRadius`). Zooming in stops at `minAltitude` above the surface, in
+ * scene units, and a camera already below that (tilted to the profile, at
+ * ground level) stops `minDistance` short of the ground point instead;
+ * null when the camera is already there.
  */
 export function dollyTowardGround(
   position: THREE.Vector3,
   forward: THREE.Vector3,
   ground: THREE.Vector3,
   scale: number,
-  minAltitude = POINT_PIVOT_MIN_ALTITUDE_METERS / EARTH_RADIUS_METERS
+  minAltitude = POINT_PIVOT_MIN_ALTITUDE_METERS / EARTH_RADIUS_METERS,
+  minDistance = POINT_PIVOT_MIN_DISTANCE_METERS / EARTH_RADIUS_METERS,
+  pivotRadius = 1
 ): { position: THREE.Vector3; target: THREE.Vector3 } | null {
   const toCamera = position.clone().sub(ground);
   const floor = 1 + minAltitude;
   let step = scale;
   if (scale < 1) {
     if (position.length() <= floor) {
-      return null;
+      const distance = toCamera.length();
+      if (distance - minDistance < 1e-12) {
+        return null;
+      }
+      step = Math.max(scale, minDistance / distance);
     }
-    const next = ground.clone().addScaledVector(toCamera, scale);
-    if (next.length() < floor) {
+    const next = ground.clone().addScaledVector(toCamera, step);
+    if (position.length() > floor && next.length() < floor) {
       // |ground + toCamera · s| = floor: the larger root is the one in (0, 1)
       const a = toCamera.lengthSq();
       const b = 2 * ground.dot(toCamera);
@@ -140,7 +171,10 @@ export function dollyTowardGround(
     }
   }
   const next = ground.clone().addScaledVector(toCamera, step);
-  return { position: next, target: surfacePointNearRay(next, forward) };
+  return {
+    position: next,
+    target: surfacePointNearRay(next, forward, pivotRadius),
+  };
 }
 
 /**
@@ -179,6 +213,17 @@ export function createPointPivot(controls: OrbitControls) {
   const update = orbit.update.bind(orbit);
   let active = false;
   let saved: TSavedControls | undefined;
+  // the pivot's height above the sphere, scene units
+  let height = 0;
+
+  function vertical() {
+    return orbit.target.clone().normalize();
+  }
+
+  /** The pivot back at its height on the sphere's vertical. */
+  function settlePivot() {
+    orbit.target.setLength(1 + height);
+  }
 
   /** The spherical frame follows the pivot's vertical. */
   function alignToPivot() {
@@ -186,8 +231,8 @@ export function createPointPivot(controls: OrbitControls) {
       drop();
       return;
     }
-    orbit.target.normalize();
-    camera.up.copy(orbit.target);
+    settlePivot();
+    camera.up.copy(vertical());
     orbit._quat.setFromUnitVectors(camera.up, Y_UP);
     orbit._quatInverse.copy(orbit._quat).invert();
     // a damped pan carries steps taken in earlier tangent planes: keep only
@@ -199,9 +244,9 @@ export function createPointPivot(controls: OrbitControls) {
 
   /** Re-aim at the pivot with the roll blended from `screenUp` to the vertical. */
   function settleRoll(screenUp: THREE.Vector3) {
-    const vertical = orbit.target;
+    const up = vertical();
     const tilt = THREE.MathUtils.radToDeg(
-      camera.position.clone().sub(vertical).angleTo(vertical)
+      camera.position.clone().sub(orbit.target).angleTo(up)
     );
     const weight = THREE.MathUtils.clamp(
       (tilt - ROLL_VERTICAL_FROM_DEGREES) /
@@ -212,11 +257,96 @@ export function createPointPivot(controls: OrbitControls) {
     camera.up
       .copy(screenUp)
       .multiplyScalar(1 - weight)
-      .addScaledVector(vertical, weight)
+      .addScaledVector(up, weight)
       .normalize();
-    camera.lookAt(vertical);
+    camera.lookAt(orbit.target);
     // OrbitControls pans along `up`: it stays the vertical
-    camera.up.copy(vertical);
+    camera.up.copy(up);
+  }
+
+  /** The camera's tilt from nadir, degrees. */
+  function tilt() {
+    return THREE.MathUtils.radToDeg(
+      camera.position.clone().sub(orbit.target).angleTo(orbit.target)
+    );
+  }
+
+  /**
+   * The direction along the ground the camera lies in from the pivot, its
+   * azimuth; at nadir, where there is none, behind the bottom of the
+   * screen, so a profile keeps looking the way the view faces.
+   */
+  function azimuthDirection() {
+    const up = vertical();
+    const along = camera.position.clone().sub(orbit.target);
+    along.addScaledVector(up, -along.dot(up));
+    if (along.lengthSq() < 1e-18) {
+      along.set(0, 1, 0).applyQuaternion(camera.quaternion).multiplyScalar(-1);
+      along.addScaledVector(up, -along.dot(up));
+    }
+    return along.normalize();
+  }
+
+  /** Put the camera `distance` from the pivot at `degrees` from nadir, keeping the azimuth. */
+  function setTilt(degrees: number, distance: number) {
+    const radians = THREE.MathUtils.degToRad(
+      THREE.MathUtils.clamp(degrees, 0, POINT_PIVOT_MAX_TILT_DEGREES)
+    );
+    const along = azimuthDirection();
+    camera.position
+      .copy(orbit.target)
+      .addScaledVector(vertical(), distance * Math.cos(radians))
+      .addScaledVector(along, distance * Math.sin(radians));
+    orbit.update();
+  }
+
+  /**
+   * An animation of the tilt to `degrees` over `seconds`, eased in and out:
+   * `advance(dt)` moves it and is true while it has further to go. Given
+   * `fitHeight` (scene units, the cloud's height band), the camera also
+   * backs off until the band spans `PROFILE_FIT_FRACTION` of the view.
+   */
+  function tiltTo(
+    degrees: number,
+    fitHeight?: number,
+    seconds = TILT_ANIMATION_SECONDS
+  ) {
+    const from = { tilt: tilt(), distance: pivotDistance() };
+    const fit = fitHeight
+      ? fitHeight /
+        PROFILE_FIT_FRACTION /
+        (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)))
+      : 0;
+    const distance = Math.max(from.distance, fit);
+    let elapsed = 0;
+    return {
+      advance(deltaSeconds: number) {
+        if (!active) {
+          return false;
+        }
+        elapsed += deltaSeconds;
+        const s = Math.min(elapsed / seconds, 1);
+        const eased = s * s * (3 - 2 * s);
+        setTilt(
+          from.tilt + (degrees - from.tilt) * eased,
+          from.distance + (distance - from.distance) * eased
+        );
+        return s < 1;
+      },
+    };
+  }
+
+  /** Lift the pivot `above` the sphere (scene units): the cloud's mid-height. */
+  function setHeight(above: number) {
+    height = Math.max(above, 0);
+    if (active) {
+      settlePivot();
+      orbit.update();
+    }
+  }
+
+  function pivotDistance() {
+    return camera.position.distanceTo(orbit.target);
   }
 
   orbit.update = (deltaTime) => {
@@ -230,7 +360,7 @@ export function createPointPivot(controls: OrbitControls) {
     const changed = update(deltaTime);
     if (active) {
       // a pan is tangent to the surface: put the pivot back on it
-      orbit.target.normalize();
+      settlePivot();
       settleRoll(screenUp);
     }
     return changed;
@@ -267,6 +397,7 @@ export function createPointPivot(controls: OrbitControls) {
       touches: { ...orbit.touches },
       up: camera.up.clone(),
     };
+    height = 0;
     orbit.target.copy(ground).normalize();
     orbit.minPolarAngle = 0;
     orbit.maxPolarAngle = THREE.MathUtils.degToRad(
@@ -312,9 +443,17 @@ export function createPointPivot(controls: OrbitControls) {
     raycaster.setFromCamera(cursor, camera);
     const ground =
       groundPointOnRay(raycaster.ray.origin, raycaster.ray.direction) ??
-      orbit.target.clone();
+      vertical();
     const forward = camera.getWorldDirection(new THREE.Vector3());
-    const next = dollyTowardGround(camera.position, forward, ground, scale);
+    const next = dollyTowardGround(
+      camera.position,
+      forward,
+      ground,
+      scale,
+      undefined,
+      undefined,
+      1 + height
+    );
     if (!next) {
       return;
     }
@@ -327,10 +466,13 @@ export function createPointPivot(controls: OrbitControls) {
     enter,
     leave,
     zoom,
+    tilt,
+    tiltTo,
+    setHeight,
     get active() {
       return active;
     },
     /** The camera's distance to the pivot, scene units. */
-    pivotDistance: () => camera.position.distanceTo(orbit.target),
+    pivotDistance,
   };
 }

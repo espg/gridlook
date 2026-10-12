@@ -332,6 +332,7 @@ export function useGridScene(options: UseGridSceneOptions) {
     redraw();
   }
 
+  let stopTilt: (() => void) | undefined;
   const pointPivot = {
     enter() {
       pivotWanted = true;
@@ -340,6 +341,27 @@ export function useGridScene(options: UseGridSceneOptions) {
     leave() {
       pivotWanted = false;
       applyPointPivot();
+    },
+    /**
+     * Animate the tilt to `degrees` from nadir (the Top and Profile
+     * buttons), backing off to fit `fitHeight` (scene units) in the view.
+     */
+    tiltTo(degrees: number, fitHeight?: number) {
+      if (!pivotControls?.active) {
+        return;
+      }
+      stopTilt?.();
+      const animation = pivotControls.tiltTo(degrees, fitHeight);
+      stopTilt = registerAnimationCallback((deltaSeconds) => {
+        if (!animation.advance(deltaSeconds)) {
+          stopTilt?.();
+          stopTilt = undefined;
+        }
+      });
+    },
+    /** Lift the pivot off the sphere by `above` scene units. */
+    setHeight(above: number) {
+      pivotControls?.setHeight(above);
     },
     /** The pivot's place while the camera is on it, a few times a second. */
     ground: pivotGround,

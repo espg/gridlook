@@ -1,6 +1,9 @@
 <script lang="ts" setup>
 import { computed } from "vue";
 
+import PointTierControls from "./PointTierControls.vue";
+import { POINT_TIER_LEGEND } from "./pointTierLegend.ts";
+
 import { exceedsCellCap, finestLevel, POINT_TIER } from "@/lib/data/levels.ts";
 import { pointTierSource } from "@/lib/points/pointSource.ts";
 import type { TSourceLevel } from "@/lib/types/GlobeTypes.ts";
@@ -52,11 +55,6 @@ const selected = computed(() =>
 );
 
 const countFormat = new Intl.NumberFormat();
-// the point tier's controls (docs/levels.md), as a legend while it is on
-const POINT_TIER_LEGEND =
-  "Drag pans · Shift+drag or right-drag orbits · wheel zooms to the cursor";
-const POINT_TIER_LEGEND_TITLE =
-  "The left button slides the ground under the pointer; the right button or shift + left turns about the point under the view and tilts; the wheel zooms toward the ground under the cursor";
 const pointTierTitle = computed(() => {
   const stats = store.pointTier ? store.pointTierStats : undefined;
   if (!stats) {
@@ -114,13 +112,7 @@ function onRangeSharedChange(event: Event) {
           </option>
         </select>
       </div>
-      <p
-        v-if="store.pointTier"
-        class="is-size-7 has-text-grey mb-2"
-        :title="POINT_TIER_LEGEND_TITLE"
-      >
-        {{ POINT_TIER_LEGEND }}
-      </p>
+      <PointTierControls v-if="store.pointTier" />
       <label class="checkbox is-size-7">
         <input
           :checked="store.levelAuto"

@@ -279,6 +279,10 @@ export const useGlobeControlStore = defineStore("globeControl", {
       // the colour range of the drawn points, in place of the level's data
       // range while the tier is on (a custom range still wins)
       pointTierBounds: undefined as TBounds | undefined,
+      // the tilt the tier's camera is asked to animate to, degrees from
+      // nadir (pointPivot.ts); the serial makes every request its own
+      pointTierTilt: undefined as
+        { degrees: number; serial: number } | undefined,
       // whether every level shares the coarsest level's colour range and
       // histogram (right for a mean, e.g. elevation) or each level takes its
       // own (right for a sum, e.g. a count, which grows 4x per level)
@@ -394,6 +398,12 @@ export const useGlobeControlStore = defineStore("globeControl", {
     },
     setPointTierBounds(bounds: TBounds | undefined) {
       this.pointTierBounds = bounds;
+    },
+    requestPointTierTilt(degrees: number) {
+      this.pointTierTilt = {
+        degrees,
+        serial: (this.pointTierTilt?.serial ?? 0) + 1,
+      };
     },
     setLevelAuto(auto: boolean) {
       this.levelAuto = auto;

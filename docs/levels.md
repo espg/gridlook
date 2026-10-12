@@ -232,13 +232,26 @@ It exists on the globe only; a flat projection stops at the finest level.
   legend under the level picker while the tier is on: **the left button
   (one finger, the arrow keys) pans** in the ground plane, the pivot
   sliding along the surface; **shift + left, the right button (two
-  fingers) orbit** the pivot, tilting from nadir to 85° and turning about
+  fingers) orbit** the pivot, tilting from nadir to 90° and turning about
   the vertical with the horizon kept up; **the middle button and the wheel
   (+/-) dolly toward the ground under the cursor**, which stays under the
   cursor. The globe keeps its own buttons (left drag rotates it). The
   camera comes no closer than 200 m to the pivot and stays at least 100 m
-  above the surface. Leaving puts the camera back on the globe orbit above
-  the pivot at its altitude.
+  above the surface, except tilted to the profile, where it is at ground
+  level and the wheel stops 200 m short of the pivot instead. Leaving puts
+  the camera back on the globe orbit above the pivot at its altitude.
+- **Pivot height.** The pivot is lifted off the sphere to the middle of
+  the drawn heights' colour band (the 2nd to 98th percentile, above the
+  datum), so an orbit turns about the cloud and a profile centres it; the
+  pivot stays on the sphere's vertical, so a nadir view does not notice.
+  The lift follows the band as chunks land.
+- **View buttons.** Under the legend, **Top** and **Profile** animate the
+  tilt (0.6 s, eased) to nadir and to 90°, a side elevation of the cloud
+  with the up axis in view, keeping the azimuth and the pivot; from nadir
+  a profile backs away behind the bottom of the screen, so it looks the
+  way the view faced, and backs off (never in) until the colour band
+  spans 80 % of the view's height. Orbit drags work from either view. A
+  profile sees to the horizon, so its window grows to the fetch cap.
 - **Panel.** A click pins the order-17 cell's digest, as on level 17.
 
 ## Filling the gaps between tracks

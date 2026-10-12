@@ -8,6 +8,7 @@ import {
   type ShallowRef,
 } from "vue";
 
+import { POINT_PIVOT_TILTS } from "@/lib/camera/pointPivot.ts";
 import { currentLevel } from "@/lib/data/levels.ts";
 import { storeReaders, type TLeafReaders } from "@/lib/digest/digestField.ts";
 import { createByteLru } from "@/lib/digest/digestReader.ts";
@@ -65,6 +66,8 @@ type TPointLayerOptions = {
   pointPivot: {
     enter: () => void;
     leave: () => void;
+    tiltTo: (degrees: number, fitHeight?: number) => void;
+    setHeight: (above: number) => void;
     ground: Readonly<ShallowRef<{ lat: number; lon: number } | null>>;
     distance: () => number | undefined;
   };
@@ -152,6 +155,9 @@ export function usePointLayer(options: TPointLayerOptions) {
   let decodeMs = 0;
   let material: THREE.ShaderMaterial | undefined;
   let revision = 0;
+  // the drawn heights' band, metres above the datum: the pivot sits at its
+  // middle, a profile fits it
+  let band: { low: number; high: number } | undefined;
 
   const source = computed(() => {
     const sources = options.getDatasources();
@@ -187,6 +193,14 @@ export function usePointLayer(options: TPointLayerOptions) {
     return [...window.values()].map(({ points }) => points);
   }
 
+  /** Scene units a height above the datum is drawn at (the shader's lift). */
+  function lift(metres: number) {
+    return (
+      (metres * (material?.uniforms.heightExaggeration.value ?? 1)) /
+      MORTON_STORE_ELLIPSOID.semi_major_axis
+    );
+  }
+
   function updatePointSize() {
     const distance = options.pointPivot.distance();
     if (!material || distance === undefined) {
@@ -211,6 +225,7 @@ export function usePointLayer(options: TPointLayerOptions) {
     }
     loaded = undefined;
     stride = 1;
+    band = undefined;
     store.setPointTierStats(undefined);
     if (store.pointTierBounds) {
       store.setPointTierBounds(undefined);
@@ -236,6 +251,10 @@ export function usePointLayer(options: TPointLayerOptions) {
       return;
     }
     store.setPointTierBounds({ low: range.low, high: range.high });
+    if (datum !== undefined) {
+      band = { low: range.low - datum, high: range.high - datum };
+      options.pointPivot.setHeight(lift((band.low + band.high) / 2));
+    }
     options.updateHistogram(
       range.sample,
       range.sample[0],
@@ -467,6 +486,20 @@ export function usePointLayer(options: TPointLayerOptions) {
       reload();
     }
   });
+  // the view buttons: the camera tilts to a profile, framing the drawn
+  // heights' band, or back to the top
+  watch(
+    () => store.pointTierTilt,
+    (request) => {
+      if (request && active.value) {
+        const fit =
+          request.degrees === POINT_PIVOT_TILTS.PROFILE && band
+            ? lift(band.high - band.low)
+            : undefined;
+        options.pointPivot.tiltTo(request.degrees, fit);
+      }
+    }
+  );
   // a level shown meanwhile (a slice, a window) brings its histogram along
   watch(
     () => store.varinfo,
