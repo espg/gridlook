@@ -694,3 +694,24 @@ it("clears the cut-window notice when the grid goes", async () => {
   expect(store.viewWindowClipped).toBe(false);
   scope.stop();
 });
+
+it("draws the coarsest level beneath a sparse level loaded whole", async () => {
+  // a regional level: the first 256 cells of face 2 at order 6, loaded whole
+  stored.fine = {
+    level: 6,
+    cells: Array.from({ length: 256 }, (_, index) => 2 * 4 ** 6 + index),
+  };
+  stored.coarse = { level: 3 };
+  using parents = new Grid({ scheme: "nested", level: 2 });
+  const [lon, lat] = parents.healpixToLonLat(BigUint64Array.of(2n * 16n));
+  const { store, scope } = await mount(lat, lon);
+  // every cell read, no window
+  expect(fetchedCells("t")).toBe(256);
+  expect(drawnFaces(-0.5).length).toBeGreaterThan(0);
+  expect(hover.lookup!(-40, 170)!.level).toBe("coarse");
+  // with the fill off, nothing beneath
+  store.setLevelParentBeneath(false);
+  await until(() => drawnFaces(-0.5).length === 0 && hover.lookup !== null);
+  expect(hover.lookup!(-40, 170)).toBeNull();
+  scope.stop();
+});

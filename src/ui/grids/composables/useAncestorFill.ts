@@ -301,6 +301,36 @@ export function useAncestorFill(options: {
     return shown;
   }
 
+  type TCoarsest = Pick<TBeneath, "index" | "key" | "grid" | "batches">;
+
+  function showCoarsest(sources: TSources, coarsest: TCoarsest) {
+    shown = beneathOf(
+      coarsest.index,
+      coarsest.key,
+      {
+        grid: coarsest.grid,
+        sources: { ...sources, selectedLevel: coarsest.index },
+      },
+      coarsest.batches
+    );
+    options.show(shown);
+    return shown;
+  }
+
+  /**
+   * Draw the coarsest level beneath a sparse level loaded whole, which
+   * leaves the rest of the globe empty; undefined with the fill off.
+   */
+  function coarsestBeneath(coarsest: TCoarsest | undefined) {
+    const sources = options.getDatasources();
+    shown = undefined;
+    if (!sources || !store.levelParentBeneath || !coarsest) {
+      options.show(undefined);
+      return undefined;
+    }
+    return showCoarsest(sources, coarsest);
+  }
+
   /**
    * Draw the parent of the selected level beneath it: the next coarser
    * stored level whose window fits its budget at this view, read now or
@@ -311,7 +341,7 @@ export function useAncestorFill(options: {
     indices: TIndices,
     key: string,
     isCurrent: () => boolean,
-    coarsest?: Pick<TBeneath, "index" | "key" | "grid" | "batches">
+    coarsest?: TCoarsest
   ) {
     const sources = options.getDatasources();
     shown = undefined;
@@ -325,16 +355,7 @@ export function useAncestorFill(options: {
     )) {
       const selected = { ...sources, selectedLevel: index };
       if (index === coarsest?.index) {
-        shown = {
-          ...beneathOf(
-            index,
-            coarsest.key,
-            { grid: coarsest.grid, sources: selected },
-            coarsest.batches
-          ),
-        };
-        options.show(shown);
-        return shown;
+        return showCoarsest(sources, coarsest);
       }
       const level = await describeWindowed(selected);
       if (!isCurrent()) {
@@ -375,6 +396,7 @@ export function useAncestorFill(options: {
     keep,
     retain,
     loadBeneath,
+    coarsestBeneath,
     lookup,
     /** The level drawn beneath now, if any. */
     beneath: () => shown,

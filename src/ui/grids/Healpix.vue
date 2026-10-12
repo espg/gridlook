@@ -1564,9 +1564,12 @@ async function fetchAndRenderData(
     indices,
     digestFields.key(),
   ]);
+  // a sparse level loaded whole leaves the rest of the globe to the coarsest
   const beneath = loadedBlocks
     ? await fill.loadBeneath(indices, key, isCurrent, coarsest)
-    : undefined;
+    : levelCellCount < 12 * grid.nside ** 2
+      ? fill.coarsestBeneath(coarsest)
+      : undefined;
   if (!isCurrent()) {
     return;
   }
