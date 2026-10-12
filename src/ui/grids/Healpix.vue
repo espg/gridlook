@@ -1569,18 +1569,19 @@ async function fetchAndRenderData(
     return;
   }
   const own = loadedBlocks && fill.take(selected, key, loadedBlocks);
+  // at most the level's field and its parent's, from before the level's read
+  fill.retain([selected, beneath?.index]);
   const result = await processHealpixChunks(level, indices, isCurrent, {
     cells: cellCoord,
     deferDisplay,
     window: own ? { blocks: own.missing, seed: own.seed } : undefined,
   });
-  if (!result) {
+  if (!result || !isCurrent()) {
     return;
   }
   if (loadedBlocks) {
     fill.keep(selected, key, level, result.parts, result.drawn);
   }
-  fill.retain([selected, beneath?.index]);
   const { dataMin, dataMax, histogramSummaries, textures, batches } = result;
 
   lastStreamlineContext = { indices, grid, cellCoord };

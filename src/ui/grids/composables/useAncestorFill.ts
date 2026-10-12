@@ -352,6 +352,8 @@ export function useAncestorFill(options: {
         // coarser level is the parent instead
         continue;
       }
+      // the fields of the level and of this parent only, before the read
+      retain([sources.selectedLevel ?? 0, index]);
       return await fill(index, level, window.blocks, key, indices, isCurrent);
     }
     return undefined;

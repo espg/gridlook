@@ -3,6 +3,7 @@ import { Grid } from "healpix-geo";
 import { createPinia, setActivePinia } from "pinia";
 import { expect, it, vi } from "vitest";
 
+import type { TFaceParts } from "@/lib/grids/healpixBlockFetch.ts";
 import { ZARR_FORMAT, type TSources } from "@/lib/types/GlobeTypes.ts";
 import { useAncestorFill } from "@/ui/grids/composables/useAncestorFill.ts";
 
@@ -11,11 +12,14 @@ vi.stubGlobal("localStorage", { getItem: () => null });
 // fine, parent and grandparent orders, finest first
 const ORDERS = [9, 8, 7];
 
+// the level on screen
+let selected = 0;
+
 function sources(): TSources {
   const from = (dataset: string) => ({ store: "s.zarr", dataset });
   return {
     zarr_format: ZARR_FORMAT.V3, // eslint-disable-line camelcase
-    selectedLevel: 0,
+    selectedLevel: selected,
     levels: ORDERS.map((order) => ({
       name: `order ${order}`,
       grid: from(`${order}`),
@@ -26,11 +30,17 @@ function sources(): TSources {
   } as unknown as TSources;
 }
 
+/** A field over block 0 of a level, as read. */
+const parts = () =>
+  new Map([[0, [{ range: { start: 0, end: 4096 } }]]]) as unknown as TFaceParts;
+
 /** The fill over the three levels, each level's window as given. */
 function ancestorFill(
-  windows: Record<number, { blocks: number[]; cut: boolean; clipped: boolean }>
+  windows: Record<number, { blocks: number[]; cut: boolean; clipped: boolean }>,
+  onRead?: () => void
 ) {
   setActivePinia(createPinia());
+  selected = 0;
   const reads: number[] = [];
   const fill = useAncestorFill({
     getDatasources: sources,
@@ -48,7 +58,8 @@ function ancestorFill(
     window: (level) => windows[level.grid.level],
     read: async (level) => {
       reads.push(level.grid.level);
-      return { parts: new Map(), batches: [] };
+      onRead?.();
+      return { parts: parts(), batches: [] };
     },
     show: vi.fn(),
     meshes: [],
@@ -74,4 +85,40 @@ it("skips a parent whose budget cut into the view for the next coarser", async (
   const beneath = await fill.loadBeneath([0], "k", () => true);
   expect(beneath?.index).toBe(2);
   expect(reads).toEqual([7]);
+});
+
+it("holds two fields at most, the level's and its parent's, from before the parent is read", async () => {
+  const counts: number[] = [];
+  // a level's field is held when it covers block 0 of the level
+  const held = () =>
+    ORDERS.filter((_, index) => fill.take(index, "k", [0]).missing.length === 0)
+      .length;
+  const { fill } = ancestorFill(
+    {
+      8: { blocks: [0], cut: false, clipped: false },
+      7: { blocks: [0], cut: false, clipped: false },
+    },
+    () => counts.push(held())
+  );
+  // order 9 on screen over order 7, from an earlier view
+  for (const index of [0, 2]) {
+    fill.keep(
+      index,
+      "k",
+      { grid: new Grid({ scheme: "nested", level: ORDERS[index] }) },
+      parts(),
+      []
+    );
+  }
+  expect(held()).toBe(2);
+  // the parent is now order 8: order 7 goes before 8 is read
+  expect((await fill.loadBeneath([0], "k", () => true))?.index).toBe(1);
+  expect(held()).toBe(2);
+  // a zoom out to 8, whose own load never lands: 7 is read beneath it, and
+  // 9 goes first
+  selected = 1;
+  expect((await fill.loadBeneath([0], "k", () => true))?.index).toBe(2);
+  expect(fill.take(0, "k", [0]).missing).toEqual([0]);
+  expect(held()).toBe(2);
+  expect(counts).toEqual([1, 1]);
 });
