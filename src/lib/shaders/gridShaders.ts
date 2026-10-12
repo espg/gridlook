@@ -243,7 +243,11 @@ export function makeHeightPointMaterial(
     },
     transparent: true,
     depthWrite: false,
-    // the cloud is drawn over the level beneath it, whatever the depth says
+    // the level is hidden under the cloud, but the base sphere is not: the
+    // points under the datum (the lowest 2 % around the pivot, and lower
+    // ground farther off) sit beneath it and must still show. The cost:
+    // points are blended in draw order, not by depth, so in an oblique view
+    // a far point drawn later can cover a near one
     depthTest: false,
     vertexShader: heightPointVertexShader,
     fragmentShader: pointFalloffFragmentShader,

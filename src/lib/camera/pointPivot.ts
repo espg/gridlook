@@ -18,7 +18,8 @@ import { EARTH_RADIUS_METERS } from "./cameraSettings.ts";
  * - the pivot is lifted off the sphere by `setHeight`, to the cloud's
  *   mid-height, so that an orbit turns about the cloud and an oblique
  *   view centres it rather than the ground; the lifted pivot keeps its
- *   place on the sphere's vertical, so a nadir view does not notice;
+ *   place on the sphere's vertical and the camera moves with it, so the
+ *   view keeps its tilt, azimuth and distance as the lift changes;
  * - the left button (one finger, the arrow keys) pans: it moves the pivot
  *   in its tangent plane (`screenSpacePanning` off with a vertical up) and
  *   the pivot is put back on the sphere after every update, so a drag
@@ -27,10 +28,12 @@ import { EARTH_RADIUS_METERS } from "./cameraSettings.ts";
  *   the left button (one finger) orbit instead; shift + left and the right
  *   button orbit either way (OrbitControls reads shift on a pan button as
  *   an orbit, so a shift press in orbit mode is shown a pan button);
- * - the wheel is handled here, not by OrbitControls: the camera dollies
- *   toward the ground point under the cursor, which therefore stays under
- *   the cursor, and the pivot becomes the ground point under the view
- *   centre again (`dollyTowardGround`);
+ * - the wheel (by `zoom`, from the scene's wheel listener), a middle-button
+ *   drag and a pinch are handled here, not by OrbitControls: the camera
+ *   dollies toward the ground point under the cursor (where the drag began,
+ *   between the fingers), which therefore stays there, and the pivot
+ *   becomes the ground point under the view centre again
+ *   (`dollyTowardGround`); +/- dolly plainly toward the pivot;
  * - a dolly is a plain scaling of the distance to the pivot, so the surface
  *   zoom of the globe orbit (`useSurfaceZoom`) has to stand aside.
  *
@@ -77,6 +80,16 @@ const POINT_PIVOT_ROTATE_SPEED = 0.5;
  */
 const ROLL_VERTICAL_FROM_DEGREES = 5;
 const ROLL_VERTICAL_TO_DEGREES = 20;
+/**
+ * At nadir the azimuth is meaningless, yet it is the way a drag tilts the
+ * camera: within this many degrees of nadir it is put behind the bottom of
+ * the screen, so a tilt from nadir leans the view the way it faces, the
+ * horizon comes up where the carried screen-up is, and the roll blend has
+ * nothing to turn.
+ */
+const NADIR_DEGREES = 0.1;
+/** The tilt a camera at nadir is given to carry an azimuth, radians. */
+const NADIR_LEAN = 1e-6;
 /** A pivot this far from the sphere was moved by something else: give up. */
 const PIVOT_OFF_SPHERE = 0.5;
 
@@ -100,26 +113,6 @@ type TSavedControls = Pick<
 /** The view's height at `distance` from the camera, for a vertical field of view in degrees. */
 export function viewHeightAt(distance: number, fovDegrees: number) {
   return 2 * distance * Math.tan(THREE.MathUtils.degToRad(fovDegrees / 2));
-}
-
-/**
- * Where a point of the scene falls on the canvas, client coordinates of
- * `rect`; null when it is behind the camera. The camera's matrices must be
- * current (they are after a render).
- */
-export function screenPointOf(
-  point: THREE.Vector3,
-  camera: THREE.Camera,
-  rect: Pick<DOMRect, "left" | "top" | "width" | "height">
-) {
-  const ndc = point.clone().project(camera);
-  if (!(ndc.z < 1)) {
-    return null;
-  }
-  return {
-    clientX: rect.left + ((ndc.x + 1) * rect.width) / 2,
-    clientY: rect.top + ((1 - ndc.y) * rect.height) / 2,
-  };
 }
 
 /** The camera's near plane on the pivot, at `altitude` above the sphere. */
@@ -239,7 +232,11 @@ export type TPointPivot = ReturnType<typeof createPointPivot>;
  * whose predicate has to include `active`.
  */
 // eslint-disable-next-line max-lines-per-function
-export function createPointPivot(controls: OrbitControls) {
+export function createPointPivot(
+  controls: OrbitControls,
+  /** Called when the pivot gives up (something else moved it off the sphere). */
+  onDrop?: () => void
+) {
   const orbit = controls as CustomOrbitControls;
   const camera = orbit.object as THREE.PerspectiveCamera;
   const update = orbit.update.bind(orbit);
@@ -293,6 +290,7 @@ export function createPointPivot(controls: OrbitControls) {
   function alignToPivot() {
     if (Math.abs(orbit.target.length() - 1) > PIVOT_OFF_SPHERE) {
       drop();
+      onDrop?.();
       return;
     }
     settlePivot();
@@ -351,44 +349,81 @@ export function createPointPivot(controls: OrbitControls) {
     return along.normalize();
   }
 
+  /** The camera `distance` from the pivot, `radians` from nadir toward `along`. */
+  function place(radians: number, distance: number, along: THREE.Vector3) {
+    camera.position
+      .copy(orbit.target)
+      .addScaledVector(vertical(), distance * Math.cos(radians))
+      .addScaledVector(along, distance * Math.sin(radians));
+  }
+
   /** Put the camera `distance` from the pivot at `degrees` from nadir, keeping the azimuth. */
   function setTilt(degrees: number, distance: number) {
     const radians = THREE.MathUtils.degToRad(
       THREE.MathUtils.clamp(degrees, 0, POINT_PIVOT_MAX_TILT_DEGREES)
     );
-    const along = azimuthDirection();
-    camera.position
-      .copy(orbit.target)
-      .addScaledVector(vertical(), distance * Math.cos(radians))
-      .addScaledVector(along, distance * Math.sin(radians));
+    place(radians, distance, azimuthDirection());
     orbit.update();
+  }
+
+  /** At nadir, the azimuth behind the bottom of the screen (`screenUp`). */
+  function faceNadir(screenUp: THREE.Vector3) {
+    const offset = camera.position.clone().sub(orbit.target);
+    const up = vertical();
+    const radians = offset.angleTo(up);
+    const along = screenUp.clone().negate();
+    along.addScaledVector(up, -along.dot(up));
+    if (
+      radians >= THREE.MathUtils.degToRad(NADIR_DEGREES) ||
+      along.lengthSq() < 1e-18
+    ) {
+      return;
+    }
+    place(Math.max(radians, NADIR_LEAN), offset.length(), along.normalize());
   }
 
   /**
    * An animation of the tilt to `degrees` over `seconds`, eased in and out:
-   * `advance(dt)` moves it and is true while it has further to go.
+   * `advance(dt)` moves it and is true while it has further to go. It keeps
+   * whatever distance a zoom meanwhile set, and stops where it is when a
+   * drag (or OrbitControls' wheel) takes over.
    */
   function tiltTo(degrees: number, seconds = TILT_ANIMATION_SECONDS) {
     const from = tilt();
-    const distance = pivotDistance();
     let elapsed = 0;
+    let interrupted = false;
+    const interrupt = () => {
+      interrupted = true;
+      orbit.removeEventListener("start", interrupt);
+    };
+    orbit.addEventListener("start", interrupt);
     return {
       advance(deltaSeconds: number) {
-        if (!active) {
+        if (!active || interrupted) {
+          interrupt();
           return false;
         }
         elapsed += deltaSeconds;
         const s = Math.min(elapsed / seconds, 1);
-        setTilt(from + (degrees - from) * s * s * (3 - 2 * s), distance);
+        setTilt(from + (degrees - from) * s * s * (3 - 2 * s), pivotDistance());
+        if (s >= 1) {
+          interrupt();
+        }
         return s < 1;
       },
     };
   }
 
-  /** Lift the pivot `above` the sphere (scene units): the cloud's mid-height. */
+  /**
+   * Lift the pivot `above` the sphere (scene units): the cloud's mid-height.
+   * The camera rises with it, so the view keeps its tilt, azimuth and
+   * distance and does not turn as the lift changes.
+   */
   function setHeight(above: number) {
-    height = Math.max(above, 0);
+    const rise = Math.max(above, 0) - height;
+    height += rise;
     if (active) {
+      camera.position.addScaledVector(vertical(), rise);
       settlePivot();
       orbit.update();
     }
@@ -398,6 +433,78 @@ export function createPointPivot(controls: OrbitControls) {
     return camera.position.distanceTo(orbit.target);
   }
 
+  /**
+   * Ground metres a pixel spans at the pivot's depth, on a view `heightPx`
+   * tall: the scale the view is read at, whatever the tilt (tilted, the
+   * ground below the camera leaves the view).
+   */
+  function metersPerPixel(heightPx: number) {
+    return (
+      (viewHeightAt(pivotDistance(), camera.fov) * EARTH_RADIUS_METERS) /
+      heightPx
+    );
+  }
+
+  /** `zoom` toward the ground under a client position on the canvas. */
+  function zoomAt(scale: number, clientX: number, clientY: number) {
+    const rect = orbit.domElement.getBoundingClientRect();
+    zoom(
+      scale,
+      new THREE.Vector2(
+        ((clientX - rect.left) / rect.width) * 2 - 1,
+        -((clientY - rect.top) / rect.height) * 2 + 1
+      )
+    );
+  }
+
+  // the dolly gestures, while the pivot is on: toward the cursor (the wheel
+  // comes through `zoom` instead), with OrbitControls' own scales
+  let dollyFrom: { clientX: number; clientY: number } | undefined;
+  let dollyY = 0;
+  const mouseDownDolly = orbit._handleMouseDownDolly.bind(orbit);
+  orbit._handleMouseDownDolly = (event) => {
+    dollyFrom = { clientX: event.clientX, clientY: event.clientY };
+    dollyY = event.clientY;
+    mouseDownDolly(event);
+  };
+  const mouseMoveDolly = orbit._handleMouseMoveDolly.bind(orbit);
+  orbit._handleMouseMoveDolly = (event) => {
+    if (!active || !dollyFrom) {
+      mouseMoveDolly(event);
+      return;
+    }
+    const deltaY = event.clientY - dollyY;
+    dollyY = event.clientY;
+    if (deltaY !== 0) {
+      zoomAt(
+        wheelDollyScale(
+          { deltaY, deltaMode: 0, ctrlKey: false },
+          orbit.zoomSpeed
+        ),
+        dollyFrom.clientX,
+        dollyFrom.clientY
+      );
+    }
+  };
+  const mouseWheel = orbit._handleMouseWheel.bind(orbit);
+  orbit._handleMouseWheel = (event) => {
+    if (!active) {
+      mouseWheel(event);
+    }
+  };
+  const touchMoveDolly = orbit._handleTouchMoveDolly.bind(orbit);
+  orbit._handleTouchMoveDolly = (event) => {
+    touchMoveDolly(event);
+    if (!active) {
+      return;
+    }
+    // the pinch's scale, as OrbitControls read it, toward the fingers' middle
+    const scale = orbit._scale;
+    orbit._scale = 1;
+    const other = orbit._getSecondPointerPosition(event);
+    zoomAt(scale, (event.pageX + other.x) / 2, (event.pageY + other.y) / 2);
+  };
+
   orbit.update = (deltaTime) => {
     if (!active) {
       return update(deltaTime);
@@ -406,6 +513,9 @@ export function createPointPivot(controls: OrbitControls) {
     const screenUp = new THREE.Vector3(0, 1, 0).applyQuaternion(
       camera.quaternion
     );
+    if (active) {
+      faceNadir(screenUp);
+    }
     const changed = update(deltaTime);
     if (active) {
       // a pan is tangent to the surface: put the pivot back on it
@@ -415,12 +525,24 @@ export function createPointPivot(controls: OrbitControls) {
     return changed;
   };
 
+  /**
+   * Forget the motion a damped drag still has to apply: it was taken in the
+   * other camera's frame (an orbit about the pivot is not one about the
+   * globe's centre, a pan of the pivot moves the globe's target).
+   */
+  function stopMotion() {
+    orbit._sphericalDelta.set(0, 0, 0);
+    orbit._panOffset.set(0, 0, 0);
+    orbit._scale = 1;
+  }
+
   /** Restore the globe orbit's settings, leaving the camera where it is. */
   function drop() {
     if (!saved) {
       return;
     }
     active = false;
+    stopMotion();
     const { up, ...settings } = saved;
     Object.assign(orbit, settings);
     camera.up.copy(up);
@@ -447,6 +569,7 @@ export function createPointPivot(controls: OrbitControls) {
       up: camera.up.clone(),
     };
     height = 0;
+    stopMotion();
     orbit.target.copy(ground).normalize();
     orbit.minPolarAngle = 0;
     orbit.maxPolarAngle = THREE.MathUtils.degToRad(
@@ -456,7 +579,8 @@ export function createPointPivot(controls: OrbitControls) {
     orbit.maxDistance = Infinity;
     orbit.enablePan = true;
     orbit.screenSpacePanning = false;
-    orbit.enableZoom = false;
+    // the dolly gestures are wrapped above; the wheel comes through `zoom`
+    orbit.enableZoom = true;
     orbit.rotateSpeed = POINT_PIVOT_ROTATE_SPEED;
     orbit.mouseButtons = {
       LEFT: THREE.MOUSE.PAN,
@@ -525,5 +649,6 @@ export function createPointPivot(controls: OrbitControls) {
     },
     /** The camera's distance to the pivot, scene units. */
     pivotDistance,
+    metersPerPixel,
   };
 }

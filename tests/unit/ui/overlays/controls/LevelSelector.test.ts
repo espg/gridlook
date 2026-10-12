@@ -8,6 +8,8 @@ vi.stubGlobal("localStorage", { getItem: () => null });
 
 const { createPinia, setActivePinia } = await import("pinia");
 const { POINT_TIER } = await import("@/lib/data/levels.ts");
+const { PROJECTION_TYPES } =
+  await import("@/lib/projection/projectionUtils.ts");
 const { useGlobeControlStore } = await import("@/store/store.ts");
 const { default: LevelSelector } =
   await import("@/ui/overlays/controls/LevelSelector.vue");
@@ -79,6 +81,9 @@ it("lists the points before the finest level under a height variable", async () 
   expect(await render([level(17, false), level(13, false)])).not.toContain(
     "points ("
   );
+  // nor off the globe
+  store.projectionMode = PROJECTION_TYPES.ROBINSON;
+  expect(await render()).not.toContain("points (");
 });
 
 it("shows the points as the current level while the tier is on", async () => {
@@ -103,4 +108,21 @@ it("carries the legend of the points' controls while the tier is on", async () =
   expect(html).toContain(
     ">Drag pans · Shift+drag or right-drag orbits · wheel zooms to the cursor<"
   );
+});
+
+it("says how thinly the points are drawn in the option's tooltip", async () => {
+  const store = useGlobeControlStore();
+  store.varnameSelector = "h_percentile_signal";
+  store.selectPointTier(0, false);
+  store.setPointTierStats({
+    chunks: 12,
+    loaded: 12,
+    photons: 600_000,
+    drawn: 300_000,
+    stride: 2,
+    decodeMs: 0,
+  });
+  const html = await render();
+  expect(html).toContain(" drawn (1 in 2).");
+  expect(html).not.toContain("2th");
 });

@@ -4,6 +4,7 @@ import {
   strataArrays,
   type TStratumChoice,
 } from "@/lib/digest/strata.ts";
+import { TIME_WORDS, type TTimeWords } from "@/lib/points/pointTimes.ts";
 import type { TSourceLevel } from "@/lib/types/GlobeTypes.ts";
 
 /**
@@ -112,4 +113,26 @@ export function timesArrayOf(metadata: TJson): string | undefined {
     ? metadata.attributes
     : undefined;
   return typeof attributes?.times === "string" ? attributes.times : undefined;
+}
+
+/**
+ * How the words of a times sibling read, from the `temporal` block of the
+ * sibling's own metadata (zagg spec §8, §8.3): mortie toc words under
+ * `{spec: "zagg-toc/1", shape: "per-centroid", grammar: "mortie-toc/1"}`,
+ * the legacy int64 microseconds without a block; undefined (the times are
+ * not read) for any other revision, shape or grammar, which a reader must
+ * refuse rather than guess at.
+ */
+export function timeWordsOf(metadata: TJson): TTimeWords | undefined {
+  const attributes = isRecord(metadata.attributes) ? metadata.attributes : {};
+  const temporal = attributes.temporal;
+  if (temporal === undefined) {
+    return TIME_WORDS.LEGACY;
+  }
+  return isRecord(temporal) &&
+    temporal.spec === "zagg-toc/1" &&
+    temporal.shape === "per-centroid" &&
+    temporal.grammar === "mortie-toc/1"
+    ? TIME_WORDS.TOC
+    : undefined;
 }

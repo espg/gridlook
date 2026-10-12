@@ -15,7 +15,6 @@ import {
   POINT_PIVOT_MIN_ALTITUDE_METERS,
   POINT_PIVOT_MIN_DISTANCE_METERS,
   POINT_PIVOT_TILTS,
-  screenPointOf,
   surfacePointNearRay,
   viewHeightAt,
   wheelDollyScale,
@@ -52,6 +51,21 @@ function groundUnder(camera: THREE.Camera, x: number, y: number) {
   return groundPointOnRay(raycaster.ray.origin, raycaster.ray.direction);
 }
 
+/** Where a point falls on a canvas `rect`, client coordinates; null behind the camera. */
+function screenPointOf(
+  point: THREE.Vector3,
+  camera: THREE.Camera,
+  rect: { left: number; top: number; width: number; height: number }
+) {
+  const ndc = point.clone().project(camera);
+  return ndc.z < 1
+    ? {
+        clientX: rect.left + ((ndc.x + 1) * rect.width) / 2,
+        clientY: rect.top + ((1 - ndc.y) * rect.height) / 2,
+      }
+    : null;
+}
+
 function forwardOf(camera: THREE.Camera) {
   return camera.getWorldDirection(new THREE.Vector3());
 }
@@ -76,14 +90,14 @@ function domElement(clientHeight = 900) {
   }) as unknown as HTMLElement;
 }
 
-function pivotControls(altitude: number) {
+function pivotControls(altitude: number, onDrop?: () => void) {
   const camera = globeCamera(altitude);
   const controls: OrbitControls = new OrbitControls(camera, domElement());
   controls.enablePan = false;
   controls.minDistance = 1.0002;
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
-  const pivot = createPointPivot(controls);
+  const pivot = createPointPivot(controls, onDrop);
   useSurfaceZoom(controls, () => pivot.active);
   return { camera, controls: controls as CustomOrbitControls, pivot };
 }
@@ -264,7 +278,7 @@ describe("createPointPivot", () => {
     expect(1 - Math.abs(camera.quaternion.dot(quaternion))).toBeLessThan(1e-9);
     expect(pivot.pivotDistance() * R).toBeCloseTo(2000, 3);
     expect(controls.enablePan).toBe(true);
-    expect(controls.enableZoom).toBe(false);
+    expect(controls.enableZoom).toBe(true);
     expect(controls.screenSpacePanning).toBe(false);
     expect(controls.maxPolarAngle).toBeCloseTo(
       THREE.MathUtils.degToRad(POINT_PIVOT_MAX_TILT_DEGREES),
@@ -300,9 +314,14 @@ describe("createPointPivot", () => {
       expect(camera.position.length() - 1).toBeCloseTo(altitude, 8);
     }
     const moved = controls.target.distanceTo(start) * R;
-    // the view spans 2 · 2000 m · tan(3.75°) ≈ 262 m: 6 views panned
-    expect(moved).toBeGreaterThan(1000);
-    expect(moved).toBeLessThan(2000);
+    // the view spans 2 · 2000 m · tan(3.75°) ≈ 262 m over 900 px: a frame's
+    // drag is ≈ 51 m, applied by the damping at 1 − 0.92^frame of it
+    let frames = 0;
+    for (let frame = 1; frame <= 60; frame++) {
+      frames += 1 - 0.92 ** frame;
+    }
+    const step = (viewHeightAt(2000, 7.5) * Math.hypot(150, 90)) / 900;
+    expect(moved / (step * frames)).toBeCloseTo(1, 1);
     // and the camera still looks at the pivot
     expect(
       surfacePointNearRay(camera.position, forwardOf(camera)).distanceTo(
@@ -384,6 +403,77 @@ describe("createPointPivot", () => {
     );
   });
 
+  it("dollies toward the cursor on a middle-button drag, the wheel left to zoom", () => {
+    const { camera, controls, pivot } = pivotControls(2000);
+    const element = controls.domElement;
+    pivot.enter(surfacePointNearRay(camera.position, forwardOf(camera)));
+    controls.enableDamping = false;
+    const pointer = (type: string, init: object, target: EventTarget) =>
+      target.dispatchEvent(
+        Object.assign(new Event(type), { pointerType: "mouse", ...init })
+      );
+    // a middle-button drag up from (1200, 300): in, the ground there kept
+    const at = { clientX: 1200, clientY: 300 };
+    const ndc = new THREE.Vector2(1200 / 750 - 1, 1 - 300 / 450);
+    const ground = groundUnder(camera, ndc.x, ndc.y)!;
+    const distance = pivot.pivotDistance();
+    pointer("pointerdown", { button: 1, pointerId: 1, ...at }, element);
+    pointer(
+      "pointermove",
+      { pointerId: 1, clientX: 1200, clientY: 200 },
+      element.ownerDocument
+    );
+    pointer(
+      "pointerup",
+      { pointerId: 1, clientX: 1200, clientY: 200 },
+      element.ownerDocument
+    );
+    controls.update();
+    expect(pivot.pivotDistance() / distance).toBeCloseTo(0.95, 6);
+    expect(
+      groundUnder(camera, ndc.x, ndc.y)!.distanceTo(ground) * R
+    ).toBeLessThan(1e-2);
+    // a wheel turn is not OrbitControls' to take: the scene zooms
+    const wheeled = pivot.pivotDistance();
+    element.dispatchEvent(
+      Object.assign(new Event("wheel"), {
+        deltaY: -100,
+        deltaMode: 0,
+        clientX: 750,
+        clientY: 450,
+      })
+    );
+    controls.update();
+    expect(pivot.pivotDistance()).toBeCloseTo(wheeled, 12);
+  });
+
+  it("dollies toward the fingers on a pinch", () => {
+    const { camera, controls, pivot } = pivotControls(2000);
+    const element = controls.domElement;
+    pivot.enter(surfacePointNearRay(camera.position, forwardOf(camera)));
+    controls.enableDamping = false;
+    // two fingers moving apart from 200 to 400 px: in, by half
+    const touch = (type: string, id: number, x: number, target: EventTarget) =>
+      target.dispatchEvent(
+        Object.assign(new Event(type), {
+          pointerType: "touch",
+          pointerId: id,
+          pageX: x,
+          pageY: 450,
+          clientX: x,
+          clientY: 450,
+        })
+      );
+    const pinched = pivot.pivotDistance();
+    touch("pointerdown", 2, 650, element);
+    touch("pointerdown", 3, 850, element);
+    touch("pointermove", 3, 1050, element.ownerDocument);
+    controls.update();
+    expect(pivot.pivotDistance() / pinched).toBeCloseTo(0.5, 6);
+    touch("pointerup", 3, 1050, element.ownerDocument);
+    touch("pointerup", 2, 650, element.ownerDocument);
+  });
+
   it("animates to the oblique view and back to the top, keeping azimuth, pivot and distance", () => {
     const { camera, controls, pivot } = pivotControls(3000);
     pivot.enter(surfacePointNearRay(camera.position, forwardOf(camera)));
@@ -443,6 +533,28 @@ describe("createPointPivot", () => {
     expect(pivot.tiltTo(POINT_PIVOT_TILTS.OBLIQUE).advance(0.1)).toBe(false);
   });
 
+  it("keeps a zoom made during the tilt animation, and stops for a drag", () => {
+    const { camera, controls, pivot } = pivotControls(3000);
+    pivot.enter(surfacePointNearRay(camera.position, forwardOf(camera)));
+    controls.enableDamping = false;
+    const animation = pivot.tiltTo(POINT_PIVOT_TILTS.OBLIQUE);
+    animation.advance(0.2);
+    pivot.zoom(0.8, new THREE.Vector2(0, 0));
+    const zoomed = pivot.pivotDistance();
+    while (animation.advance(0.1)) {
+      expect(pivot.pivotDistance()).toBeCloseTo(zoomed, 12);
+    }
+    expect(pivot.tilt()).toBeCloseTo(60, 6);
+    expect(pivot.pivotDistance()).toBeCloseTo(zoomed, 12);
+    // a drag starting mid-animation leaves the tilt to it
+    const back = pivot.tiltTo(POINT_PIVOT_TILTS.TOP);
+    back.advance(0.2);
+    const tilt = pivot.tilt();
+    controls.dispatchEvent({ type: "start" });
+    expect(back.advance(0.1)).toBe(false);
+    expect(pivot.tilt()).toBeCloseTo(tilt, 9);
+  });
+
   it("lifts the pivot to the cloud's mid-height and keeps it there", () => {
     const { camera, controls, pivot } = pivotControls(3000);
     pivot.enter(surfacePointNearRay(camera.position, forwardOf(camera)));
@@ -455,7 +567,8 @@ describe("createPointPivot", () => {
       controls.target.clone().normalize().distanceTo(onSphere(37, -119.5)) * R
     ).toBeLessThan(1e-3);
     expect(1 - Math.abs(camera.quaternion.dot(quaternion))).toBeLessThan(1e-9);
-    expect(pivot.pivotDistance() * R).toBeCloseTo(2750, 3);
+    // and the camera rose with it
+    expect(pivot.pivotDistance() * R).toBeCloseTo(3000, 3);
     // a pan slides it at its height, a tilt orbits it there
     controls._pan(150, 90);
     controls.update();
@@ -479,6 +592,26 @@ describe("createPointPivot", () => {
     pivot.leave();
     pivot.enter(surfacePointNearRay(camera.position, forwardOf(camera)));
     expect(controls.target.length()).toBeCloseTo(1, 12);
+  });
+
+  it("keeps a tilted view still as the lift changes", () => {
+    const { camera, controls, pivot } = pivotControls(3000);
+    pivot.enter(surfacePointNearRay(camera.position, forwardOf(camera)));
+    controls.enableDamping = false;
+    pivot.tiltTo(60).advance(1);
+    const offset = camera.position.clone().sub(controls.target);
+    const quaternion = camera.quaternion.clone();
+    const position = camera.position.clone();
+    pivot.setHeight(84 / R);
+    expect(
+      camera.position.clone().sub(controls.target).distanceTo(offset)
+    ).toBeLessThan(1e-12);
+    expect(pivot.pivotDistance()).toBeCloseTo(offset.length(), 12);
+    expect(1 - Math.abs(camera.quaternion.dot(quaternion))).toBeLessThan(1e-12);
+    // the camera only moved along the vertical, by the lift
+    const moved = camera.position.clone().sub(position);
+    expect(moved.length() * R).toBeCloseTo(84, 6);
+    expect(moved.angleTo(controls.target)).toBeLessThan(1e-9);
   });
 
   it("lets the left button orbit instead, with shift + left orbiting either way", () => {
@@ -542,6 +675,33 @@ describe("createPointPivot", () => {
     }
   });
 
+  it.each([
+    [37, -119.5],
+    [70, 45],
+    [0, 0],
+    [-75, 0],
+  ])("tilts from nadir without rolling the view (%f, %f)", (lat, lon) => {
+    const { camera, controls, pivot } = pivotControls(2000);
+    camera.position.copy(onSphere(lat, lon, 1 + 2000 / R));
+    camera.lookAt(0, 0, 0);
+    pivot.enter(surfacePointNearRay(camera.position, forwardOf(camera)));
+    controls.enableDamping = false;
+    // a tilt pitches the camera about its own right: that stays put
+    const right = () =>
+      new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+    const start = right();
+    let previous = start;
+    for (let degree = 0; degree < 30; degree++) {
+      controls._rotateUp(-THREE.MathUtils.degToRad(1));
+      controls.update();
+      const now = right();
+      expect(THREE.MathUtils.radToDeg(now.angleTo(previous))).toBeLessThan(0.5);
+      previous = now;
+    }
+    expect(pivot.tilt()).toBeCloseTo(30, 3);
+    expect(THREE.MathUtils.radToDeg(previous.angleTo(start))).toBeLessThan(1);
+  });
+
   it("leaves onto the globe orbit above the pivot at its altitude", () => {
     const { camera, controls, pivot } = pivotControls(5000);
     const before = {
@@ -574,13 +734,40 @@ describe("createPointPivot", () => {
     expect(camera.position.length() - 1).toBeCloseTo(altitude * 0.5, 9);
   });
 
-  it("gives up when something else moved the pivot off the sphere", () => {
-    const { camera, controls, pivot } = pivotControls(2000);
+  it("leaves and enters without replaying a damped drag's tail", () => {
+    const { camera, controls, pivot } = pivotControls(3000);
+    pivot.enter(surfacePointNearRay(camera.position, forwardOf(camera)));
+    // an orbit flick and a pan, one damped frame of them applied
+    controls._rotateLeft(0.3);
+    controls._pan(100, 0);
+    controls.update();
+    pivot.leave();
+    const position = camera.position.clone();
+    for (let frame = 0; frame < 100; frame++) {
+      controls.update();
+    }
+    expect(camera.position.distanceTo(position) * R).toBeLessThan(1e-3);
+    expect(controls.target.toArray()).toEqual([0, 0, 0]);
+    // and a globe drag's tail is not replayed about the pivot
+    controls._rotateLeft(0.3);
+    controls.update();
+    pivot.enter(surfacePointNearRay(camera.position, forwardOf(camera)));
+    const entered = camera.position.clone();
+    for (let frame = 0; frame < 100; frame++) {
+      controls.update();
+    }
+    expect(camera.position.distanceTo(entered) * R).toBeLessThan(1e-3);
+  });
+
+  it("gives up when something else moved the pivot off the sphere, and says so", () => {
+    let dropped = 0;
+    const { camera, controls, pivot } = pivotControls(2000, () => dropped++);
     pivot.enter(surfacePointNearRay(camera.position, forwardOf(camera)));
     controls.target.set(0, 0, 0);
     controls.update();
     expect(pivot.active).toBe(false);
-    expect(controls.enableZoom).toBe(true);
+    expect(dropped).toBe(1);
+    expect(controls.enablePan).toBe(false);
     expect(camera.up.toArray()).toEqual([0, 0, 1]);
   });
 });

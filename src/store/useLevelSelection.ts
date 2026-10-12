@@ -36,16 +36,6 @@ function isDigest(datasources: TSources, varname: string) {
   return digestVariableOf(attrs) !== undefined;
 }
 
-/** The URL camera's altitude, else the globe's fitted framing. */
-function altitudeMeters(viewport: TViewportSize, paramAltitude?: string) {
-  const altitude = Number(paramAltitude);
-  if (Number.isFinite(altitude)) {
-    return altitude;
-  }
-  const aspect = viewport.width / Math.max(viewport.height, 1);
-  return (getGlobeFitCameraDistance(aspect) - 1) * EARTH_RADIUS_METERS;
-}
-
 /**
  * The level the point tier is to be drawn over, or undefined for none: the
  * finest level has a point source under the shown variable, the globe is
@@ -66,6 +56,29 @@ function pointTierLevel(
     selectPointTier(metersPerPixel, levels[finest].resolution!, store.pointTier)
     ? finest
     : undefined;
+}
+
+/** A flat projection has no heights: off with the points, whoever picked them. */
+function leaveFlatPointTier(store: ReturnType<typeof useGlobeControlStore>) {
+  if (
+    store.pointTier &&
+    store.projectionMode !== PROJECTION_TYPES.NEARSIDE_PERSPECTIVE
+  ) {
+    store.setPointTier(false);
+  }
+}
+
+/** The camera's altitude: the URL's, else the globe's fitted framing. */
+function altitudeMeters(
+  urlAltitude: string | undefined,
+  viewport: TViewportSize
+) {
+  const altitude = Number(urlAltitude);
+  if (Number.isFinite(altitude)) {
+    return altitude;
+  }
+  const aspect = viewport.width / Math.max(viewport.height, 1);
+  return (getGlobeFitCameraDistance(aspect) - 1) * EARTH_RADIUS_METERS;
 }
 
 /** The level `selectViewLevel` picks for the view, at the scale given. */
@@ -92,6 +105,20 @@ function viewLevel(
   );
 }
 
+/** The ground scale the scene measured, else the URL's or the fitted camera's. */
+function levelCamera(
+  store: ReturnType<typeof useGlobeControlStore>,
+  urlAltitude: string | undefined,
+  viewport: TViewportSize
+) {
+  return (
+    store.metersPerPixel ?? {
+      altitudeMeters: altitudeMeters(urlAltitude, viewport),
+      viewportHeightPx: viewport.height,
+    }
+  );
+}
+
 /**
  * Camera-driven level selection for multi-resolution datasets.
  *
@@ -112,17 +139,15 @@ export function useLevelSelection(
   const { paramCameraAlt } = storeToRefs(useUrlParameterStore());
 
   function pickLevel() {
+    leaveFlatPointTier(store);
     const levels = datasources.value?.levels;
     if (!levels || levels.length < 2 || !store.levelAuto) {
       return;
     }
     const viewport = getViewport();
+    const camera = levelCamera(store, paramCameraAlt.value, viewport);
     const metersPerPixel =
-      store.metersPerPixel ??
-      groundMetersPerPixel({
-        altitudeMeters: altitudeMeters(viewport, paramCameraAlt.value),
-        viewportHeightPx: viewport.height,
-      });
+      typeof camera === "number" ? camera : groundMetersPerPixel(camera);
     const next = viewLevel(store, datasources.value!, metersPerPixel, viewport);
     const points = pointTierLevel(store, levels, metersPerPixel);
     if (points !== undefined) {

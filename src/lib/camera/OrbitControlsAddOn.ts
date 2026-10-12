@@ -1,4 +1,10 @@
-import type { CustomOrbitControls, Quaternion, Vector3 } from "three";
+import type {
+  CustomOrbitControls,
+  Quaternion,
+  Spherical,
+  Vector2,
+  Vector3,
+} from "three";
 import type { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
 import { getGlobeMovementScale } from "./cameraSettings.ts";
@@ -31,6 +37,15 @@ declare module "three" {
     _quatInverse: Quaternion;
     // the pan still to be applied, world space
     _panOffset: Vector3;
+    // the orbit still to be applied (damping drains it frame by frame)
+    _sphericalDelta: Spherical;
+    // the gesture handlers a dolly goes through: the middle button, the
+    // wheel, a pinch (whose other finger `_getSecondPointerPosition` gives)
+    _handleMouseDownDolly: (event: PointerEvent) => void;
+    _handleMouseMoveDolly: (event: PointerEvent) => void;
+    _handleMouseWheel: (event: WheelEvent) => void;
+    _handleTouchMoveDolly: (event: PointerEvent) => void;
+    _getSecondPointerPosition: (event: PointerEvent) => Vector2;
   }
 }
 

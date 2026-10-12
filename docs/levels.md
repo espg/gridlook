@@ -325,9 +325,13 @@ It exists on the globe only; a flat projection stops at the finest level.
   since the noise spreads over kilometres of height.
 - **Height.** A point sits at `r = 1 + (h − h_ref) · exaggeration / R` globe
   radii, with `R` the store's semi-major axis. The reference height `h_ref`
-  is the lowest height drawn within the view's height of the pivot
-  (`neighbourhoodRange` in `src/lib/points/pointRange.ts`), refreshed as
-  chunks land: the datum floats on the view's lowest height, so the cloud
+  is the 2nd percentile of the heights drawn within the view's height of
+  the pivot (`neighbourhoodRange` in `src/lib/points/pointRange.ts`, a
+  percentile so that a stray return far below the ground does not pull it
+  down), refreshed as chunks land and as the pivot moves (with nothing
+  drawn within reach, a pivot between tracks, the whole window's 2nd
+  percentile): the datum floats on the view's lowest
+  heights, so the cloud
   always rises from the sphere at the pivot, over a 3 000 m plateau as
   over a beach, and a tilted view, whose window reaches farther, keeps it
   there. The exaggeration is 1 for now (both are shader uniforms). Positions are kept relative to each chunk's centre so that
@@ -343,7 +347,12 @@ It exists on the globe only; a flat projection stops at the finest level.
   sibling) colours each point by when it was observed instead: the
   sibling's toc words (zagg spec §8.3, one per centroid, read only then
   and cached with the chunk) decoded to days since 2018-01-01
-  (`src/lib/points/pointTimes.ts`), with the same 2nd to 98th percentile
+  (`src/lib/points/pointTimes.ts`; a range word at its start). The words
+  are read as the sibling's own `temporal` block declares them
+  (`timeWordsOf` in `src/lib/points/pointSource.ts`): `zagg-toc/1`,
+  `per-centroid`, `mortie-toc/1` as toc words, no block as the legacy
+  int64 microseconds since 1970; any other revision, shape or grammar is
+  refused and the time colour is not offered. With the same 2nd to 98th percentile
   range, labelled as UTC dates on the colour bar; a custom range is typed
   in those days.
 - **Budget.** At most `OBSERVATION_POINT_BUDGET` (300 000) points are drawn:
@@ -362,8 +371,9 @@ It exists on the globe only; a flat projection stops at the finest level.
   sliding along the surface; **shift + left, the right button (two
   fingers) orbit** the pivot, tilting from nadir to 85° and turning about
   the vertical with the horizon kept up; **the middle button and the wheel
-  (+/-) dolly toward the ground under the cursor**, which stays under the
-  cursor. The globe keeps its own buttons (left drag rotates it). The
+  dolly toward the ground under the cursor** (a middle drag toward where it
+  began, a pinch toward the fingers' middle), which stays under the cursor;
+  **+/- dolly toward the pivot**. The globe keeps its own buttons (left drag rotates it). The
   camera comes no closer than 200 m to the pivot and stays at least 100 m
   above the surface; a camera tilted far at a short distance can be below
   that floor, and the wheel then stops 200 m short of the ground point
@@ -374,10 +384,12 @@ It exists on the globe only; a flat projection stops at the finest level.
   button (two fingers) orbit whichever is on, and the arrow keys pan. The
   legend says which is on. The globe's buttons are untouched.
 - **Pivot height.** The pivot is lifted off the sphere to the middle of
-  the relief around it (the datum to the highest point within the view's
-  height of it), so an orbit turns about the cloud and an oblique view
-  centres it; the pivot stays on the sphere's vertical, so a nadir view
-  does not notice. The lift follows the relief as chunks land.
+  the relief around it (the datum to the 98th percentile of the heights
+  within the view's height of it, so a cloud return does not lift it), so an orbit turns about the cloud and an oblique view
+  centres it; the pivot stays on the sphere's vertical and the camera
+  rises and falls with it, so the view keeps its tilt, azimuth and
+  distance (a tilted view does not turn) as the lift changes. The lift follows the relief as chunks land and as the pivot
+  moves.
 - **Opacity.** The panel's slider (0.05 to 1, 1 by default) scales the
   points' alpha (`pointOpacity`, a uniform of the falloff fragment shader),
   so dense tracks show their depth; the splat's soft edge stays.

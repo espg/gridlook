@@ -4,6 +4,8 @@ import {
   formatPointTime,
   POINT_COLOURS,
   POINT_TIME_EPOCH,
+  TIME_WORDS,
+  timeWordsToDays,
   wordsToDays,
 } from "@/lib/points/pointTimes.ts";
 
@@ -38,15 +40,32 @@ describe("wordsToDays", () => {
     }
   });
 
-  it("reads a range word at its midpoint", () => {
+  it("reads a range word at its start", () => {
     const start = BigInt((EPOCH_DAYS + 100) * DAY_NS);
     const end = start + BigInt(2 * DAY_NS);
     const [days] = wordsToDays(BigUint64Array.of(rangeWord(start, end)));
-    // the envelope is rounded outward by at most 2^32 ns, 4 s
-    expect(Math.abs(days - 101) * 86400).toBeLessThan(10);
+    // the start is rounded down by at most 2^31 ns, 2 s
+    expect(Math.abs(days - 100) * 86400).toBeLessThan(10);
     // the flag tells the two apart: the same start code as a timestamp
     const [stamp] = wordsToDays(BigUint64Array.of(timestampWord(start)));
     expect(Math.abs(stamp - 100) * 86400).toBeLessThan(10);
+  });
+});
+
+describe("timeWordsToDays", () => {
+  it("reads toc words, or the legacy microseconds since 1970", () => {
+    const stamp = BigUint64Array.of(
+      timestampWord(BigInt((EPOCH_DAYS + 437.5) * DAY_NS))
+    );
+    expect(timeWordsToDays(stamp, TIME_WORDS.TOC)).toEqual(wordsToDays(stamp));
+    // 2019-03-14T12:00Z and 1969-12-31T00:00Z as signed microseconds
+    const micros = BigUint64Array.from(
+      [Date.UTC(2019, 2, 14, 12), Date.UTC(1969, 11, 31)],
+      (ms) => BigInt.asUintN(64, BigInt(ms) * 1000n)
+    );
+    const days = timeWordsToDays(micros, TIME_WORDS.LEGACY);
+    expect(days[0]).toBeCloseTo(437.5, 3);
+    expect(days[1]).toBeCloseTo(-17533, 2);
   });
 });
 

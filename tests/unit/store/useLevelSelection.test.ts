@@ -329,6 +329,14 @@ it("leaves the points when a level is picked by hand, and returns on auto", asyn
     await nextTick();
     expect(store.pointTier).toBe(true);
     expect(store.selectedLevel).toBe(0);
+
+    // a hand-picked tier ends on a flat projection all the same
+    store.selectPointTier(0);
+    store.projectionMode = PROJECTION_TYPES.ROBINSON;
+    await nextTick();
+    expect(store.pointTier).toBe(false);
+    expect(store.levelAuto).toBe(false);
+    expect(store.selectedLevel).toBe(0);
   } finally {
     scope.stop();
   }

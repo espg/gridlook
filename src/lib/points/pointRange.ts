@@ -62,13 +62,15 @@ export function pointRange(
 }
 
 /**
- * The lowest and highest finite height within `radius` (scene units, a
- * chord) of `centre` on the unit sphere, over chunks of points kept
- * relative to their origins: the datum and the relief around the pivot.
- * The radius is the view's own size, so the datum floats on the view's
- * lowest height whichever way the camera looks: a tilted view sees far,
- * and the far ground must not pull the datum from under the cloud.
- * Undefined without a finite height within reach.
+ * The 2nd and 98th percentiles of the finite heights within `radius`
+ * (scene units, a chord) of `centre` on the unit sphere, over chunks of
+ * points kept relative to their origins: the datum and the relief around
+ * the pivot. Percentiles, as for the colour range, so that a stray return
+ * far below the ground or high in the air moves neither. The radius is the
+ * view's own size, so the datum floats on the view's lowest heights
+ * whichever way the camera looks: a tilted view sees far, and the far
+ * ground must not pull the datum from under the cloud. Undefined without
+ * a finite height within reach.
  */
 export function neighbourhoodRange(
   chunks: {
@@ -77,10 +79,16 @@ export function neighbourhoodRange(
     heights: ArrayLike<number>;
   }[],
   centre: [number, number, number],
-  radius: number
-): { min: number; max: number } | undefined {
-  let min = Infinity;
-  let max = -Infinity;
+  radius: number,
+  percentiles = POINT_RANGE_PERCENTILES,
+  cap = POINT_RANGE_SAMPLE
+): { low: number; high: number } | undefined {
+  let total = 0;
+  for (const { heights } of chunks) {
+    total += heights.length;
+  }
+  const near = new Float32Array(total);
+  let kept = 0;
   const reach = radius * radius;
   for (const { origin, offsets, heights } of chunks) {
     const dx = origin[0] - centre[0];
@@ -90,15 +98,11 @@ export function neighbourhoodRange(
       const x = offsets[3 * i] + dx;
       const y = offsets[3 * i + 1] + dy;
       const z = offsets[3 * i + 2] + dz;
-      if (x * x + y * y + z * z > reach) {
-        continue;
-      }
-      const value = heights[i];
-      if (Number.isFinite(value)) {
-        min = value < min ? value : min;
-        max = value > max ? value : max;
+      if (x * x + y * y + z * z <= reach) {
+        near[kept++] = heights[i];
       }
     }
   }
-  return min === Infinity ? undefined : { min, max };
+  const range = pointRange([near.subarray(0, kept)], percentiles, cap);
+  return range && { low: range.low, high: range.high };
 }

@@ -6,6 +6,7 @@ import { pointTierLegend } from "./pointTierLegend.ts";
 
 import { exceedsCellCap, finestLevel, POINT_TIER } from "@/lib/data/levels.ts";
 import { pointTierSources } from "@/lib/points/pointSource.ts";
+import { PROJECTION_TYPES } from "@/lib/projection/projectionUtils.ts";
 import type { TSourceLevel } from "@/lib/types/GlobeTypes.ts";
 import { useGlobeControlStore } from "@/store/store.ts";
 
@@ -38,12 +39,13 @@ const options = computed(() =>
 );
 
 // the point tier, when the finest level has observations under the shown
-// variable: listed before the levels, as the finest entry, named by the
-// strata drawn
+// variable and the globe is drawn: listed before the levels, as the finest
+// entry, named by the strata drawn
 const pointTier = computed(() => {
   const finest = finestLevel(props.levels);
   const sources =
-    finest === undefined
+    finest === undefined ||
+    store.projectionMode !== PROJECTION_TYPES.NEARSIDE_PERSPECTIVE
       ? []
       : pointTierSources(
           props.levels[finest],
@@ -67,7 +69,7 @@ const pointTierTitle = computed(() => {
   if (!stats) {
     return `The observations themselves, drawn at their height in place of the finest level. ${legend}`;
   }
-  const thinned = stats.stride > 1 ? ` (every ${stats.stride}th)` : "";
+  const thinned = stats.stride > 1 ? ` (1 in ${stats.stride})` : "";
   return `${countFormat.format(stats.photons)} observations in ${stats.loaded} of ${stats.chunks} chunks, ${countFormat.format(stats.drawn)} drawn${thinned}. ${legend}`;
 });
 

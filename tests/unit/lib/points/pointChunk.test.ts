@@ -19,8 +19,13 @@ import {
   pointTierSource,
   pointTierSources,
   timesArrayOf,
+  timeWordsOf,
 } from "@/lib/points/pointSource.ts";
-import { POINT_TIME_EPOCH, wordsToDays } from "@/lib/points/pointTimes.ts";
+import {
+  POINT_TIME_EPOCH,
+  TIME_WORDS,
+  wordsToDays,
+} from "@/lib/points/pointTimes.ts";
 import { makeHeightPointMaterial } from "@/lib/shaders/gridShaders.ts";
 
 const grids = new Map<number, healpixGeo.Grid>();
@@ -303,6 +308,7 @@ describe("pointTierSource", () => {
   });
 });
 
+// eslint-disable-next-line max-lines-per-function
 describe("withTimes", () => {
   it("adds the times sibling's words as days, thinned and charged with the points", () => {
     const { heights, words } = photons(10);
@@ -324,7 +330,11 @@ describe("withTimes", () => {
       const ns = epoch + BigInt(i * dayNs);
       return ((ns >> 31n) << 32n) | (1n << 31n) | (ns & 0x7fffffffn);
     });
-    const timed = withTimes(chunk, { offsets: digest.offsets, words: stamps });
+    const timed = withTimes(
+      chunk,
+      { offsets: digest.offsets, words: stamps },
+      TIME_WORDS.TOC
+    );
     expect(timed.times).toEqual(wordsToDays(stamps));
     expect(Array.from(timed.times!).map(Math.round)).toEqual([
       0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
@@ -335,7 +345,11 @@ describe("withTimes", () => {
     expect(Array.from(thinned.times!).map(Math.round)).toEqual([0, 4, 8]);
     expect(thinned.count).toBe(3);
     expect(() =>
-      withTimes(chunk, { offsets: digest.offsets, words: stamps.slice(1) })
+      withTimes(
+        chunk,
+        { offsets: digest.offsets, words: stamps.slice(1) },
+        TIME_WORDS.TOC
+      )
     ).toThrow("time words (9) do not match the chunk's points (10)");
   });
 
@@ -350,5 +364,33 @@ describe("withTimes", () => {
     ).toBe("h_tdigest_signal_times");
     expect(timesArrayOf({ attributes: { ragged: {} } })).toBeUndefined();
     expect(timesArrayOf({})).toBeUndefined();
+  });
+});
+
+describe("timeWordsOf", () => {
+  it("reads the times sibling only under a temporal declaration it implements", () => {
+    const declared = (temporal: unknown) => ({ attributes: { temporal } });
+    const toc = {
+      spec: "zagg-toc/1",
+      shape: "per-centroid",
+      grammar: "mortie-toc/1",
+    };
+    expect(timeWordsOf(declared(toc))).toBe(TIME_WORDS.TOC);
+    // informative keys are ignored
+    expect(timeWordsOf(declared({ ...toc, source: "delta_time" }))).toBe(
+      TIME_WORDS.TOC
+    );
+    // no block: the legacy microseconds
+    expect(timeWordsOf({ attributes: {} })).toBe(TIME_WORDS.LEGACY);
+    expect(timeWordsOf({})).toBe(TIME_WORDS.LEGACY);
+    // a future revision, another shape or grammar: refused
+    for (const refused of [
+      { ...toc, spec: "zagg-toc/2" },
+      { ...toc, shape: "per-cell" },
+      { ...toc, grammar: "mortie-toc/2" },
+      "zagg-toc/1",
+    ]) {
+      expect(timeWordsOf(declared(refused))).toBeUndefined();
+    }
   });
 });

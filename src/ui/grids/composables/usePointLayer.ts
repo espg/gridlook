@@ -39,9 +39,10 @@ import {
   pointArrayPath,
   pointTierSources,
   timesArrayOf,
+  timeWordsOf,
   type TPointStratum,
 } from "@/lib/points/pointSource.ts";
-import { POINT_COLOURS, type TPointColour } from "@/lib/points/pointTimes.ts";
+import { POINT_COLOURS, type TTimeWords } from "@/lib/points/pointTimes.ts";
 import type { ProjectionHelper } from "@/lib/projection/projectionUtils.ts";
 import type { TViewFootprint } from "@/lib/projection/viewFootprint.ts";
 import {
@@ -61,6 +62,12 @@ const POINT_CACHE_BYTES = 64 * 2 ** 20;
 const POINT_RENDER_ORDER = 0.5;
 /** The muted cloud is drawn first, so the signal's reads over it. */
 const MUTED_RENDER_ORDER = 0.4;
+/**
+ * While a window lands, its colour range, histogram and datum are
+ * refreshed at most this often (a sort of 65 536 values and a pass over
+ * every drawn point each), and once more when it has landed.
+ */
+const RANGE_INTERVAL_MS = 250;
 
 type TPointLayerOptions = {
   getDatasources: () => TSources | undefined;
@@ -123,15 +130,13 @@ function nearestFirst(
 }
 
 /** The drawn points: their places, heights and what colours them. */
-function pointGeometry(drawn: TPointChunk, colour: TPointColour) {
+function pointGeometry(drawn: TPointChunk, values: Float32Array) {
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute(
     "position",
     new THREE.BufferAttribute(drawn.offsets, 3)
   );
   geometry.setAttribute("height", new THREE.BufferAttribute(drawn.heights, 1));
-  const values =
-    colour === POINT_COLOURS.TIME && drawn.times ? drawn.times : drawn.heights;
   geometry.setAttribute("data_value", new THREE.BufferAttribute(values, 1));
   return geometry;
 }
@@ -159,7 +164,8 @@ export function usePointLayer(options: TPointLayerOptions) {
   const gridAt = createGrids();
   const cache = createByteLru<TPointChunk>(POINT_CACHE_BYTES, pointChunkBytes);
   // the window on screen: one entry per stratum and chunk, decoded, what is
-  // drawn of each (every stride-th point) and their objects
+  // drawn of each (every stride-th point, coloured by time or not) and their
+  // objects
   const window = new Map<
     string,
     {
@@ -168,8 +174,13 @@ export function usePointLayer(options: TPointLayerOptions) {
       chunk: TPointChunk;
       drawn: TPointChunk;
       points: THREE.Points;
+      stride: number;
+      byTime: boolean;
     }
   >();
+  // the drawn values changed since the range was last published, and when
+  let rangeStale = false;
+  let rangePublished = -Infinity;
   let loaded: { chunks: number[]; chunkOrder: number } | undefined;
   let stride = 1;
   // what the window cost so far, for the selector's readout
@@ -257,6 +268,7 @@ export function usePointLayer(options: TPointLayerOptions) {
       entry.points.geometry.dispose();
       options.getScene()?.remove(entry.points);
       window.delete(key);
+      rangeStale = true;
     }
   }
 
@@ -267,7 +279,13 @@ export function usePointLayer(options: TPointLayerOptions) {
     }
     loaded = undefined;
     stride = 1;
+    for (const material of materials.values()) {
+      // the next site's datum is its own
+      material.uniforms.heightReference.value = 0;
+    }
     store.setPointTierStats(undefined);
+    // whether the next source has times is for its own metadata to say
+    store.setPointTierTimed(false);
     if (store.pointTierBounds) {
       store.setPointTierBounds(undefined);
       options.restoreHistogram();
@@ -275,12 +293,15 @@ export function usePointLayer(options: TPointLayerOptions) {
   }
 
   /**
-   * The datum and the relief around the pivot: the lowest and highest
-   * drawn height within the view's height of it, so a tilted view, which sees
-   * farther, keeps the datum under the cloud. The points are lifted from
-   * the datum; the pivot sits at the middle of the relief. A muted cloud
-   * (the noise under `both`, spread over kilometres of height) is context
-   * and does not move either: the signal's relief is the ground's.
+   * The datum and the relief around the pivot: the 2nd and 98th percentile
+   * of the drawn heights within the view's height of it, so a tilted view,
+   * which sees farther, keeps the datum under the cloud, and a stray return
+   * moves neither; with nothing drawn that near (a pivot between tracks),
+   * the whole window's. The points are lifted from the datum; the pivot
+   * sits at the middle of the relief. Refreshed as chunks land and as the
+   * pivot moves. A muted cloud (the noise under `both`, spread over
+   * kilometres of height) is context and does not move either: the
+   * signal's relief is the ground's.
    */
   function publishDatum() {
     const pivot = options.pointPivot.direction();
@@ -288,24 +309,28 @@ export function usePointLayer(options: TPointLayerOptions) {
     if (materials.size === 0 || !pivot || distance === undefined) {
       return;
     }
-    const around = neighbourhoodRange(
-      [...window.values()]
-        .filter(({ source }) => !source.muted)
-        .map(({ drawn }) => drawn),
-      pivot.toArray(),
-      viewHeightAt(distance, CAMERA_VERTICAL_FOV_DEGREES)
-    );
+    const chunks = [...window.values()]
+      .filter(({ source }) => !source.muted)
+      .map(({ drawn }) => drawn);
+    const around =
+      neighbourhoodRange(
+        chunks,
+        pivot.toArray(),
+        viewHeightAt(distance, CAMERA_VERTICAL_FOV_DEGREES)
+      ) ?? neighbourhoodRange(chunks, pivot.toArray(), Infinity);
     if (!around) {
       return;
     }
     for (const material of materials.values()) {
-      material.uniforms.heightReference.value = around.min;
+      material.uniforms.heightReference.value = around.low;
     }
-    options.pointPivot.setHeight(lift((around.max - around.min) / 2));
+    options.pointPivot.setHeight(lift((around.high - around.low) / 2));
   }
 
   /** The drawn heights' range and histogram, as the store's data range. */
   function publishRange() {
+    rangeStale = false;
+    rangePublished = performance.now();
     publishDatum();
     const range = pointRange(
       drawn().map(
@@ -345,20 +370,38 @@ export function usePointLayer(options: TPointLayerOptions) {
 
   function draw(source: TPointStratum, index: number, chunk: TPointChunk) {
     const scene = options.getScene();
-    if (!scene) {
-      return;
-    }
-    const drawn = decimatePointChunk(chunk, stride);
-    const geometry = pointGeometry(drawn, store.pointTierColour);
+    const byTime = store.pointTierColouredByTime();
     const key = entryKey(source, index);
     const entry = window.get(key);
+    if (
+      !scene ||
+      (entry?.chunk === chunk &&
+        entry.stride === stride &&
+        entry.byTime === byTime &&
+        entry.source.muted === source.muted)
+    ) {
+      // a chunk already drawn so is left as it is
+      return;
+    }
+    rangeStale = true;
+    const drawn = decimatePointChunk(chunk, stride);
+    if (byTime && !drawn.times) {
+      // coloured by time, a chunk without its times is not drawn: its
+      // heights would be read as dates and mixed into the days' range
+      remove(key);
+      return;
+    }
+    const geometry = pointGeometry(
+      drawn,
+      byTime ? drawn.times! : drawn.heights
+    );
     if (entry) {
       // the same array may go from muted to full strength (noise, after both)
       entry.points.geometry.dispose();
       entry.points.geometry = geometry;
       entry.points.material = pointMaterial(source.muted);
       entry.points.renderOrder = renderOrder(source);
-      Object.assign(entry, { source, chunk, drawn });
+      Object.assign(entry, { source, chunk, drawn, stride, byTime });
       return;
     }
     const points = new THREE.Points(geometry, pointMaterial(source.muted));
@@ -366,7 +409,7 @@ export function usePointLayer(options: TPointLayerOptions) {
     points.renderOrder = renderOrder(source);
     points.position.set(...chunk.origin);
     scene.add(points);
-    window.set(key, { source, index, chunk, drawn, points });
+    window.set(key, { source, index, chunk, drawn, points, stride, byTime });
     options.updateColormap([points]);
   }
 
@@ -450,7 +493,11 @@ export function usePointLayer(options: TPointLayerOptions) {
   async function pointChunk(
     readers: TLeafReaders,
     from: TPointStratum,
-    arrays: { locations: string; times?: string; chunkOrder: number },
+    arrays: {
+      locations: string;
+      times?: { array: string; kind: TTimeWords };
+      chunkOrder: number;
+    },
     index: number
   ) {
     const chunk = await decodedChunk(
@@ -469,40 +516,51 @@ export function usePointLayer(options: TPointLayerOptions) {
       return chunk;
     }
     const timed = await readers.words.chunk(
-      pointArrayPath(from, arrays.times),
+      pointArrayPath(from, arrays.times.array),
       index
     );
     if (!timed) {
       return chunk;
     }
-    const withTime = withTimes(chunk, timed);
+    const withTime = withTimes(chunk, timed, arrays.times.kind);
     cache.set(`${from.store}/${from.dataset}/${from.array}/${index}`, withTime);
     return withTime;
   }
 
-  /** The leaf readers and what the source's arrays are. */
+  /** An array's `zarr.json`, parsed; empty when there is none. */
+  async function metadataOf(readers: TLeafReaders, path: string) {
+    const bytes = await readers.store.get(`/${path}/zarr.json`);
+    return bytes ? JSON.parse(new TextDecoder().decode(bytes)) : {};
+  }
+
+  /**
+   * The leaf readers and what the source's arrays are: the times sibling
+   * only with a `temporal` declaration of its own this reader implements.
+   */
   async function open(from: TPointStratum) {
     const readers = await storeReaders(from.store);
     if (!readers) {
       throw new Error("the point tier reads a hive store");
     }
-    const metadata = await readers.store.get(
-      `/${pointArrayPath(from)}/zarr.json`
-    );
-    const attributes = metadata
-      ? JSON.parse(new TextDecoder().decode(metadata))
-      : {};
+    const attributes = await metadataOf(readers, pointArrayPath(from));
     const locations = locationsArrayOf(attributes);
     if (!locations) {
       throw new Error(`${from.array} has no located centroids`);
     }
-    const times = timesArrayOf(attributes);
+    const timesArray = timesArrayOf(attributes);
+    const kind = timesArray
+      ? timeWordsOf(await metadataOf(readers, pointArrayPath(from, timesArray)))
+      : undefined;
+    const times = timesArray && kind ? { array: timesArray, kind } : undefined;
     const { chunkCells } = await readers.digests.array(pointArrayPath(from));
     const chunkOrder = Number(from.dataset) - Math.log2(chunkCells) / 2;
     return { readers, arrays: { locations, times, chunkOrder } };
   }
 
-  /** One chunk of one stratum, drawn as it lands. */
+  /**
+   * One chunk of one stratum, drawn as it lands: the window thinned again,
+   * the readouts refreshed.
+   */
   async function land(
     opened: Awaited<ReturnType<typeof open>>,
     from: TPointStratum,
@@ -518,7 +576,9 @@ export function usePointLayer(options: TPointLayerOptions) {
     redecimate();
     updatePointSize();
     publishStats(false);
-    publishRange();
+    if (rangeStale && performance.now() - rangePublished >= RANGE_INTERVAL_MS) {
+      publishRange();
+    }
     options.redraw();
   }
 
@@ -536,9 +596,13 @@ export function usePointLayer(options: TPointLayerOptions) {
     if (request !== revision) {
       return;
     }
-    store.setPointTierTimed(
-      opened.every(({ arrays }) => arrays.times !== undefined)
-    );
+    const timed = opened.every(({ arrays }) => arrays.times !== undefined);
+    store.setPointTierTimed(timed);
+    if (!timed && store.pointTierColour === POINT_COLOURS.TIME) {
+      // a source without times is coloured by height (the watch reloads)
+      store.setPointTierColour(POINT_COLOURS.HEIGHT);
+      return;
+    }
     const chunkOrder = opened[0].arrays.chunkOrder;
     const chunks = windowChunks(footprint, chunkOrder, OBSERVATION_MARGIN);
     const wanted = new Set(
@@ -560,6 +624,10 @@ export function usePointLayer(options: TPointLayerOptions) {
     );
     if (request === revision) {
       publishStats(true);
+      if (rangeStale) {
+        publishRange();
+        options.redraw();
+      }
     }
   }
 
@@ -572,9 +640,14 @@ export function usePointLayer(options: TPointLayerOptions) {
       return true;
     }
     const current = new Set(loaded.chunks);
-    return windowChunks(footprint, loaded.chunkOrder, 0).some(
-      (chunk) => !current.has(chunk)
-    );
+    const missing = (margin: number) =>
+      windowChunks(footprint, loaded!.chunkOrder, margin).some(
+        (chunk) => !current.has(chunk)
+      );
+    // the view reaches past the loaded window, and the window it would
+    // load is not the loaded one: under the fetch cap the two are cut
+    // differently, and the view's own chunks may never all be loaded
+    return missing(0) && missing(OBSERVATION_MARGIN);
   }
 
   function reload() {
@@ -600,6 +673,13 @@ export function usePointLayer(options: TPointLayerOptions) {
   watch([() => store.viewFootprint, options.pointPivot.ground], () => {
     if (active.value && windowStale()) {
       reload();
+    }
+  });
+  // a pan or a zoom to the cursor moves the pivot: the datum follows it
+  watch(options.pointPivot.ground, () => {
+    if (active.value && window.size) {
+      publishDatum();
+      options.redraw();
     }
   });
   // the colour choice: the window is drawn again, its times read if asked;

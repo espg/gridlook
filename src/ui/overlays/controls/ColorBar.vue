@@ -13,7 +13,7 @@ import {
 
 import { computeBinTooltip, type BinTooltip } from "./colorbarUtils.ts";
 
-import { formatPointTime, POINT_COLOURS } from "@/lib/points/pointTimes.ts";
+import { formatPointTime } from "@/lib/points/pointTimes.ts";
 import {
   availableColormaps,
   type TColorMap,
@@ -136,9 +136,7 @@ const LABEL_HALF_WIDTH_PX = 45;
 
 // the point tier coloured by time labels its range as dates
 const formatLabel = computed(() =>
-  store.pointTier && store.pointTierColour === POINT_COLOURS.TIME
-    ? formatPointTime
-    : formatValue
+  store.pointTierColouredByTime() ? formatPointTime : formatValue
 );
 
 const lowLabel = computed(() =>
