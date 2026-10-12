@@ -224,6 +224,38 @@ it.each(Object.values(PROJECTION_TYPES))(
   }
 );
 
+it("publishes the scale at the pivot on a tilted pivot camera, and follows a dolly out", async () => {
+  const { grid, scope, camera } = setupRegionalScene();
+  const store = useGlobeControlStore();
+  grid.canvas.value = {
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }),
+  } as HTMLCanvasElement;
+  camera.position.setLength(1 + 3000 / EARTH_RADIUS_METERS);
+  camera.lookAt(0, 0, 0);
+  grid.pointPivot.enter();
+  grid.pointPivot.tiltTo(60);
+  await vi.advanceTimersByTimeAsync(1000);
+  grid.redraw();
+  const pivot = grid.pointPivot.direction()!;
+  const distance = grid.pointPivot.distance()!;
+  // tilted 60°, the ground below the camera is far off the view
+  const below = camera.position.clone().normalize().project(camera);
+  expect(Math.abs(below.y)).toBeGreaterThan(1);
+  const atPivot = (d: number) =>
+    (2 *
+      d *
+      Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) *
+      EARTH_RADIUS_METERS) /
+    600;
+  expect(store.metersPerPixel!).toBeCloseTo(atPivot(distance), 6);
+  // a dolly out to four times the distance reads four times the scale
+  camera.position.sub(pivot).multiplyScalar(4).add(pivot);
+  await vi.advanceTimersByTimeAsync(250);
+  grid.redraw();
+  expect(store.metersPerPixel! / atPivot(distance)).toBeCloseTo(4, 3);
+  scope.stop();
+});
+
 it.each(
   Object.values(PROJECTION_TYPES).filter(
     (type) => type !== PROJECTION_TYPES.NEARSIDE_PERSPECTIVE

@@ -398,6 +398,18 @@ export function createPointPivot(controls: OrbitControls) {
     return camera.position.distanceTo(orbit.target);
   }
 
+  /**
+   * Ground metres a pixel spans at the pivot's depth, on a view `heightPx`
+   * tall: the scale the view is read at, whatever the tilt (tilted, the
+   * ground below the camera leaves the view).
+   */
+  function metersPerPixel(heightPx: number) {
+    return (
+      (viewHeightAt(pivotDistance(), camera.fov) * EARTH_RADIUS_METERS) /
+      heightPx
+    );
+  }
+
   orbit.update = (deltaTime) => {
     if (!active) {
       return update(deltaTime);
@@ -525,5 +537,6 @@ export function createPointPivot(controls: OrbitControls) {
     },
     /** The camera's distance to the pivot, scene units. */
     pivotDistance,
+    metersPerPixel,
   };
 }

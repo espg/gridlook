@@ -275,13 +275,17 @@ export function useGridScene(options: UseGridSceneOptions) {
       }
       // The scale is taken at the point of the surface below the camera, as
       // the coarser of the two screen directions: a level sized by the finer
-      // one would be far too fine where a flat map is stretched one way.
+      // one would be far too fine where a flat map is stretched one way. On
+      // the pivot camera it is the pivot's: tilted, the ground below the
+      // camera is off the view.
+      let scale = pivotControls?.active
+        ? pivotControls.metersPerPixel(rect.height)
+        : null;
       const below = projectionHelper.value.isFlat
         ? new THREE.Vector3(camera.position.x, camera.position.y, 0)
         : camera.position.clone().normalize();
       below.project(camera);
-      let scale: number | null = null;
-      for (const vertical of [false, true]) {
+      for (const vertical of scale === null ? [false, true] : []) {
         const along = metersPerPixelAt(
           camera,
           projectionHelper.value,
