@@ -61,7 +61,7 @@ export function healpixBlockLevel(level: number, depth = HEALPIX_BLOCK_DEPTH) {
 }
 
 /** Side of a cell of `blockLevel`, in degrees. */
-export function healpixBlockSide(blockLevel: number) {
+function healpixBlockSide(blockLevel: number) {
   return FACE_SIDE_DEGREES / 2 ** blockLevel;
 }
 
@@ -244,6 +244,40 @@ export function healpixViewWindow(
     blocks = [...kept];
   }
   return { blocks: blocks.sort((a, b) => a - b), cut, clipped };
+}
+
+/**
+ * Whether a window cut by its budget is stale, given the blocks in view it
+ * lacks. A cut window misses blocks by design, and the blocks in view are
+ * sampled a little differently from the window's, so a missing block alone
+ * does not make it stale (that reloaded the same window over and over). It
+ * is stale once the camera has moved a block's width: a block in view is
+ * then missing that lies nearer the camera than a loaded block does. A cut
+ * window that loaded nothing is stale as soon as a block is in view.
+ */
+export function cutWindowStale(
+  grid: Grid,
+  loaded: number[],
+  missing: number[],
+  centre: Pick<TViewFootprint, "centreLon" | "centreLat">,
+  depth?: number
+) {
+  if (missing.length === 0) {
+    return false;
+  }
+  if (loaded.length === 0) {
+    return true;
+  }
+  const blockLevel = healpixBlockLevel(grid.level, depth);
+  using blockGrid = grid.replace({ level: blockLevel, scheme: "nested" });
+  const { centreLon, centreLat } = centre;
+  const nearestMissing = Math.min(
+    ...blockDistances(blockGrid, missing, centreLon, centreLat)
+  );
+  const farthestLoaded = Math.max(
+    ...blockDistances(blockGrid, loaded, centreLon, centreLat)
+  );
+  return nearestMissing < farthestLoaded - healpixBlockSide(blockLevel);
 }
 
 /** The blocks of `healpixViewWindow`. */

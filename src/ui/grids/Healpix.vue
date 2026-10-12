@@ -77,10 +77,9 @@ import {
   getHealpixFaceRange,
 } from "@/lib/grids/healpixCalculations.ts";
 import {
-  blockDistances,
+  cutWindowStale,
   healpixBlockDepth,
   healpixBlockLevel,
-  healpixBlockSide,
   healpixViewWindow,
   viewWindowMargin,
 } from "@/lib/grids/healpixWindow.ts";
@@ -629,34 +628,15 @@ function viewWindowStale() {
   if (missing.length === 0) {
     return false;
   }
-  return windowCut ? cutWindowStale(missing) : true;
-}
-
-/**
- * A window cut by its budget misses blocks by design, and the blocks in view
- * are sampled a little differently from the window's, so a missing block
- * alone does not make it stale (that reloaded the same window over and
- * over). It is stale once the camera has moved a block's width: a block in
- * view is then missing that lies nearer the camera than a loaded block does.
- */
-function cutWindowStale(missing: number[]) {
-  const grid = unpackGrid();
-  const blockLevel = healpixBlockLevel(grid.level, blockDepth);
-  using blockGrid = grid.replace({ level: blockLevel, scheme: "nested" });
-  const { centreLon, centreLat } = store.viewFootprint!;
-  const nearestMissing = Math.min(
-    ...blockDistances(blockGrid, missing, centreLon, centreLat)
-  );
-  let farthestLoaded = 0;
-  for (const d of blockDistances(
-    blockGrid,
-    loadedBlocks!,
-    centreLon,
-    centreLat
-  )) {
-    farthestLoaded = Math.max(farthestLoaded, d);
-  }
-  return nearestMissing < farthestLoaded - healpixBlockSide(blockLevel);
+  return windowCut
+    ? cutWindowStale(
+        unpackGrid(),
+        loadedBlocks,
+        missing,
+        store.viewFootprint!,
+        blockDepth
+      )
+    : true;
 }
 
 /**

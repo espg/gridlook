@@ -5,6 +5,7 @@ import "@/utils/disposablePolyfill.ts";
 import {
   blockDistances,
   blocksByDistance,
+  cutWindowStale,
   DIGEST_WINDOW_MARGIN,
   VIEW_WINDOW_MARGIN,
   healpixBlockDepth,
@@ -225,4 +226,57 @@ it("never merges blocks across a chunk boundary", () => {
     { start: 4 * 4096, end: 6 * 4096 },
     { start: 6 * 4096, end: 8 * 4096 },
   ]);
+});
+
+/** A footprint moved `dLon`, `dLat` degrees. */
+function shifted(
+  footprint: typeof box,
+  dLon: number,
+  dLat: number
+): typeof box {
+  return {
+    latMin: footprint.latMin + dLat,
+    latMax: footprint.latMax + dLat,
+    lonStart: footprint.lonStart + dLon,
+    lonSpan: footprint.lonSpan,
+    centreLat: footprint.centreLat + dLat,
+    centreLon: footprint.centreLon + dLon,
+  };
+}
+
+it("calls a cut window stale once the camera has moved a block", () => {
+  using grid = new Grid({ scheme: "nested", level: 12 });
+  const side = 58.63 / 2 ** 6;
+  const wide = {
+    latMin: 30,
+    latMax: 50,
+    lonStart: -125,
+    lonSpan: 50,
+    centreLat: 40,
+    centreLon: -100,
+  };
+  const loaded = healpixViewWindow(grid, wide, 0.5, 100);
+  expect(loaded.cut).toBe(true);
+  const stale = (view: typeof box) =>
+    cutWindowStale(
+      grid,
+      loaded.blocks,
+      healpixViewWindow(grid, view, 0, 100).blocks.filter(
+        (block) => !loaded.blocks.includes(block)
+      ),
+      view
+    );
+  expect(stale(wide)).toBe(false);
+  expect(stale(shifted(wide, 0.1 * side, 0))).toBe(false);
+  expect(stale(shifted(wide, 0, -0.1 * side))).toBe(false);
+  expect(stale(shifted(wide, 3 * side, 0))).toBe(true);
+  expect(stale(shifted(wide, 0, 3 * side))).toBe(true);
+});
+
+it("calls a cut window that loaded nothing stale once blocks are in view", () => {
+  using grid = new Grid({ scheme: "nested", level: 12 });
+  const inView = healpixViewWindow(grid, box, 0).blocks;
+  expect(inView.length).toBeGreaterThan(0);
+  expect(cutWindowStale(grid, [], inView, box)).toBe(true);
+  expect(cutWindowStale(grid, [], [], box)).toBe(false);
 });
