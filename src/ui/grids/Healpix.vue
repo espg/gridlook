@@ -11,6 +11,12 @@ import {
   useGridHoverLookup,
   type TGridHoverLookupResult,
 } from "./composables/gridHoverUtils.ts";
+import {
+  faceValue,
+  useAncestorFill,
+  type TBeneath,
+  type TReadLevel,
+} from "./composables/useAncestorFill.ts";
 import { useDigestField } from "./composables/useDigestField.ts";
 import { useDigestProbe } from "./composables/useDigestProbe.ts";
 import { useGapFill } from "./composables/useGapFill.ts";
@@ -21,14 +27,15 @@ import { useStreamlineLayer } from "./composables/useStreamlineLayer.ts";
 import { useVolume } from "./composables/useVolume.ts";
 
 import { buildDimensionRangesAndIndices } from "@/lib/data/dimensionHandling.ts";
+import { coveredBlocks, hiveNodes } from "@/lib/data/hiveStore.ts";
+import { parseStorePath } from "@/lib/data/icechunkStore.ts";
 import {
   coarsestLevel,
   currentLevel,
   DEFAULT_MAX_LEVEL_CELLS,
-  DEFAULT_MAX_VIEW_CELLS,
   DEFAULT_VIEW_LOAD_CELLS,
-  DEFAULT_MAX_VIEW_CHUNKS,
   STREAMLINES_NEED_WHOLE_LEVEL,
+  windowBlocks,
 } from "@/lib/data/levels.ts";
 import { loadVectorComponents } from "@/lib/data/streamlineData.ts";
 import {
@@ -44,24 +51,36 @@ import {
   createVectorMagnitudeData,
   type TVectorMagnitudeData,
 } from "@/lib/data/vectorMagnitude.ts";
+import type { TAxisRange } from "@/lib/data/viewWindow.ts";
 import { ZarrDataManager } from "@/lib/data/ZarrDataManager.ts";
+import { digestVariableOf } from "@/lib/digest/digestVariables.ts";
 import {
   getGridVariableData,
   terminateGridDataWorker,
 } from "@/lib/grids/gridDataWorkerClient.ts";
 import {
+  createWindowRead,
+  fetchInOrder,
+  orderedBlockRanges,
+  readFaceProgressively,
+  readRanges,
+  type TFaceParts,
+  type TRangeCells,
+  type TWindowRead,
+} from "@/lib/grids/healpixBlockFetch.ts";
+import {
   HEALPIX_NUMCHUNKS,
   buildHealpixRegionCoordinates,
   buildHealpixTexture,
-  decodeHealpixFaceXY,
   getHealpixFaceDataRect,
   getHealpixFaceRange,
-  type THealpixDataRect,
 } from "@/lib/grids/healpixCalculations.ts";
 import {
+  cutWindowStale,
+  healpixBlockDepth,
   healpixBlockLevel,
-  healpixBlockRanges,
-  healpixViewBlocks,
+  healpixViewWindow,
+  viewWindowMargin,
 } from "@/lib/grids/healpixWindow.ts";
 import {
   buildHealpixFace,
@@ -170,15 +189,21 @@ let cachedStreamlineKey: string | undefined;
 
 let disposed = false;
 
-// A view window reaches this fraction of the view's size past every edge.
-const VIEW_WINDOW_MARGIN = 0.5;
 // The level as stored: how many cells, and whether it can be loaded by view
 // (nested, and either dense or with an ascending `cell` coordinate).
 let levelCellCount = 0;
 let levelWindowable = false;
-// A level derived from leaf chunks is windowed by chunk: the orders between
-// its cells and a chunk's. Undefined for a stored level.
-let chunkDepth: number | undefined;
+// The orders between the level's cells and the blocks of its view window
+// (`healpixBlockDepth`), and the cells of one of its chunks.
+let blockDepth: number | undefined;
+let levelChunkCells = Infinity;
+// whether the variable is derived from a t-digest: its window is priced in
+// bytes, not cells
+let levelDigest = false;
+// whether the budget left blocks out of the loaded window, and the point
+// below the camera when it was loaded
+let windowCut = false;
+let windowCentre = { centreLon: 0, centreLat: 0 };
 let sortedCells: ReturnType<typeof createSortedCells> | undefined;
 // The coordinate reader of a sparse level, kept while the level stays the
 // same so that its chunks are read once.
@@ -188,19 +213,28 @@ let cellsReader:
 // whole level is loaded.
 let loadedBlocks: number[] | undefined;
 
+/**
+ * The ranges of a digest window nearest the camera read again once it has
+ * landed, for the cursor's distribution there: one round of reads in flight.
+ */
+const CENTRE_RANGES = 8;
+
 let mainMeshes: Array<THREE.Mesh | undefined> = new Array(HEALPIX_NUMCHUNKS);
 
-// The coarsest level of a multi-resolution dataset at the selected slice. A
-// finer level takes its colour range from it and is drawn over it, so the
-// range holds still and nothing is empty where the finer level has no cells.
-type TBackdropFrame = {
+// The coarsest level of a multi-resolution dataset at the selected slice,
+// loaded whole: a finer level takes its colour range from it, so the range
+// holds still, and it is the end of the ladder drawn beneath.
+type TCoarsestFrame = {
   key: string;
+  index: number;
+  grid: healpixGeo.Grid;
   min: number;
   max: number;
   histogramSummaries: THistogramSummary[];
   batches: THealpixBatch[];
 };
-let backdropFrame: TBackdropFrame | undefined;
+let coarsestFrame: TCoarsestFrame | undefined;
+// The level drawn beneath the one on screen (`useAncestorFill`), by key.
 let backdropKey: string | undefined;
 const backdropMeshes: Array<THREE.Mesh | undefined> = new Array(
   HEALPIX_NUMCHUNKS
@@ -294,6 +328,31 @@ useDigestProbe({
   clickedGeoPoint,
   getInterpolated: gapFill.interpolated,
   filledRevision: gapFill.revision,
+  getBeneath: () => fill.beneath(),
+});
+const fill = useAncestorFill({
+  getDatasources: () => props.datasources,
+  describe: async (sources) => {
+    const datavar = await getDataVar(varnameSelector.value, sources);
+    return (
+      datavar && { datavar, grid: await getHealpixGridParameters(sources) }
+    );
+  },
+  window: levelWindow,
+  read: async (level, blocks, seed, key, indices, isCurrent) => {
+    // the faces land in place of the level beneath before; a face with
+    // nothing in the window goes as it is rebuilt
+    backdropKey = key;
+    drawOverBackdrop();
+    const result = await processHealpixChunks(level, indices, isCurrent, {
+      deferDisplay: false,
+      window: { blocks, seed },
+      target: backdropMeshes,
+    });
+    return result && { parts: result.parts, batches: result.drawn };
+  },
+  show: showBackdrop,
+  meshes: backdropMeshes,
 });
 
 function coerceInteger(value: unknown): number | null {
@@ -504,23 +563,67 @@ function loadsByView() {
   );
 }
 
-function viewBlocks(margin: number) {
-  const grid = unpackGrid();
-  const maxBlocks = Math.floor(
-    DEFAULT_MAX_VIEW_CELLS /
-      4 ** (grid.level - healpixBlockLevel(grid.level, chunkDepth))
+/**
+ * The blocks of a level in view at a margin, within the budget: cells for a
+ * stored variable, bytes for one derived from a t-digest. `clipped` says
+ * whether the budget cut into the view itself.
+ */
+function levelWindow(
+  level: Pick<TReadLevel, "sources" | "grid" | "blockDepth" | "digest">,
+  margin: number
+) {
+  const { sources, grid, blockDepth: depth } = level;
+  const blockLevel = healpixBlockLevel(grid.level, depth);
+  const cellsPerBlock = 4 ** (grid.level - blockLevel);
+  // a hive store says where it has nodes: the window reads nothing elsewhere
+  const source = ZarrDataManager.getDatasetSource(
+    sources,
+    varnameSelector.value
+  );
+  const nodes =
+    source && hiveNodes(parseStorePath(source.store).url, grid.level);
+  const maxBlocks = windowBlocks(
+    currentLevel(sources),
+    grid.level,
+    cellsPerBlock,
+    level.digest
   );
   return store.viewFootprint
-    ? healpixViewBlocks(
+    ? healpixViewWindow(
         grid,
         store.viewFootprint,
         margin,
-        chunkDepth === undefined
-          ? maxBlocks
-          : Math.min(maxBlocks, DEFAULT_MAX_VIEW_CHUNKS),
-        chunkDepth
+        maxBlocks,
+        depth,
+        nodes && ((order) => coveredBlocks(nodes, order))
       )
-    : [];
+    : { blocks: [], cut: false, clipped: false };
+}
+
+/** The window of the level on screen. */
+function viewWindow(margin: number) {
+  return levelWindow(
+    {
+      sources: props.datasources!,
+      grid: unpackGrid(),
+      blockDepth,
+      digest: levelDigest,
+    },
+    margin
+  );
+}
+
+/** The level on screen, as the window reads it. */
+function readLevel(datavar: TReadLevel["datavar"]): TReadLevel {
+  return {
+    sources: props.datasources!,
+    datavar,
+    grid: unpackGrid(),
+    blockDepth,
+    chunkCells: levelChunkCells,
+    digest: levelDigest,
+    sortedCells,
+  };
 }
 
 function viewWindowStale() {
@@ -531,7 +634,20 @@ function viewWindowStale() {
     return true;
   }
   const loaded = new Set(loadedBlocks);
-  return viewBlocks(0).some((block) => !loaded.has(block));
+  const missing = viewWindow(0).blocks.filter((block) => !loaded.has(block));
+  if (missing.length === 0) {
+    return false;
+  }
+  return windowCut
+    ? cutWindowStale(
+        unpackGrid(),
+        loadedBlocks,
+        missing,
+        store.viewFootprint!,
+        windowCentre,
+        blockDepth
+      )
+    : true;
 }
 
 /**
@@ -562,9 +678,9 @@ async function searchedCoordinate(
 
 /**
  * Read what the stored level allows: its grid, its size, and whether it can
- * be loaded by view (nested, in a pyramid with a coarsest level to draw
- * beneath, and either dense or with an ascending `cell` coordinate). Then
- * switch to it and to the blocks in view in one step.
+ * be loaded by view (nested, in a pyramid with a coarsest level to take the
+ * range from, and either dense or with an ascending `cell` coordinate).
+ * Then switch to it and to the blocks in view in one step.
  */
 async function prepareLevel() {
   const sources = props.datasources!;
@@ -615,22 +731,41 @@ async function prepareLevel() {
   levelCellCount = cellCount;
   levelWindowable = windowable;
   sortedCells = cells;
-  const derived = currentLevel(sources).derived;
-  chunkDepth = derived && Math.log2(datavar.chunks.at(-1)!) / 2;
-  loadedBlocks = loadsByView() ? viewBlocks(VIEW_WINDOW_MARGIN) : undefined;
+  prepareWindow(datavar, sources);
 }
 
-/** The stored cells with ids in a nested range, and their values. */
+/** Switch to the blocks in view of the level just prepared, if it is windowed. */
+function prepareWindow(
+  datavar: zarr.Array<zarr.DataType, zarr.AsyncReadable>,
+  sources: TSources
+) {
+  levelChunkCells = datavar.chunks.at(-1)!;
+  blockDepth = healpixBlockDepth(
+    levelChunkCells,
+    currentLevel(sources).derived !== undefined
+  );
+  levelDigest = digestVariableOf(datavar.attrs) !== undefined;
+  const window = loadsByView()
+    ? viewWindow(viewWindowMargin(datavar.attrs))
+    : undefined;
+  loadedBlocks = window?.blocks;
+  windowCut = window?.cut ?? false;
+  const { centreLon = 0, centreLat = 0 } = store.viewFootprint ?? {};
+  windowCentre = { centreLon, centreLat };
+  store.setViewWindowClipped(window?.clipped ?? false);
+}
+
+/** The stored cells of a level with ids in a nested range, and their values. */
 async function fetchCellRange(
+  level: TReadLevel,
   range: { start: number; end: number },
   indices: (number | zarr.Slice | null)[],
   percentile?: number
 ) {
+  const { sortedCells: sorted } = level;
   // Dense levels store cell `n` at index `n`; sparse ones are searched.
-  const start = sortedCells
-    ? await sortedCells.lowerBound(range.start)
-    : range.start;
-  const end = sortedCells ? await sortedCells.lowerBound(range.end) : range.end;
+  const start = sorted ? await sorted.lowerBound(range.start) : range.start;
+  const end = sorted ? await sorted.lowerBound(range.end) : range.end;
   if (start === end) {
     return { data: new Float32Array(), cells: [] as number[] };
   }
@@ -638,10 +773,10 @@ async function fetchCellRange(
   selection[selection.length - 1] = zarr.slice(start, end);
   // the ids and the values are fetched together
   const [cells, values] = await Promise.all([
-    sortedCells
-      ? sortedCells.slice(start, end)
+    sorted
+      ? sorted.slice(start, end)
       : Array.from({ length: end - start }, (_, index) => start + index),
-    fetchHealpixVariableData(selection, undefined, undefined, percentile),
+    fetchHealpixVariableData(selection, undefined, level.sources, percentile),
   ]);
   if (cells[0] < range.start || cells[cells.length - 1] >= range.end) {
     throw new Error("The cell coordinate is not in ascending order.");
@@ -649,36 +784,20 @@ async function fetchCellRange(
   return { data: castDataVarToFloat32(values), cells };
 }
 
-/** The cells of one face that the loaded blocks hold, and their values. */
-async function fetchFaceBlocks(
-  faceIndex: number,
-  grid: healpixGeo.Grid,
-  indices: (number | zarr.Slice | null)[],
-  percentile?: number
-) {
-  const blockLevel = healpixBlockLevel(grid.level, chunkDepth);
-  const ranges = healpixBlockRanges(
-    loadedBlocks!.filter(
-      (block) => Math.floor(block / 4 ** blockLevel) === faceIndex
-    ),
-    4 ** (grid.level - blockLevel)
+/** The cell ranges of a level's blocks, those under the camera first. */
+function windowRanges(level: TReadLevel, blocks: number[]) {
+  const { grid } = level;
+  const blockLevel = healpixBlockLevel(grid.level, level.blockDepth);
+  using blockGrid = grid.replace({ level: blockLevel, scheme: "nested" });
+  const centre = store.viewFootprint ?? { centreLon: 0, centreLat: 0 };
+  return orderedBlockRanges(
+    blockGrid,
+    blocks,
+    4 ** (grid.level - blockLevel),
+    level.chunkCells,
+    centre.centreLon,
+    centre.centreLat
   );
-  const parts = await Promise.all(
-    ranges.map((range) => fetchCellRange(range, indices, percentile))
-  );
-  let length = 0;
-  for (const part of parts) {
-    length += part.data.length;
-  }
-  const data = new Float32Array(length);
-  const cells: number[] = [];
-  for (const part of parts) {
-    data.set(part.data, cells.length);
-    for (const cell of part.cells) {
-      cells.push(cell);
-    }
-  }
-  return { data, cells };
 }
 
 function fetchHealpixVariableData(
@@ -1101,23 +1220,28 @@ function updateHealpixTexture(batch: THealpixTexture, target = mainMeshes) {
 
 // eslint-disable-next-line max-lines-per-function
 async function processHealpixChunks(
-  datavar: zarr.Array<zarr.DataType, zarr.AsyncReadable>,
-  cells: number[] | undefined,
-  grid: healpixGeo.Grid,
+  level: TReadLevel,
   indices: (number | zarr.Slice | null)[],
-  deferDisplay: boolean,
   isCurrent: () => boolean,
-  // the backdrop reads another level, whole
-  sources = props.datasources!,
-  byView = loadedBlocks !== undefined
+  options: {
+    /** The cell coordinate of a level loaded whole, when it is sparse. */
+    cells?: number[];
+    deferDisplay: boolean;
+    /** The blocks to read of a level loaded by view, over the parts kept. */
+    window?: { blocks: number[]; seed: TFaceParts };
+    target?: Array<THREE.Mesh | undefined>;
+  }
 ) {
+  const { datavar, grid, sources } = level;
+  const { cells, deferDisplay, window, target = mainMeshes } = options;
   let dataMin = Number.POSITIVE_INFINITY;
   let dataMax = Number.NEGATIVE_INFINITY;
   const histogramSummaries: THistogramSummary[] = [];
   const textures: THealpixTexture[] = [];
   const batches: THealpixBatch[] = [];
+  const drawn: THealpixBatch[] = [];
   const helper = projectionHelper.value;
-  const options = {
+  const build = {
     grid: {
       scheme: grid.scheme,
       level: grid.level,
@@ -1133,52 +1257,108 @@ async function processHealpixChunks(
     projectionType: helper.type,
     projectionCenter: { lat: helper.center.lat, lon: helper.center.lon },
   };
-  if (!deferDisplay) {
+  // Streamlines want the complete replacement; a level or window swap
+  // still shows the new window as it lands.
+  const deferDisplayWhole = deferDisplay && store.isStreamlineLayerEnabled();
+  if (!deferDisplay && target === mainMeshes) {
     clearHoverLookup();
   }
-  // Read one face at a time; with streamlines, stage the complete replacement.
-  for (let faceIndex = 0; faceIndex < HEALPIX_NUMCHUNKS; faceIndex++) {
+  // A window is read nearest the camera first and drawn as it lands, the
+  // face under the camera first; with streamlines, the complete replacement
+  // is staged.
+  const ranges = window ? windowRanges(level, window.blocks) : undefined;
+  const read: TWindowRead | undefined =
+    ranges &&
+    createWindowRead(
+      fetchInOrder(ranges, (range) => fetchCellRange(level, range, indices), {
+        isCurrent,
+      }),
+      ranges,
+      window!.seed
+    );
+  const faces = [...(read?.pending.keys() ?? [])];
+  for (let face = 0; face < HEALPIX_NUMCHUNKS; face++) {
+    if (!faces.includes(face)) {
+      faces.push(face);
+    }
+  }
+  const shownFace = async (
+    faceIndex: number,
+    face: { data: Float32Array; cells?: number[] },
+    readPercentile: (percentile: number) => Promise<Float32Array>
+  ) =>
+    // the level beneath is drawn as read
+    sources === props.datasources
+      ? await gapFill.fill(faceIndex, grid.nside, face, readPercentile)
+      : { data: face.data, histogramSummary: undefined };
+  // Read one face at a time: the face worker runs a single build at a time.
+  for (const faceIndex of faces) {
     if (disposed || !isCurrent()) {
       return;
     }
     const range = getHealpixFaceRange(faceIndex, grid.nside, cells);
     const selection = indices.slice();
     selection[selection.length - 1] = zarr.slice(range.start, range.end);
-    const readFace = async (percentile?: number) =>
-      byView
-        ? await fetchFaceBlocks(faceIndex, grid, indices, percentile)
-        : {
-            data:
-              range.start === range.end
-                ? new Float32Array()
-                : castDataVarToFloat32(
-                    await fetchHealpixVariableData(
-                      selection,
-                      undefined,
-                      sources,
-                      percentile
-                    )
-                  ),
-            cells: range.cells,
-          };
-    const face = await readFace();
-    // the backdrop is drawn as read
-    const shown =
-      sources === props.datasources
-        ? await gapFill.fill(
-            faceIndex,
-            grid.nside,
-            face,
-            async (percentile) => (await readFace(percentile)).data
-          )
-        : { data: face.data, histogramSummary: undefined };
+    const readWhole = async (percentile?: number) => ({
+      data:
+        range.start === range.end
+          ? new Float32Array()
+          : castDataVarToFloat32(
+              await fetchHealpixVariableData(
+                selection,
+                undefined,
+                sources,
+                percentile
+              )
+            ),
+      cells: range.cells,
+    });
+    // a partial face is drawn as read: it is smoothed once it is in
+    const drawPartial = async (partial: TRangeCells) => {
+      const batch = await buildHealpixFace({
+        ...build,
+        faceIndex,
+        cells: partial.cells,
+        data: partial.data,
+      });
+      if (!disposed && isCurrent()) {
+        updateHealpixBatch(batch, target);
+        drawOverBackdrop();
+      }
+    };
+    const face: {
+      data: Float32Array;
+      cells?: number[];
+      ranges?: TAxisRange[];
+    } = read
+      ? await readFaceProgressively(
+          faceIndex,
+          read,
+          deferDisplayWhole ? undefined : drawPartial,
+          isCurrent
+        )
+      : await readWhole();
+    if (disposed || !isCurrent()) {
+      return;
+    }
+    const shown = await shownFace(faceIndex, face, async (percentile) =>
+      face.ranges
+        ? (
+            await readRanges(
+              face.ranges,
+              (range) => fetchCellRange(level, range, indices, percentile),
+              isCurrent
+            )
+          ).data
+        : (await readWhole(percentile)).data
+    );
     if (disposed || !isCurrent()) {
       return;
     }
     const batch = await buildHealpixFace({
-      ...options,
+      ...build,
       faceIndex,
-      ...face,
+      cells: face.cells,
       data: shown.data,
     });
     // filled cells are drawn, not counted
@@ -1193,85 +1373,115 @@ async function processHealpixChunks(
       height: batch.height,
       dataRect: batch.dataRect,
     });
+    drawn.push(batch);
     if (!isCurrent()) {
       return;
     }
-    if (deferDisplay) {
+    // a face drawn as it landed is complete now; one with no cells in the
+    // window goes with the others
+    if (deferDisplay && (deferDisplayWhole || !read || batch.width === 0)) {
       batches.push(batch);
     } else {
-      updateHealpixBatch(batch);
+      updateHealpixBatch(batch, target);
     }
   }
-  return { dataMin, dataMax, histogramSummaries, textures, batches };
+  if (ranges && level.digest) {
+    // the stream went through the working set nearest first, so the chunks
+    // under the camera left it first: read them once more, last
+    void readRanges(
+      ranges.slice(0, CENTRE_RANGES),
+      (range) => fetchCellRange(level, range, indices),
+      isCurrent
+    ).catch(() => undefined);
+  }
+  const parts: TFaceParts = new Map(
+    [...(read?.assemblies ?? [])].map(([face, assembly]) => [
+      face,
+      assembly.parts(),
+    ])
+  );
+  return {
+    dataMin,
+    dataMax,
+    histogramSummaries,
+    textures,
+    batches,
+    drawn,
+    parts,
+  };
 }
 
-/** Load the coarsest level at the selected slice, unless it is on screen. */
-async function loadBackdrop(
+/** Load the coarsest level at the selected slice whole, unless it is on screen. */
+async function loadCoarsest(
   indices: (number | zarr.Slice | null)[],
   isCurrent: () => boolean
 ) {
   const sources = props.datasources!;
-  const level = coarsestLevel(sources.levels);
-  if (level === undefined || level === (sources.selectedLevel ?? 0)) {
+  const index = coarsestLevel(sources.levels);
+  if (index === undefined || index === (sources.selectedLevel ?? 0)) {
     return undefined;
   }
   const key = JSON.stringify([
-    level,
+    index,
     varnameSelector.value,
     indices,
     digestFields.key(),
   ]);
-  if (backdropFrame?.key === key) {
-    return backdropFrame;
+  if (coarsestFrame?.key === key) {
+    return coarsestFrame;
   }
-  const coarse = { ...sources, selectedLevel: level };
+  const coarse = { ...sources, selectedLevel: index };
   const datavar = await getDataVar(varnameSelector.value, coarse);
   if (!datavar) {
     return undefined;
   }
+  const grid = await getHealpixGridParameters(coarse);
   const result = await processHealpixChunks(
-    datavar,
-    await getCells(coarse),
-    await getHealpixGridParameters(coarse),
+    {
+      sources: coarse,
+      datavar,
+      grid,
+      chunkCells: datavar.chunks.at(-1)!,
+      digest: digestVariableOf(datavar.attrs) !== undefined,
+    },
     indices,
-    true,
     isCurrent,
-    coarse,
-    false
+    { cells: await getCells(coarse), deferDisplay: true }
   );
   if (!result) {
     return undefined;
   }
-  backdropFrame = {
+  coarsestFrame = {
     key,
+    index,
+    grid,
     min: result.dataMin,
     max: result.dataMax,
     histogramSummaries: result.histogramSummaries,
     batches: result.batches,
   };
-  return backdropFrame;
+  return coarsestFrame;
 }
 
-/** Draw the coarsest level under a level that leaves part of the view empty. */
-function showBackdrop(frame: TBackdropFrame | undefined) {
-  const dense = levelCellCount === 12 * unpackGrid().nside ** 2;
-  const wanted =
-    store.levelBackdrop && frame && (loadedBlocks || !dense)
-      ? frame
-      : undefined;
-  if (backdropKey === wanted?.key) {
+/** Draw a level kept in memory beneath the one on screen, or nothing. */
+function showBackdrop(beneath: TBeneath | undefined) {
+  if (backdropKey === beneath?.key) {
     return;
   }
-  backdropKey = wanted?.key;
+  backdropKey = beneath?.key;
   for (let face = 0; face < HEALPIX_NUMCHUNKS; face++) {
     disposeHealpixMesh(face, backdropMeshes);
   }
-  wanted?.batches.forEach((batch) => updateHealpixBatch(batch, backdropMeshes));
+  beneath?.batches.forEach((batch) =>
+    updateHealpixBatch(batch, backdropMeshes)
+  );
+  drawOverBackdrop();
 }
 
 /**
- * A level is drawn after its backdrop and over it whatever the depth says:
- * up close the two surfaces are nearer than float32 positions can order.
+ * A level is drawn after the level beneath and over it whatever the depth
+ * says: up close the two surfaces are nearer than float32 positions can
+ * order.
  */
 function drawOverBackdrop() {
   for (const mesh of mainMeshes) {
@@ -1283,6 +1493,10 @@ function drawOverBackdrop() {
   }
 }
 
+/**
+ * The finest value drawn at a point: the level on screen where it has a
+ * cell there, else the level beneath, named.
+ */
 function healpixHoverLookup(
   lat: number,
   lon: number
@@ -1293,44 +1507,25 @@ function healpixHoverLookup(
   } catch {
     return null;
   }
-
   const normalizedLon = ProjectionHelper.normalizeLongitude(lon);
-  const coords = new Float64Array([normalizedLon, lat]);
-  const pixelIndices = grid.lonLatToHealpix(coords);
-  const pixelIndex = pixelIndices[0];
-
-  const pixel = Number(pixelIndex);
-  const faceSize = grid.nside * grid.nside;
-  const mesh = mainMeshes[Math.floor(pixel / faceSize)];
-  if (!mesh) {
+  const own = faceValue(mainMeshes, grid, normalizedLon, lat);
+  const beneath =
+    own && own.value !== null ? undefined : fill.lookup(normalizedLon, lat);
+  const hit = beneath ?? own;
+  if (!hit) {
     return null;
   }
-  const texture = (mesh.material as THREE.ShaderMaterial).uniforms.data
-    .value as THREE.DataTexture;
-  // Hover reads the same array as the texture, without retaining a second 3 GiB grid.
-  const data = texture.image.data as Float32Array;
-  const dataRect = mesh.userData.dataRect as THealpixDataRect;
-  const { x, y } = decodeHealpixFaceXY(pixel % faceSize);
-  const localX = x - Math.round(dataRect.u * grid.nside);
-  const localY = y - Math.round(dataRect.v * grid.nside);
-  const value =
-    localX < 0 ||
-    localX >= texture.image.width ||
-    localY < 0 ||
-    localY >= texture.image.height
-      ? NaN
-      : data[localY * texture.image.width + localX];
-  const pixelAngles = grid.healpixToLonLat(pixelIndices);
-
-  const isMissing = !Number.isFinite(value) || value === HEALPIX_UNSEEN;
   return {
-    lat: pixelAngles[1],
-    lon: ProjectionHelper.normalizeLongitude(pixelAngles[0]),
-    value: isMissing ? null : value,
-    interpolated: gapFill.interpolated(pixel, grid) !== undefined,
-    status: isMissing
-      ? HOVERED_GRID_POINT_STATUS.MISSING
-      : HOVERED_GRID_POINT_STATUS.VALUE,
+    lat: hit.lat,
+    lon: hit.lon,
+    value: hit.value,
+    interpolated:
+      hit === own && gapFill.interpolated(own.pixel, grid) !== undefined,
+    level: beneath?.level,
+    status:
+      hit.value === null
+        ? HOVERED_GRID_POINT_STATUS.MISSING
+        : HOVERED_GRID_POINT_STATUS.VALUE,
   };
 }
 
@@ -1341,26 +1536,56 @@ async function fetchAndRenderData(
   stageDisplay: boolean
 ) {
   const deferDisplay = store.isStreamlineLayerEnabled() || stageDisplay;
-  const grid = unpackGrid();
+  const level = readLevel(datavar);
+  const { grid } = level;
+  const selected = props.datasources!.selectedLevel ?? 0;
 
   // A level loaded by view never reads its whole `cell` coordinate.
   const cellCoord = loadedBlocks ? undefined : await getCells();
   fitCameraToCells(grid, cellCoord);
   const { dimensionRanges, indices } = await prepareDimensionData(datavar);
   // One after the other: the face worker runs a single build at a time.
-  const backdropData = await loadBackdrop(indices, isCurrent).catch(
+  // The coarsest level sets the range; the parent is drawn beneath before
+  // the level's own blocks stream in over it.
+  const coarsest = await loadCoarsest(indices, isCurrent).catch(
     () => undefined
   );
-  const result = await processHealpixChunks(
-    datavar,
-    cellCoord,
-    grid,
+  if (
+    coarsest &&
+    store.levelRangeShared &&
+    store.selection.low === store.selection.high
+  ) {
+    // the first load, with no range yet: the faces drawn as they land take
+    // the shared range now rather than one colour until the frame commits
+    store.updateBounds({ low: coarsest.min, high: coarsest.max });
+  }
+  const key = JSON.stringify([
+    varnameSelector.value,
     indices,
-    deferDisplay,
-    isCurrent
-  );
-  if (!result) {
+    digestFields.key(),
+  ]);
+  // a sparse level loaded whole leaves the rest of the globe to the coarsest
+  const beneath = loadedBlocks
+    ? await fill.loadBeneath(indices, key, isCurrent, coarsest)
+    : levelCellCount < 12 * grid.nside ** 2
+      ? fill.coarsestBeneath(coarsest)
+      : undefined;
+  if (!isCurrent()) {
     return;
+  }
+  const own = loadedBlocks && fill.take(selected, key, loadedBlocks);
+  // at most the level's field and its parent's, from before the level's read
+  fill.retain([selected, beneath?.index]);
+  const result = await processHealpixChunks(level, indices, isCurrent, {
+    cells: cellCoord,
+    deferDisplay,
+    window: own ? { blocks: own.missing, seed: own.seed } : undefined,
+  });
+  if (!result || !isCurrent()) {
+    return;
+  }
+  if (loadedBlocks) {
+    fill.keep(selected, key, level, result.parts, result.drawn);
   }
   const { dataMin, dataMax, histogramSummaries, textures, batches } = result;
 
@@ -1396,9 +1621,9 @@ async function fetchAndRenderData(
   }
   const dimInfo = await getDimensionValues(dimensionRanges, indices);
 
-  // the backdrop (the coarsest level) sets the range of every level, unless
-  // each level is to take its own
-  const rangeSource = store.levelRangeShared ? backdropData : undefined;
+  // the coarsest level sets the range of every level, unless each level is
+  // to take its own
+  const rangeSource = store.levelRangeShared ? coarsest : undefined;
   const scalarInfo = {
     attrs: datavar.attrs,
     dimInfo,
@@ -1410,7 +1635,7 @@ async function fetchAndRenderData(
   };
   let geometryPending = deferDisplay;
   const renderScalar = () => {
-    showBackdrop(backdropData);
+    showBackdrop(beneath);
     if (geometryPending) {
       batches.forEach((batch) => updateHealpixBatch(batch));
       batches.length = 0;
@@ -1444,6 +1669,8 @@ onBeforeMount(async () => {
 
 onBeforeUnmount(() => {
   disposed = true;
+  // the notice is this grid's: the next dataset starts without it
+  store.setViewWindowClipped(false);
   streamlineRequestRevision++;
   terminateHealpixWorker();
   terminateGridDataWorker();

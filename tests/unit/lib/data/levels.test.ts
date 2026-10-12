@@ -5,18 +5,23 @@ import {
   EARTH_RADIUS_METERS,
 } from "@/lib/camera/cameraSettings.ts";
 import {
+  cellsInView,
+  coarserLevels,
   coarsestLevel,
   currentLevel,
-  DEFAULT_MAX_VIEW_CELLS,
-  DIGEST_PIXELS_PER_CELL,
-  pickResolution,
-  DEFAULT_HYSTERESIS_ORDERS,
   DEFAULT_MAX_LEVEL_CELLS,
+  DEFAULT_MAX_VIEW_CELLS,
   DEFAULT_PIXELS_PER_CELL,
+  DEFAULT_VIEW_BUDGET_BYTES,
+  DIGEST_CHUNK_BYTES,
+  digestCellBytes,
   exceedsCellCap,
   groundMetersPerPixel,
-  selectLevel,
-  type TLevelSelectionCamera,
+  healpixOrderOf,
+  LEVEL_SLACK,
+  selectViewLevel,
+  windowBlocks,
+  windowCost,
 } from "@/lib/data/levels.ts";
 import { ZARR_FORMAT, type TSources } from "@/lib/types/GlobeTypes.ts";
 
@@ -29,23 +34,27 @@ function healpixLevel(order: number) {
   return { resolution: resolution(order), cellCount: 12 * 4 ** order };
 }
 
-const VIEWPORT_HEIGHT_PX = 1000;
+const derived = (order: number) => ({
+  ...healpixLevel(order),
+  derived: { dataset: "19", refinement: 19 - order },
+});
 
-/** The camera at which one cell of `targetMeters` spans the target pixels. */
-function cameraFor(targetMeters: number): TLevelSelectionCamera {
-  const halfFov = (CAMERA_VERTICAL_FOV_DEGREES * Math.PI) / 360;
-  return {
-    altitudeMeters:
-      (targetMeters * VIEWPORT_HEIGHT_PX) /
-      (2 * DEFAULT_PIXELS_PER_CELL * Math.tan(halfFov)),
-    viewportHeightPx: VIEWPORT_HEIGHT_PX,
-  };
+// a 1500 × 900 screen
+const VIEWPORT_PIXELS = 1_350_000;
+
+/** The ground scale at which a cell of `order` spans `pixels` on screen. */
+function scaleFor(order: number, pixels: number) {
+  return resolution(order) / pixels;
 }
 
-// Orders 10..4, finest first, as a multiscales pyramid lists them.
-const LADDER = [10, 9, 8, 7, 6, 5, 4].map(healpixLevel);
-const ORDER_8 = 2;
-const ORDER_7 = 3;
+// The ladder a hive store gives, finest first, every level loaded by view:
+// derived 17..14 over the leaves, stored 13..4.
+const ORDERS = [17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4];
+const HIVE = ORDERS.map((order) => ({
+  ...(order > 13 ? derived(order) : healpixLevel(order)),
+  byView: true,
+}));
+const at = (order: number) => ORDERS.indexOf(order);
 
 describe("currentLevel", () => {
   const sources: TSources = {
@@ -116,120 +125,20 @@ describe("groundMetersPerPixel", () => {
   });
 });
 
-describe("selectLevel", () => {
-  it("picks the level nearest the target in log2 cell size", () => {
-    expect(selectLevel(cameraFor(resolution(8)), LADDER, 0)).toBe(ORDER_8);
-    // the same pick from a measured ground scale instead of a camera
-    expect(
-      selectLevel(resolution(8) / DEFAULT_PIXELS_PER_CELL, LADDER, 0)
-    ).toBe(ORDER_8);
-    // Slightly finer than the geometric midpoint rounds to the finer level.
-    expect(selectLevel(cameraFor(resolution(7.6)), LADDER, 0)).toBe(ORDER_8);
-    expect(selectLevel(cameraFor(resolution(7.4)), LADDER, 0)).toBe(ORDER_7);
-  });
-
-  it("clamps to the ends of the ladder", () => {
-    expect(selectLevel(cameraFor(resolution(20)), LADDER, 3)).toBe(0);
-    expect(selectLevel(cameraFor(resolution(0)), LADDER, 3)).toBe(
-      LADDER.length - 1
-    );
-  });
-
-  it("keeps the active level until a better fit clears the hysteresis", () => {
-    // The switch point sits half the hysteresis past the midpoint.
-    const inside = DEFAULT_HYSTERESIS_ORDERS / 2 - 0.02;
-    const outside = DEFAULT_HYSTERESIS_ORDERS / 2 + 0.02;
-    // Zooming out from order 8 …
-    expect(
-      selectLevel(cameraFor(resolution(7.5 - inside)), LADDER, ORDER_8)
-    ).toBe(ORDER_8);
-    expect(
-      selectLevel(cameraFor(resolution(7.5 - outside)), LADDER, ORDER_8)
-    ).toBe(ORDER_7);
-    // … and zooming in from order 7 are symmetric.
-    expect(
-      selectLevel(cameraFor(resolution(7.5 + inside)), LADDER, ORDER_7)
-    ).toBe(ORDER_7);
-    expect(
-      selectLevel(cameraFor(resolution(7.5 + outside)), LADDER, ORDER_7)
-    ).toBe(ORDER_8);
-  });
-
-  it("honours a custom hysteresis", () => {
-    expect(
-      selectLevel(cameraFor(resolution(7.4)), LADDER, ORDER_8, {
-        hysteresisOrders: 0,
-      })
-    ).toBe(ORDER_7);
-    expect(
-      selectLevel(cameraFor(resolution(7.1)), LADDER, ORDER_8, {
-        hysteresisOrders: 1,
-      })
-    ).toBe(ORDER_8);
-  });
-});
-
-describe("selectLevel limits", () => {
-  it("never picks a level with more cells than the cap", () => {
-    const deep = [12, 11, 10, 9].map(healpixLevel);
-    expect(DEFAULT_MAX_LEVEL_CELLS).toBe(12 * 4 ** 10);
-    // The finest eligible level wins even from an ineligible active level.
-    expect(selectLevel(cameraFor(resolution(12)), deep, 0)).toBe(2);
-    expect(
-      selectLevel(cameraFor(resolution(12)), deep, 0, {
-        maxCells: 12 * 4 ** 12,
-      })
-    ).toBe(0);
-    // Without a recorded count the estimate over-counts HEALPix (by π), so
-    // order 10 (≈ 39.5 M estimated) is left out and order 9 (≈ 9.9 M) is kept.
-    const unknownCounts = deep.map(({ resolution }) => ({ resolution }));
-    expect(selectLevel(cameraFor(resolution(12)), unknownCounts, 0)).toBe(3);
-  });
-
-  it("over-counts levels whose cell count is unknown", () => {
-    // A global 1/16° lat/lon level holds 5760 × 2880 ≈ 16.6 M cells, over the
-    // cap; the next coarser 1/8° level (≈ 4.1 M) is eligible.
-    const degree = (Math.PI / 180) * EARTH_RADIUS_METERS;
-    const latLon = [1 / 16, 1 / 8].map((step) => ({
-      resolution: step * degree,
-    }));
-    expect(selectLevel(cameraFor(degree / 16), latLon, 0)).toBe(1);
-    // WebMercatorQuad zoom 4 holds (256 · 2⁴)² ≈ 16.8 M pixels; zoom 3 fits.
-    const zoom = (z: number) => ({ resolution: 156543.03392804097 / 2 ** z });
-    expect(
-      selectLevel(cameraFor(zoom(4).resolution), [zoom(4), zoom(3)], 0)
-    ).toBe(1);
-  });
-
-  it("counts the cells a sparse level stores, not the full sphere", () => {
-    // A regional pyramid at orders 16..12 holding 2 million cells per level.
-    const regional = [16, 15, 14, 13, 12].map((order) => ({
-      resolution: resolution(order),
-      cellCount: 2_000_000,
-    }));
-    expect(selectLevel(cameraFor(resolution(16)), regional, 4)).toBe(0);
-  });
-
-  it("flags the levels selection leaves out, estimated or counted", () => {
-    expect(exceedsCellCap(healpixLevel(11))).toBe(true);
-    expect(exceedsCellCap(healpixLevel(10))).toBe(false);
-    // Order 10 without a count is estimated over the cap, as selectLevel does.
-    expect(exceedsCellCap({ resolution: resolution(10) })).toBe(true);
-    expect(exceedsCellCap({})).toBe(false);
-  });
-
-  it("falls back to the coarsest level when nothing fits the renderer", () => {
-    const tooFine = [12, 11].map(healpixLevel);
-    expect(selectLevel(cameraFor(resolution(12)), tooFine, 0)).toBe(1);
-  });
-
-  it("changes nothing for a single level or levels without a resolution", () => {
-    expect(selectLevel(cameraFor(resolution(4)), [healpixLevel(8)], 0)).toBe(0);
-    expect(
-      selectLevel(cameraFor(resolution(8)), [{}, healpixLevel(8)], 0)
-    ).toBe(0);
-    expect(selectLevel(cameraFor(resolution(8)), [], 0)).toBe(0);
-  });
+it("lists the stored levels coarser than a level, the finest first", () => {
+  const levels = [
+    { resolution: 100 },
+    { resolution: 800 },
+    { resolution: 200 },
+    { resolution: 400, derived: { dataset: "19", refinement: 2 } },
+  ];
+  // the next coarser stored level first; a derived level is never beneath
+  expect(coarserLevels(levels, 0)).toEqual([2, 1]);
+  expect(coarserLevels(levels, 2)).toEqual([1]);
+  expect(coarserLevels(levels, 3)).toEqual([1]);
+  expect(coarserLevels(levels, 1)).toEqual([]);
+  // nothing to walk without a resolution on every level
+  expect(coarserLevels([{ resolution: 100 }, {}], 0)).toEqual([]);
 });
 
 it("names the coarsest level, when every level states its resolution", () => {
@@ -244,15 +153,179 @@ it("names the coarsest level, when every level states its resolution", () => {
   expect(coarsestLevel([{ resolution: 100 }, {}])).toBeUndefined();
 });
 
-describe("a level derived from the leaves", () => {
-  const derived = (order: number) => ({
-    ...healpixLevel(order),
-    derived: { dataset: "19", refinement: 19 - order },
+// eslint-disable-next-line max-lines-per-function
+describe("selectViewLevel", () => {
+  it("picks the finest level whose cells are not sub-pixel when every window fits", () => {
+    // a count: cells are bytes, every window in view fits the cap
+    const stored = HIVE.slice(at(13));
+    // order-12 cells at 1.5 px are under the floor; order 11 at 3 px is not
+    const scale = scaleFor(12, 1.5);
+    expect(selectViewLevel(scale, VIEWPORT_PIXELS, stored, at(4))).toBe(
+      stored.findIndex((level) => level.resolution === resolution(11))
+    );
+    // close in, the finest stored level
+    expect(
+      selectViewLevel(scaleFor(13, 8), VIEWPORT_PIXELS, stored, at(4))
+    ).toBe(0);
   });
-  // the finest level is derived 17: 18 and the leaves are the point tier's
-  const ORDERS = [14, 15, 16, 17];
 
-  it.each(ORDERS)("is never whole-loadable at order %i", (order) => {
+  it("prices a digest variable in bytes and stops where the window would not fit", () => {
+    // a 1500 × 900 view of order 12 at 1.5 px per cell: 600 000 cells of
+    // 2 KB, with the quarter-view margin 1.9 GB, over the 1 GB budget;
+    // order 11 at 3 px is 150 000 cells, 470 MB with the margin
+    const scale = scaleFor(12, 1.5);
+    const cells = cellsInView(resolution(12), scale, VIEWPORT_PIXELS);
+    expect(cells).toBeCloseTo(600_000, -4);
+    expect(windowCost(healpixLevel(12), cells, true)).toBeGreaterThan(1);
+    expect(windowCost(healpixLevel(12), cells, false)).toBeLessThan(1);
+    const options = { digest: true };
+    expect(selectViewLevel(scale, VIEWPORT_PIXELS, HIVE, at(4), options)).toBe(
+      at(11)
+    );
+    // closer in, order 13 comes on at its floor, where its window fits too:
+    // 216 000 cells at 2.5 px, 570 MB with the margin
+    const close = scaleFor(13, 2.5);
+    expect(
+      windowCost(
+        healpixLevel(13),
+        cellsInView(resolution(13), close, VIEWPORT_PIXELS),
+        true
+      )
+    ).toBeLessThan(1);
+    expect(selectViewLevel(close, VIEWPORT_PIXELS, HIVE, at(4), options)).toBe(
+      at(13)
+    );
+  });
+
+  it("brings the derived levels on at the one floor, once their chunks fit", () => {
+    const options = { digest: true };
+    // a derived level costs a leaf chunk per cell of ground whatever its
+    // order: at 2 px per order-14 cell the view holds 337 000 of them, over
+    // 130 000 chunks with the margin, far over the budget
+    const scale = scaleFor(14, DEFAULT_PIXELS_PER_CELL);
+    const cells = cellsInView(resolution(14), scale, VIEWPORT_PIXELS);
+    expect(windowCost(derived(14), cells, true)).toBeCloseTo(
+      (((cells * 1.5 ** 2) / 4) * DIGEST_CHUNK_BYTES) /
+        DEFAULT_VIEW_BUDGET_BYTES,
+      6
+    );
+    expect(windowCost(derived(14), cells, true)).toBeGreaterThan(1);
+    expect(selectViewLevel(scale, VIEWPORT_PIXELS, HIVE, at(13), options)).toBe(
+      at(13)
+    );
+    // once the chunks fit, the finest derived level over the floor: at 2.6
+    // px per order-15 cell (5.2 per order-14 cell) that is 15, not 14
+    const fits = scaleFor(15, 2.6);
+    expect(
+      windowCost(
+        derived(15),
+        cellsInView(resolution(15), fits, VIEWPORT_PIXELS),
+        true
+      )
+    ).toBeLessThan(1);
+    expect(selectViewLevel(fits, VIEWPORT_PIXELS, HIVE, at(13), options)).toBe(
+      at(15)
+    );
+    // a count is priced the same, per leaf chunk: at derived 15's floor the
+    // half-view window is 337 000 chunks, so the finest stored level shows
+    const floor15 = scaleFor(15, DEFAULT_PIXELS_PER_CELL);
+    const count15 = cellsInView(resolution(15), floor15, VIEWPORT_PIXELS);
+    expect(windowCost(derived(15), count15, false)).toBeCloseTo(
+      (((count15 * 2 ** 2) / 4 ** 2) * DIGEST_CHUNK_BYTES) /
+        DEFAULT_VIEW_BUDGET_BYTES,
+      6
+    );
+    expect(windowCost(derived(15), count15, false)).toBeGreaterThan(1);
+    expect(selectViewLevel(floor15, VIEWPORT_PIXELS, HIVE, at(13))).toBe(
+      at(13)
+    );
+    // very close in, derived 17; never the leaves (not in the ladder)
+    for (const order of [17, 18, 19, 22]) {
+      const scale = scaleFor(order, DEFAULT_PIXELS_PER_CELL);
+      expect(
+        selectViewLevel(scale, VIEWPORT_PIXELS, HIVE, at(4), options)
+      ).toBe(0);
+    }
+  });
+
+  it("keeps the active level within its slack", () => {
+    const stored = HIVE.slice(at(13));
+    // order 11 just over the floor is picked; zooming out a little under the
+    // floor keeps it, zooming out past the slack drops to 10
+    const floor = scaleFor(11, DEFAULT_PIXELS_PER_CELL);
+    const eleven = stored.findIndex((l) => l.resolution === resolution(11));
+    const ten = eleven + 1;
+    expect(selectViewLevel(floor, VIEWPORT_PIXELS, stored, ten)).toBe(eleven);
+    expect(selectViewLevel(floor * 1.2, VIEWPORT_PIXELS, stored, eleven)).toBe(
+      eleven
+    );
+    expect(selectViewLevel(floor * 1.2, VIEWPORT_PIXELS, stored, ten)).toBe(
+      ten
+    );
+    expect(
+      selectViewLevel(
+        floor * LEVEL_SLACK * 1.01,
+        VIEWPORT_PIXELS,
+        stored,
+        eleven
+      )
+    ).toBe(ten);
+  });
+
+  it("keeps a level loaded whole under the cell cap, and falls back to the coarsest", () => {
+    // orders 12..9 loaded whole: 12 and 11 are over the whole-level cap
+    const whole = [12, 11, 10, 9].map(healpixLevel);
+    expect(selectViewLevel(scaleFor(12, 4), VIEWPORT_PIXELS, whole, 3)).toBe(2);
+    expect(exceedsCellCap(healpixLevel(11))).toBe(true);
+    expect(exceedsCellCap(healpixLevel(10))).toBe(false);
+    // the same levels loaded by view are not capped
+    const byView = whole.map((level) => ({ ...level, byView: true }));
+    expect(selectViewLevel(scaleFor(12, 4), VIEWPORT_PIXELS, byView, 3)).toBe(
+      0
+    );
+    // nothing fits: the coarsest is the least harmful
+    const tooFine = [12, 11].map(healpixLevel);
+    expect(selectViewLevel(scaleFor(12, 4), VIEWPORT_PIXELS, tooFine, 0)).toBe(
+      1
+    );
+    // a window of a count that would exceed the view cap is out too
+    const wide = scaleFor(12, 0.5);
+    expect(cellsInView(resolution(12), wide, VIEWPORT_PIXELS)).toBeGreaterThan(
+      DEFAULT_MAX_VIEW_CELLS
+    );
+    expect(selectViewLevel(wide, VIEWPORT_PIXELS, HIVE, at(4))).toBe(at(10));
+  });
+
+  it("counts the cells a sparse level stores, not the full sphere", () => {
+    // a regional pyramid at orders 16..12 holding 2 million cells per level
+    // is loadable whole, under the whole-level cap
+    const regional = [16, 15, 14, 13, 12].map((order) => ({
+      resolution: resolution(order),
+      cellCount: 2_000_000,
+    }));
+    expect(2_000_000).toBeLessThan(DEFAULT_MAX_LEVEL_CELLS);
+    expect(selectViewLevel(scaleFor(16, 4), VIEWPORT_PIXELS, regional, 4)).toBe(
+      0
+    );
+  });
+
+  it("changes nothing for a single level or levels without a resolution", () => {
+    expect(selectViewLevel(1, VIEWPORT_PIXELS, [healpixLevel(8)], 0)).toBe(0);
+    expect(selectViewLevel(1, VIEWPORT_PIXELS, [{}, healpixLevel(8)], 0)).toBe(
+      0
+    );
+  });
+
+  it("reads the order back from a resolution", () => {
+    for (const order of ORDERS) {
+      expect(healpixOrderOf(resolution(order))).toBe(order);
+    }
+  });
+});
+
+describe("a level derived from the leaves", () => {
+  // the finest level is derived 17: 18 and the leaves are the point tier's
+  it.each([14, 15, 16, 17])("is never whole-loadable at order %i", (order) => {
     const level = derived(order);
     // over the cap of a level loaded whole, and of a view: always a window
     expect(exceedsCellCap(level)).toBe(true);
@@ -264,65 +337,41 @@ describe("a level derived from the leaves", () => {
   });
 
   it("is kept out of automatic selection while it would be loaded whole", () => {
-    const levels = [...ORDERS.map(derived), healpixLevel(8)];
-    for (const order of ORDERS) {
-      expect(selectLevel(cameraFor(resolution(order)), levels, 4)).toBe(4);
+    const levels = [...[14, 15, 16, 17].map(derived), healpixLevel(8)];
+    for (const order of [14, 15, 16, 17]) {
+      const scale = scaleFor(order, DEFAULT_PIXELS_PER_CELL);
+      expect(selectViewLevel(scale, VIEWPORT_PIXELS, levels, 4)).toBe(4);
     }
   });
 });
 
-describe("the finest level of a hive store", () => {
-  const derived = (order: number) => ({
-    ...healpixLevel(order),
-    derived: { dataset: "19", refinement: 19 - order },
-  });
-
-  it("is derived 17, where a very close zoom stays; never the leaves", () => {
-    // the list a hive store gives, finest first, every level loaded by view
-    const orders = [17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4];
-    const levels = orders.map((order) => ({
-      resolution: pickResolution(
-        order > 13 ? derived(order) : healpixLevel(order),
-        DIGEST_PIXELS_PER_CELL
-      ),
-      cellCount: 0,
-    }));
-    const options = { pixelsPerCell: DIGEST_PIXELS_PER_CELL };
-    for (const order of [17, 18, 19, 22]) {
-      const scale = resolution(order) / DIGEST_PIXELS_PER_CELL;
-      expect(selectLevel(scale, levels, 4, options)).toBe(0);
-      expect(selectLevel(scale, levels, 0, options)).toBe(0);
-    }
-    expect(
-      selectLevel(resolution(13) / DIGEST_PIXELS_PER_CELL, levels, 0, options)
-    ).toBe(4);
-  });
-
-  it("is picked at the digest cell size whatever the variable", () => {
-    const stored = healpixLevel(13);
-    const level = derived(14);
-    expect(pickResolution(stored, DEFAULT_PIXELS_PER_CELL)).toBe(
-      stored.resolution
+describe("windowBlocks", () => {
+  it("prices a stored level per cell and a derived level per leaf chunk", () => {
+    // order 13 in 256-cell chunks: the budget over the chunks' bytes
+    expect(windowBlocks({}, 13, 256, true)).toBe(
+      Math.floor(DEFAULT_VIEW_BUDGET_BYTES / (digestCellBytes(13) * 256))
     );
-    expect(pickResolution(level, DIGEST_PIXELS_PER_CELL)).toBe(
-      level.resolution
+    // an order-12 cell costs a little more than an order-13 one
+    expect(windowBlocks({}, 12, 64, true)).toBeLessThan(
+      windowBlocks({}, 13, 64, true)
     );
-    // at 16 px per cell a derived level is picked as if it were twice as fine
-    expect(pickResolution(level, DEFAULT_PIXELS_PER_CELL)).toBe(
-      level.resolution / 2
+    // a derived level costs a leaf chunk per block whatever its order
+    const derived = { derived: { dataset: "leaf", refinement: 2 } };
+    expect(windowBlocks(derived, 15, 256, true)).toBe(
+      Math.floor(DEFAULT_VIEW_BUDGET_BYTES / DIGEST_CHUNK_BYTES)
     );
-    // loaded by view (no cell cap): order 14 comes on where its cells are 32 px
-    const levels = [stored, level].map((candidate) => ({
-      resolution: pickResolution(candidate, DEFAULT_PIXELS_PER_CELL),
-      cellCount: 0,
-    }));
-    const metersPerPixel = (pixels: number) => level.resolution / pixels;
-    // (16 px is the boundary: either side keeps the level it is on)
-    expect(selectLevel(metersPerPixel(12), levels, 0)).toBe(0);
-    expect(selectLevel(metersPerPixel(32), levels, 0)).toBe(1);
-    expect(selectLevel(metersPerPixel(12), levels, 1)).toBe(0);
-    expect(selectLevel(metersPerPixel(32), levels, 1)).toBe(1);
-    expect(selectLevel(metersPerPixel(16), levels, 0)).toBe(0);
-    expect(selectLevel(metersPerPixel(16), levels, 1)).toBe(1);
+    expect(windowBlocks(derived, 17, 16, true)).toBe(
+      windowBlocks(derived, 15, 256, true)
+    );
+    // a derived level is priced per leaf chunk for every variable, a stored
+    // one's count per cell against the view cap
+    expect(windowBlocks(derived, 15, 16, false)).toBe(
+      windowBlocks(derived, 15, 16, true)
+    );
+    expect(windowBlocks({}, 13, 256, false)).toBe(
+      Math.floor(DEFAULT_MAX_VIEW_CELLS / 256)
+    );
+    // a budget below one block still loads one
+    expect(windowBlocks({}, 13, 256, true, 1)).toBe(1);
   });
 });

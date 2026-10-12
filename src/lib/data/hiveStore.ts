@@ -105,6 +105,55 @@ function ancestorId(shardId: string, order: number) {
   return shardId.slice(0, decimalBase(shardId).length + order);
 }
 
+/** The nodes present at every level of each store opened, by root URL. */
+const nodesByRoot = new Map<string, THiveLevel[]>();
+
+const rootKey = (rootUrl: string) => rootUrl.replace(/\/+$/, "");
+
+/** The nodes of a store that hold a level's cells. */
+export type THiveNodes = {
+  /** The order of a node: a leaf's (shard) order for the column levels. */
+  nodeOrder: number;
+  /** The nested ranks at `nodeOrder` of every node present. */
+  ranks: Set<number>;
+};
+
+/**
+ * The nodes of the store opened at `rootUrl` that hold the cells of a level,
+ * for a window to read only where the store has something: a level the
+ * store does not hold (one derived from the leaves) answers with the leaves'
+ * nodes. Undefined before the store is opened.
+ */
+export function hiveNodes(
+  rootUrl: string,
+  cellOrder: number
+): THiveNodes | undefined {
+  const levels = nodesByRoot.get(rootKey(rootUrl));
+  if (!levels) {
+    return undefined;
+  }
+  const level =
+    levels.find((entry) => entry.cellOrder === cellOrder) ?? levels[0];
+  return { nodeOrder: level.nodeOrder, ranks: new Set(level.nodes.keys()) };
+}
+
+/**
+ * Whether a block (a nested cell of `blockLevel`) of a level's window lies
+ * under a node the store holds, or holds one.
+ */
+export function coveredBlocks(nodes: THiveNodes, blockLevel: number) {
+  if (blockLevel >= nodes.nodeOrder) {
+    const perNode = 4 ** (blockLevel - nodes.nodeOrder);
+    return (block: number) => nodes.ranks.has(Math.floor(block / perNode));
+  }
+  const perBlock = 4 ** (nodes.nodeOrder - blockLevel);
+  const covered = new Set<number>();
+  for (const rank of nodes.ranks) {
+    covered.add(Math.floor(rank / perBlock));
+  }
+  return (block: number) => covered.has(block);
+}
+
 /**
  * A level group's `zarr.json`: the artifact's own, with `dggs.coordinate`
  * dropped. The artifact names its `morton` array as the cell coordinate, but
@@ -633,6 +682,7 @@ export async function createHiveStore(
   const { manifest, coverage } = await readRoot(store, rootUrl);
   const levels = manifestLevels(manifest);
   placeNodes(levels, rangesShardIds(coverage), manifest);
+  nodesByRoot.set(rootKey(rootUrl), levels);
   const reader = createHiveReader(store, manifest, levels, 1);
   const names = await arrayNames(reader, manifest, levels[0]);
   Object.assign(reader.pooled, await pooledLevels(reader, manifest, levels));

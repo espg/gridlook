@@ -11,10 +11,8 @@ import {
 } from "@/lib/camera/cameraSettings.ts";
 import {
   currentLevel,
-  DEFAULT_PIXELS_PER_CELL,
-  DIGEST_PIXELS_PER_CELL,
-  pickResolution,
-  selectLevel,
+  groundMetersPerPixel,
+  selectViewLevel,
 } from "@/lib/data/levels.ts";
 import { digestVariableOf } from "@/lib/digest/digestVariables.ts";
 import type { TSources } from "@/lib/types/GlobeTypes.ts";
@@ -27,12 +25,20 @@ export const LEVEL_PICK_INTERVAL_MS = 200;
 
 export type TViewportSize = { width: number; height: number };
 
-/** A variable derived from a t-digest is picked at a coarser cell size. */
-function pixelsPerCell(datasources: TSources, varname: string) {
+/** Whether the variable shown is derived from a t-digest: priced in bytes. */
+function isDigest(datasources: TSources, varname: string) {
   const attrs = currentLevel(datasources).datasources[varname]?.attrs;
-  return digestVariableOf(attrs)
-    ? DIGEST_PIXELS_PER_CELL
-    : DEFAULT_PIXELS_PER_CELL;
+  return digestVariableOf(attrs) !== undefined;
+}
+
+/** The URL camera's altitude, else the globe's fitted framing. */
+function altitudeMeters(viewport: TViewportSize, paramAltitude?: string) {
+  const altitude = Number(paramAltitude);
+  if (Number.isFinite(altitude)) {
+    return altitude;
+  }
+  const aspect = viewport.width / Math.max(viewport.height, 1);
+  return (getGlobeFitCameraDistance(aspect) - 1) * EARTH_RADIUS_METERS;
 }
 
 /**
@@ -40,8 +46,9 @@ function pixelsPerCell(datasources: TSources, varname: string) {
  *
  * The scene writes the ground metres one pixel covers below the camera into
  * the store, in whatever projection is shown; this watches it and, with
- * auto-selection on, writes the level whose cells best fit the screen into
- * the store, also while the camera is moving. `pickLevel` runs the same
+ * auto-selection on, writes the finest level whose cells are not sub-pixel
+ * and whose window fits its budget into the store, also while the camera is
+ * moving. `pickLevel` runs the same
  * choice on demand — before the first render, from the URL camera or else
  * the globe's fitted one — so a pyramid never opens on a level the renderer
  * cannot hold.
@@ -53,34 +60,27 @@ export function useLevelSelection(
   const store = useGlobeControlStore();
   const { paramCameraAlt } = storeToRefs(useUrlParameterStore());
 
-  function altitudeMeters(viewport: TViewportSize) {
-    const altitude = Number(paramCameraAlt.value);
-    if (Number.isFinite(altitude)) {
-      return altitude;
-    }
-    const aspect = viewport.width / Math.max(viewport.height, 1);
-    return (getGlobeFitCameraDistance(aspect) - 1) * EARTH_RADIUS_METERS;
-  }
-
   function pickLevel() {
     const levels = datasources.value?.levels;
     if (!levels || levels.length < 2 || !store.levelAuto) {
       return;
     }
     const viewport = getViewport();
-    const target = pixelsPerCell(datasources.value!, store.varnameSelector);
-    const next = selectLevel(
-      store.metersPerPixel ?? {
-        altitudeMeters: altitudeMeters(viewport),
-        viewportHeightPx: viewport.height,
-      },
-      // no level is too large where the grid loads only the view of it
+    const next = selectViewLevel(
+      store.metersPerPixel ??
+        groundMetersPerPixel({
+          altitudeMeters: altitudeMeters(viewport, paramCameraAlt.value),
+          viewportHeightPx: viewport.height,
+        }),
+      viewport.width * viewport.height,
       levels.map((level, index) => ({
-        resolution: pickResolution(level, target),
-        cellCount: store.loadsLevelByView(index) ? 0 : level.cellCount,
+        resolution: level.resolution,
+        cellCount: level.cellCount,
+        derived: level.derived,
+        byView: store.loadsLevelByView(index),
       })),
       store.selectedLevel,
-      { pixelsPerCell: target }
+      { digest: isDigest(datasources.value!, store.varnameSelector) }
     );
     store.selectLevel(next, false);
   }

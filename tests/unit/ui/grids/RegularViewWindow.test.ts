@@ -163,8 +163,8 @@ async function mount(footprint: {
   setActivePinia(createPinia());
   const store = useGlobeControlStore();
   store.varnameSelector = "t";
-  // these tests draw the coarsest level beneath, which is opt-in
-  store.setLevelBackdrop(true);
+  // these tests draw the coarsest level beneath
+  store.setLevelParentBeneath(true);
   store.viewFootprint = { ...footprint, ...centre };
   scene.current = new THREE.Scene();
   const source = (dataset: string) => ({ store: "s.zarr", dataset });
