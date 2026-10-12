@@ -90,14 +90,14 @@ function domElement(clientHeight = 900) {
   }) as unknown as HTMLElement;
 }
 
-function pivotControls(altitude: number) {
+function pivotControls(altitude: number, onDrop?: () => void) {
   const camera = globeCamera(altitude);
   const controls: OrbitControls = new OrbitControls(camera, domElement());
   controls.enablePan = false;
   controls.minDistance = 1.0002;
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
-  const pivot = createPointPivot(controls);
+  const pivot = createPointPivot(controls, onDrop);
   useSurfaceZoom(controls, () => pivot.active);
   return { camera, controls: controls as CustomOrbitControls, pivot };
 }
@@ -737,12 +737,14 @@ describe("createPointPivot", () => {
     expect(camera.position.distanceTo(entered) * R).toBeLessThan(1e-3);
   });
 
-  it("gives up when something else moved the pivot off the sphere", () => {
-    const { camera, controls, pivot } = pivotControls(2000);
+  it("gives up when something else moved the pivot off the sphere, and says so", () => {
+    let dropped = 0;
+    const { camera, controls, pivot } = pivotControls(2000, () => dropped++);
     pivot.enter(surfacePointNearRay(camera.position, forwardOf(camera)));
     controls.target.set(0, 0, 0);
     controls.update();
     expect(pivot.active).toBe(false);
+    expect(dropped).toBe(1);
     expect(controls.enablePan).toBe(false);
     expect(camera.up.toArray()).toEqual([0, 0, 1]);
   });

@@ -232,7 +232,11 @@ export type TPointPivot = ReturnType<typeof createPointPivot>;
  * whose predicate has to include `active`.
  */
 // eslint-disable-next-line max-lines-per-function
-export function createPointPivot(controls: OrbitControls) {
+export function createPointPivot(
+  controls: OrbitControls,
+  /** Called when the pivot gives up (something else moved it off the sphere). */
+  onDrop?: () => void
+) {
   const orbit = controls as CustomOrbitControls;
   const camera = orbit.object as THREE.PerspectiveCamera;
   const update = orbit.update.bind(orbit);
@@ -286,6 +290,7 @@ export function createPointPivot(controls: OrbitControls) {
   function alignToPivot() {
     if (Math.abs(orbit.target.length() - 1) > PIVOT_OFF_SPHERE) {
       drop();
+      onDrop?.();
       return;
     }
     settlePivot();

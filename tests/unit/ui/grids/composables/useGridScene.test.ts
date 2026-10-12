@@ -282,6 +282,23 @@ it("reads the pivot camera's scale bar at the lifted pivot's depth", async () =>
   scope.stop();
 });
 
+it("ends the point tier when a camera preset moves the pivot off the sphere", () => {
+  const { grid, scope, camera } = setupRegionalScene();
+  const store = useGlobeControlStore();
+  camera.position.setLength(1 + 3000 / EARTH_RADIUS_METERS);
+  camera.lookAt(0, 0, 0);
+  store.setPointTier(true);
+  grid.pointPivot.enter();
+  expect(grid.pointPivot.distance()).toBeDefined();
+  grid.applyCameraPreset({
+    position: [0, 0, 2],
+    quaternion: [0, 0, 0, 1],
+  });
+  expect(grid.pointPivot.distance()).toBeUndefined();
+  expect(store.pointTier).toBe(false);
+  scope.stop();
+});
+
 it.each(
   Object.values(PROJECTION_TYPES).filter(
     (type) => type !== PROJECTION_TYPES.NEARSIDE_PERSPECTIVE

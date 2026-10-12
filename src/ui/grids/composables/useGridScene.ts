@@ -1046,8 +1046,12 @@ export function useGridScene(options: UseGridSceneOptions) {
     camera.lookAt(center);
 
     orbitControls = new OrbitControls(camera, renderer.domElement);
-    // the pivot wraps first: the surface zoom stands aside while it is on
-    pivotControls = createPointPivot(orbitControls);
+    // the pivot wraps first: the surface zoom stands aside while it is on;
+    // a pivot something else moved off the sphere ends the point tier
+    pivotControls = createPointPivot(orbitControls, () => {
+      pivotWanted = false;
+      store.setPointTier(false);
+    });
     useSurfaceZoom(
       orbitControls,
       () => projectionHelper.value.isFlat || pivotControls!.active
