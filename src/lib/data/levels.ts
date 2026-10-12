@@ -94,12 +94,18 @@ export const DEFAULT_HYSTERESIS_ORDERS = 0.35;
 export const DEFAULT_MAX_LEVEL_CELLS = 12 * 4 ** 10;
 
 /**
- * Cells a grid that loads only the view keeps on screen at once. A level
- * with more cells than this is loaded as a window around the view, reloaded
- * as the camera moves; the window is shrunk to this many cells when a level
- * picked by hand is too fine for the view.
+ * A level with more cells than this is loaded as a window around the view,
+ * reloaded as the camera moves, rather than whole.
  */
-export const DEFAULT_MAX_VIEW_CELLS = 12 * 4 ** 8;
+export const DEFAULT_VIEW_LOAD_CELLS = 12 * 4 ** 8;
+
+/**
+ * Cells one such window holds at most: the window is shrunk to this many
+ * when a level picked by hand is too fine for the view. Generous on purpose
+ * (espg, 2026-10-11): a level finer than the zoom asks for is a deliberate
+ * pick, and the picker never lands there on its own.
+ */
+export const DEFAULT_MAX_VIEW_CELLS = 12 * 4 ** 9;
 
 /**
  * Leaf chunks one window of a derived level reads at most. Such a level is

@@ -27,6 +27,7 @@ import {
   currentLevel,
   DEFAULT_MAX_LEVEL_CELLS,
   DEFAULT_MAX_VIEW_CELLS,
+  DEFAULT_VIEW_LOAD_CELLS,
   DEFAULT_MAX_VIEW_CHUNKS,
   STREAMLINES_NEED_WHOLE_LEVEL,
 } from "@/lib/data/levels.ts";
@@ -536,7 +537,7 @@ function loadsByView() {
     levelWindowable &&
     (sources.selectedLevel ?? 0) !== coarsestLevel(sources.levels) &&
     levelCellCount >
-      (wholeLevelLayers ? DEFAULT_MAX_LEVEL_CELLS : DEFAULT_MAX_VIEW_CELLS)
+      (wholeLevelLayers ? DEFAULT_MAX_LEVEL_CELLS : DEFAULT_VIEW_LOAD_CELLS)
   );
 }
 

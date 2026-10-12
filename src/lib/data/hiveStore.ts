@@ -106,6 +106,62 @@ function ancestorId(shardId: string, order: number) {
 }
 
 /**
+ * A level group's `zarr.json`: the artifact's own, with `dggs.coordinate`
+ * dropped. The artifact names its `morton` array as the cell coordinate, but
+ * a level re-rooted on the sphere is dense — a cell IS its index — and that
+ * array holds 64-bit morton words where a node has data and fill where it
+ * does not, so a reader that followed the token (gridlook's whole-level load
+ * does) would index every cell into face 0. The hierarchy never lists
+ * `morton`, and now never points at it.
+ */
+function levelGroup(bytes: Uint8Array): Uint8Array {
+  const meta = JSON.parse(new TextDecoder().decode(bytes)) as Record<
+    string,
+    unknown
+  >;
+  const attrs = isRecord(meta.attributes) ? meta.attributes : undefined;
+  const dggs = attrs && isRecord(attrs.dggs) ? attrs.dggs : undefined;
+  if (!attrs || !dggs || !("coordinate" in dggs)) {
+    return bytes;
+  }
+  const rest = { ...dggs };
+  delete rest.coordinate;
+  return new TextEncoder().encode(
+    JSON.stringify({ ...meta, attributes: { ...attrs, dggs: rest } })
+  );
+}
+
+/**
+ * The root `multiscales`: the zarr-conventions object the Icechunk companion
+ * root carries since zagg 0.59.0 (englacial/zagg#618) — the
+ * `zagg-multiscales/1` block's own keys plus a `layout` naming one level group
+ * per cell order, finest first, every derived level from the next finer with
+ * `transform.scale` 4^Δ on the cells axis. `parseMultiscales` reads the
+ * layout (the `/1` block's `datasets` carry no `path`, so a bare `/1` list
+ * indexes as a single level — the leaves, whole); readers of the `/1` keys
+ * find them unchanged.
+ */
+function rootMultiscales(manifest: HiveManifest, levels: THiveLevel[]) {
+  const multiscales = manifest.raw.multiscales;
+  const block = Array.isArray(multiscales) ? multiscales[0] : undefined;
+  const sorted = [...levels].sort((a, b) => b.cellOrder - a.cellOrder);
+  const layout = sorted.map((level, index) => {
+    const asset = String(level.cellOrder);
+    if (index === 0) {
+      return { asset };
+    }
+    const finer = sorted[index - 1];
+    return {
+      asset,
+      // eslint-disable-next-line camelcase
+      derived_from: String(finer.cellOrder),
+      transform: { scale: [4 ** (finer.cellOrder - level.cellOrder)] },
+    };
+  });
+  return { ...(isRecord(block) ? block : {}), layout };
+}
+
+/**
  * The levels the manifest declares: the leaves from its own orders, then
  * the `zagg-multiscales/1` datasets (finest first) when it carries them.
  */
@@ -307,7 +363,10 @@ function createHiveReader(
       }
     );
   }
-  /** The leaf group's metadata at the order of a derived level. */
+  /**
+   * The leaf group's metadata at the order of a derived level, served as
+   * every level group is: without the artifact's cell coordinate.
+   */
   async function pooledGroup(order: number) {
     const meta = await once("group:leaf", async () => {
       const dir = await templateDir(levels[0]);
@@ -318,16 +377,18 @@ function createHiveReader(
     const attributes = isRecord(meta?.attributes) ? meta.attributes : {};
     return (
       meta &&
-      encoder.encode(
-        JSON.stringify({
-          ...meta,
-          attributes: {
-            ...attributes,
-            ...(isRecord(attributes.dggs)
-              ? { dggs: { ...attributes.dggs, refinement_level: order } } // eslint-disable-line camelcase
-              : {}),
-          },
-        })
+      levelGroup(
+        encoder.encode(
+          JSON.stringify({
+            ...meta,
+            attributes: {
+              ...attributes,
+              ...(isRecord(attributes.dggs)
+                ? { dggs: { ...attributes.dggs, refinement_level: order } } // eslint-disable-line camelcase
+                : {}),
+            },
+          })
+        )
       )
     );
   }
@@ -372,7 +433,7 @@ function createHiveReader(
         // eslint-disable-next-line camelcase
         node_type: "group",
         attributes: {
-          multiscales: manifest.raw.multiscales,
+          multiscales: rootMultiscales(manifest, levels),
           ...(pooled.orders.length
             ? {
                 // eslint-disable-next-line camelcase
@@ -399,9 +460,11 @@ function createHiveReader(
       }
       const target = level(Number(group[1]));
       const dir = target && (await templateDir(target));
-      return dir === undefined
-        ? undefined
-        : await inner.get(`/${dir}/${target!.cellOrder}/zarr.json`);
+      const bytes =
+        dir === undefined
+          ? undefined
+          : await inner.get(`/${dir}/${target!.cellOrder}/zarr.json`);
+      return bytes && levelGroup(bytes);
     }
     const array = ARRAY_KEY.exec(key);
     if (array) {
