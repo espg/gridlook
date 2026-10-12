@@ -61,6 +61,16 @@ function pointTierLevel(
     : undefined;
 }
 
+/** A flat projection has no heights: off with the points, whoever picked them. */
+function leaveFlatPointTier(store: ReturnType<typeof useGlobeControlStore>) {
+  if (
+    store.pointTier &&
+    store.projectionMode !== PROJECTION_TYPES.NEARSIDE_PERSPECTIVE
+  ) {
+    store.setPointTier(false);
+  }
+}
+
 /** The camera's altitude: the URL's, else the globe's fitted framing. */
 function altitudeMeters(
   urlAltitude: string | undefined,
@@ -72,6 +82,20 @@ function altitudeMeters(
   }
   const aspect = viewport.width / Math.max(viewport.height, 1);
   return (getGlobeFitCameraDistance(aspect) - 1) * EARTH_RADIUS_METERS;
+}
+
+/** The ground scale the scene measured, else the URL's or the fitted camera's. */
+function levelCamera(
+  store: ReturnType<typeof useGlobeControlStore>,
+  urlAltitude: string | undefined,
+  viewport: TViewportSize
+) {
+  return (
+    store.metersPerPixel ?? {
+      altitudeMeters: altitudeMeters(urlAltitude, viewport),
+      viewportHeightPx: viewport.height,
+    }
+  );
 }
 
 /**
@@ -93,16 +117,14 @@ export function useLevelSelection(
   const { paramCameraAlt } = storeToRefs(useUrlParameterStore());
 
   function pickLevel() {
+    leaveFlatPointTier(store);
     const levels = datasources.value?.levels;
     if (!levels || levels.length < 2 || !store.levelAuto) {
       return;
     }
     const viewport = getViewport();
     const target = pixelsPerCell(datasources.value!, store.varnameSelector);
-    const camera = store.metersPerPixel ?? {
-      altitudeMeters: altitudeMeters(paramCameraAlt.value, viewport),
-      viewportHeightPx: viewport.height,
-    };
+    const camera = levelCamera(store, paramCameraAlt.value, viewport);
     const points = pointTierLevel(store, levels, camera);
     if (points !== undefined) {
       store.selectPointTier(points, false);

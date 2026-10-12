@@ -6,6 +6,7 @@ import { pointTierLegend } from "./pointTierLegend.ts";
 
 import { exceedsCellCap, finestLevel, POINT_TIER } from "@/lib/data/levels.ts";
 import { pointTierSource } from "@/lib/points/pointSource.ts";
+import { PROJECTION_TYPES } from "@/lib/projection/projectionUtils.ts";
 import type { TSourceLevel } from "@/lib/types/GlobeTypes.ts";
 import { useGlobeControlStore } from "@/store/store.ts";
 
@@ -38,11 +39,13 @@ const options = computed(() =>
 );
 
 // the point tier, when the finest level has observations under the shown
-// variable: listed before the levels, as the finest entry
+// variable and the globe is drawn: listed before the levels, as the finest
+// entry
 const pointTier = computed(() => {
   const finest = finestLevel(props.levels);
   const source =
-    finest === undefined
+    finest === undefined ||
+    store.projectionMode !== PROJECTION_TYPES.NEARSIDE_PERSPECTIVE
       ? undefined
       : pointTierSource(props.levels[finest], store.varnameSelector);
   return source && finest !== undefined
