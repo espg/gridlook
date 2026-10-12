@@ -344,16 +344,13 @@ export function useGridScene(options: UseGridSceneOptions) {
       pivotWanted = false;
       applyPointPivot();
     },
-    /**
-     * Animate the tilt to `degrees` from nadir (the Top and Profile
-     * buttons), backing off to fit `fitHeight` (scene units) in the view.
-     */
-    tiltTo(degrees: number, fitHeight?: number) {
+    /** Animate the tilt to `degrees` from nadir (the Top and Oblique buttons). */
+    tiltTo(degrees: number) {
       if (!pivotControls?.active) {
         return;
       }
       stopTilt?.();
-      const animation = pivotControls.tiltTo(degrees, fitHeight);
+      const animation = pivotControls.tiltTo(degrees);
       stopTilt = registerAnimationCallback((deltaSeconds) => {
         if (!animation.advance(deltaSeconds)) {
           stopTilt?.();

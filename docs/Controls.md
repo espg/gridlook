@@ -68,13 +68,13 @@ If `Data Picker` is enabled, moving the pointer over the canvas also shows the v
 
 - Left drag pans: the ground slides under the pointer
 - Shift+left drag and right drag orbit the point under the view centre:
-  turn about it and tilt (to 90°, a side elevation)
+  turn about it and tilt (to 85°)
 - Mouse wheel zooms toward the ground under the cursor, which stays put
 - On touch, one finger pans and two fingers orbit and pinch-zoom
 - The **Pan** and **Orbit** buttons under the level picker set what a plain
   left drag does (Pan by default); shift+left and right drag orbit either way
-- The **Top** and **Profile** buttons animate the tilt to nadir and to the
-  side elevation, keeping the pivot and the azimuth
+- The **Top** and **Oblique** buttons animate the tilt to nadir and to 60°,
+  keeping the pivot, the azimuth and the distance
 
 For flat projections, the projection center can also be adjusted numerically in the side panel.
 

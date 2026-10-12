@@ -17,8 +17,8 @@ import { useGlobeControlStore } from "@/store/store.ts";
  * the legend of its mouse controls, the mode buttons for what a plain left
  * drag does (shift + left and the right button orbit either way), and the
  * view buttons, which animate the camera's tilt (pointPivot.ts) to the top
- * (nadir) or to a profile (the cloud seen edge-on along the ground),
- * keeping the azimuth and the pivot, the colour choice: the height, or
+ * (nadir) or to the oblique view (60° from nadir), keeping the azimuth
+ * and the pivot, the colour choice: the height, or
  * the time when the source has one (pointTimes.ts), and the points'
  * opacity.
  */
@@ -141,10 +141,10 @@ const DRAG_MODES: { mode: TPivotLeftDrag; label: string; title: string }[] = [
         <button
           type="button"
           class="button"
-          title="Look along the ground at the pivot: the cloud edge-on"
-          @click="store.requestPointTierTilt(POINT_PIVOT_TILTS.PROFILE)"
+          title="Look at the pivot from 60° off nadir: the cloud in relief"
+          @click="store.requestPointTierTilt(POINT_PIVOT_TILTS.OBLIQUE)"
         >
-          Profile
+          Oblique
         </button>
       </div>
     </div>

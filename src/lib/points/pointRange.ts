@@ -66,9 +66,9 @@ export function pointRange(
  * chord) of `centre` on the unit sphere, over chunks of points kept
  * relative to their origins: the datum and the relief around the pivot.
  * The radius is the view's own size, so the datum floats on the view's
- * lowest height whichever way the camera looks: a profile sees to the
- * horizon, and the far ground must not pull the datum from under the
- * cloud. Undefined without a finite height within reach.
+ * lowest height whichever way the camera looks: a tilted view sees far,
+ * and the far ground must not pull the datum from under the cloud.
+ * Undefined without a finite height within reach.
  */
 export function neighbourhoodRange(
   chunks: {

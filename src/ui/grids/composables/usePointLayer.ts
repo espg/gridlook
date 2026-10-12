@@ -9,11 +9,7 @@ import {
 } from "vue";
 
 import { CAMERA_VERTICAL_FOV_DEGREES } from "@/lib/camera/cameraSettings.ts";
-import {
-  POINT_PIVOT_TILTS,
-  viewHeightAt,
-  type TPivotLeftDrag,
-} from "@/lib/camera/pointPivot.ts";
+import { viewHeightAt, type TPivotLeftDrag } from "@/lib/camera/pointPivot.ts";
 import { currentLevel } from "@/lib/data/levels.ts";
 import { storeReaders, type TLeafReaders } from "@/lib/digest/digestField.ts";
 import { createByteLru } from "@/lib/digest/digestReader.ts";
@@ -74,7 +70,7 @@ type TPointLayerOptions = {
   pointPivot: {
     enter: () => void;
     leave: () => void;
-    tiltTo: (degrees: number, fitHeight?: number) => void;
+    tiltTo: (degrees: number) => void;
     setHeight: (above: number) => void;
     setLeftDrag: (mode: TPivotLeftDrag) => void;
     ground: Readonly<ShallowRef<{ lat: number; lon: number } | null>>;
@@ -167,9 +163,6 @@ export function usePointLayer(options: TPointLayerOptions) {
   let decodeMs = 0;
   let material: THREE.ShaderMaterial | undefined;
   let revision = 0;
-  // the relief around the pivot, metres above the datum: the pivot sits at
-  // its middle, a profile fits it
-  let band: { low: number; high: number } | undefined;
 
   const source = computed(() => {
     const sources = options.getDatasources();
@@ -238,7 +231,6 @@ export function usePointLayer(options: TPointLayerOptions) {
     }
     loaded = undefined;
     stride = 1;
-    band = undefined;
     store.setPointTierStats(undefined);
     if (store.pointTierBounds) {
       store.setPointTierBounds(undefined);
@@ -248,9 +240,9 @@ export function usePointLayer(options: TPointLayerOptions) {
 
   /**
    * The datum and the relief around the pivot: the lowest and highest
-   * drawn height within the view's height of it, so a profile, which sees
-   * to the horizon, keeps the datum under the cloud. The points are lifted
-   * from the datum; the pivot sits at the middle of the relief.
+   * drawn height within the view's height of it, so a tilted view, which sees
+   * farther, keeps the datum under the cloud. The points are lifted from
+   * the datum; the pivot sits at the middle of the relief.
    */
   function publishDatum() {
     const pivot = options.pointPivot.direction();
@@ -267,8 +259,7 @@ export function usePointLayer(options: TPointLayerOptions) {
       return;
     }
     material.uniforms.heightReference.value = around.min;
-    band = { low: 0, high: around.max - around.min };
-    options.pointPivot.setHeight(lift(band.high / 2));
+    options.pointPivot.setHeight(lift((around.max - around.min) / 2));
   }
 
   /** The drawn heights' range and histogram, as the store's data range. */
@@ -574,17 +565,12 @@ export function usePointLayer(options: TPointLayerOptions) {
     (mode) => options.pointPivot.setLeftDrag(mode),
     { immediate: true }
   );
-  // the view buttons: the camera tilts to a profile, framing the drawn
-  // heights' band, or back to the top
+  // the view buttons: the camera tilts to the oblique view, or back to the top
   watch(
     () => store.pointTierTilt,
     (request) => {
       if (request && active.value) {
-        const fit =
-          request.degrees === POINT_PIVOT_TILTS.PROFILE && band
-            ? lift(band.high - band.low)
-            : undefined;
-        options.pointPivot.tiltTo(request.degrees, fit);
+        options.pointPivot.tiltTo(request.degrees);
       }
     }
   );

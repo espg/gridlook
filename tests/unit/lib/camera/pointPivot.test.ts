@@ -168,7 +168,7 @@ describe("dollyTowardGround", () => {
   });
 
   it("lets a camera at ground level close in on the pivot, to the distance limit", () => {
-    // a profile: the camera 3 km from the pivot along the ground, a few
+    // a camera 3 km from the pivot along the ground, a few
     // decimetres above the sphere, well below the altitude floor
     const pivot = onSphere(SIERRA.lat, SIERRA.lon);
     const east = new THREE.Vector3(0, 0, 1).cross(pivot).normalize();
@@ -213,7 +213,7 @@ describe("the view's geometry", () => {
 });
 
 describe("pivotNearPlane", () => {
-  it("follows the altitude down to the floor, where a profile camera sits", () => {
+  it("follows the altitude down to the floor, and no further", () => {
     expect(pivotNearPlane(5000 / R) * R).toBeCloseTo(100, 9);
     expect(pivotNearPlane(0.3 / R) * R).toBeCloseTo(
       POINT_PIVOT_MIN_ALTITUDE_METERS / 50,
@@ -384,17 +384,17 @@ describe("createPointPivot", () => {
     );
   });
 
-  it("animates to the profile and back to the top, keeping azimuth, pivot and distance", () => {
+  it("animates to the oblique view and back to the top, keeping azimuth, pivot and distance", () => {
     const { camera, controls, pivot } = pivotControls(3000);
     pivot.enter(surfacePointNearRay(camera.position, forwardOf(camera)));
     controls.enableDamping = false;
     const target = controls.target.clone();
     const distance = pivot.pivotDistance();
-    // north is up at nadir: a profile backs away south and looks north
+    // north is up at nadir: the oblique view backs away south and looks north
     const north = new THREE.Vector3(0, 0, 1)
       .addScaledVector(target, -target.z)
       .normalize();
-    const animation = pivot.tiltTo(POINT_PIVOT_TILTS.PROFILE);
+    const animation = pivot.tiltTo(POINT_PIVOT_TILTS.OBLIQUE);
     const tilts: number[] = [];
     let moving = true;
     while (moving) {
@@ -405,29 +405,32 @@ describe("createPointPivot", () => {
     expect(tilts.length).toBe(6);
     expect(tilts[0]).toBeLessThan(tilts[1] - tilts[0]);
     expect([...tilts].sort((a, b) => a - b)).toEqual(tilts);
-    expect(pivot.tilt()).toBeCloseTo(90, 6);
-    expect(POINT_PIVOT_MAX_TILT_DEGREES).toBe(90);
+    expect(pivot.tilt()).toBeCloseTo(60, 6);
+    expect(POINT_PIVOT_MAX_TILT_DEGREES).toBe(85);
     expect(controls.target.distanceTo(target) * R).toBeLessThan(1e-3);
     expect(pivot.pivotDistance()).toBeCloseTo(distance, 12);
     const offset = camera.position.clone().sub(controls.target).normalize();
-    expect(offset.dot(north)).toBeCloseTo(-1, 6);
-    // the horizon is up and the view still centres the pivot
-    expect(
-      new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion).dot(target)
-    ).toBeCloseTo(1, 6);
+    expect(offset.dot(north)).toBeCloseTo(-Math.sin(Math.PI / 3), 6);
+    // the horizon is up (screen-up is the vertical's part across the view,
+    // which leans north) and the view still centres the pivot
+    const screenUp = new THREE.Vector3(0, 1, 0).applyQuaternion(
+      camera.quaternion
+    );
+    expect(screenUp.dot(north)).toBeGreaterThan(0.4);
+    expect(screenUp.clone().cross(target).dot(north)).toBeCloseTo(0, 6);
     expect(
       surfacePointNearRay(camera.position, forwardOf(camera)).distanceTo(
         controls.target
       ) * R
     ).toBeLessThan(1e-3);
-    // an orbit drag from the profile turns about the vertical at 90°
+    // an orbit drag from there turns about the vertical at 60°
     controls._rotateLeft(Math.PI / 2);
     controls.update();
-    expect(pivot.tilt()).toBeCloseTo(90, 3);
+    expect(pivot.tilt()).toBeCloseTo(60, 3);
     expect(pivot.pivotDistance()).toBeCloseTo(distance, 12);
     const turned = camera.position.clone().sub(controls.target).normalize();
     expect(Math.abs(turned.dot(north))).toBeLessThan(1e-3);
-    // and back to the top, from where the profile was
+    // and back to the top, from where the oblique view was
     const back = pivot.tiltTo(POINT_PIVOT_TILTS.TOP);
     while (back.advance(0.05)) {
       // frames
@@ -437,7 +440,7 @@ describe("createPointPivot", () => {
     expect(controls.target.distanceTo(target) * R).toBeLessThan(1e-3);
     // the animation gives up with the pivot
     pivot.leave();
-    expect(pivot.tiltTo(POINT_PIVOT_TILTS.PROFILE).advance(0.1)).toBe(false);
+    expect(pivot.tiltTo(POINT_PIVOT_TILTS.OBLIQUE).advance(0.1)).toBe(false);
   });
 
   it("lifts the pivot to the cloud's mid-height and keeps it there", () => {
@@ -476,29 +479,6 @@ describe("createPointPivot", () => {
     pivot.leave();
     pivot.enter(surfacePointNearRay(camera.position, forwardOf(camera)));
     expect(controls.target.length()).toBeCloseTo(1, 12);
-  });
-
-  it("backs a profile off to fit the cloud's height band in the view", () => {
-    const { camera, controls, pivot } = pivotControls(1000);
-    pivot.enter(surfacePointNearRay(camera.position, forwardOf(camera)));
-    controls.enableDamping = false;
-    const band = 600 / R;
-    const fitted = pivot.tiltTo(POINT_PIVOT_TILTS.PROFILE, band);
-    while (fitted.advance(0.1)) {
-      // frames
-    }
-    expect(pivot.tilt()).toBeCloseTo(90, 6);
-    // the band spans 80% of the view's height at the pivot's depth
-    const span =
-      2 * pivot.pivotDistance() * Math.tan(THREE.MathUtils.degToRad(7.5 / 2));
-    expect(band / span).toBeCloseTo(0.8, 9);
-    // a camera already farther away stays where it is
-    const distance = pivot.pivotDistance();
-    const kept = pivot.tiltTo(POINT_PIVOT_TILTS.PROFILE, band / 10);
-    while (kept.advance(0.1)) {
-      // frames
-    }
-    expect(pivot.pivotDistance()).toBeCloseTo(distance, 12);
   });
 
   it("lets the left button orbit instead, with shift + left orbiting either way", () => {

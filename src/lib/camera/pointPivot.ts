@@ -10,17 +10,15 @@ import { EARTH_RADIUS_METERS } from "./cameraSettings.ts";
  *
  * - `controls.target` is a point of the unit sphere, the pivot, and the
  *   camera's up is the local vertical there, so the polar angle is the tilt
- *   from nadir (0) to `POINT_PIVOT_MAX_TILT_DEGREES` (90, a profile: the
- *   camera at ground level looking along the ground at the pivot) and the
- *   azimuth turns about the vertical: the right button, shift + left and
- *   two fingers orbit the pivot that way (espg's ruling, gridlook#25);
- *   `tiltTo` animates the tilt to a given angle, the Top and Profile
- *   buttons, keeping the azimuth and the pivot (a profile also backs off
- *   to fit the cloud's height in the view);
+ *   from nadir (0) to `POINT_PIVOT_MAX_TILT_DEGREES` and the azimuth turns
+ *   about the vertical: the right button, shift + left and two fingers
+ *   orbit the pivot that way (espg's ruling, gridlook#25); `tiltTo`
+ *   animates the tilt to a given angle, the Top and Oblique buttons,
+ *   keeping the azimuth, the pivot and the distance;
  * - the pivot is lifted off the sphere by `setHeight`, to the cloud's
- *   mid-height, so that an orbit turns about the cloud and a profile
- *   centres it rather than the ground; the lifted pivot keeps its place
- *   on the sphere's vertical, so a nadir view does not notice;
+ *   mid-height, so that an orbit turns about the cloud and an oblique
+ *   view centres it rather than the ground; the lifted pivot keeps its
+ *   place on the sphere's vertical, so a nadir view does not notice;
  * - the left button (one finger, the arrow keys) pans: it moves the pivot
  *   in its tangent plane (`screenSpacePanning` off with a vertical up) and
  *   the pivot is put back on the sphere after every update, so a drag
@@ -41,18 +39,20 @@ import { EARTH_RADIUS_METERS } from "./cameraSettings.ts";
  * the azimuth go.
  */
 
-/** The farthest the camera tilts from nadir, degrees: a side elevation. */
-export const POINT_PIVOT_MAX_TILT_DEGREES = 90;
+/** The farthest the camera tilts from nadir, degrees. */
+export const POINT_PIVOT_MAX_TILT_DEGREES = 85;
 /** What a plain left drag (one finger) does. */
 export const POINT_PIVOT_LEFT_DRAGS = { PAN: "pan", ORBIT: "orbit" } as const;
 export type TPivotLeftDrag =
   (typeof POINT_PIVOT_LEFT_DRAGS)[keyof typeof POINT_PIVOT_LEFT_DRAGS];
-/** The tilts the view buttons animate to, degrees from nadir. */
-export const POINT_PIVOT_TILTS = { TOP: 0, PROFILE: 90 } as const;
+/**
+ * The tilts the view buttons animate to, degrees from nadir: the oblique
+ * view at 60° (espg's ruling on gridlook#25: a side view pulls in a huge
+ * window from the perspective shift).
+ */
+export const POINT_PIVOT_TILTS = { TOP: 0, OBLIQUE: 60 } as const;
 /** Seconds a view button's tilt animation takes. */
 const TILT_ANIMATION_SECONDS = 0.6;
-/** A profile fits the cloud's height band in this fraction of the view. */
-const PROFILE_FIT_FRACTION = 0.8;
 /** The camera comes no closer than this to the pivot, metres. */
 export const POINT_PIVOT_MIN_DISTANCE_METERS = 200;
 /** The camera stays this far above the surface when zooming in, metres. */
@@ -60,8 +60,8 @@ export const POINT_PIVOT_MIN_ALTITUDE_METERS = 100;
 /**
  * The near plane as a fraction of the camera's altitude above the sphere:
  * the cloud reaches from the sphere up to the camera, and the depth buffer
- * is not needed for the points themselves. A camera tilted to the profile
- * sits at ground level: its near plane is taken at the altitude floor.
+ * is not needed for the points themselves. A camera tilted far at a short
+ * distance can be below the altitude floor: its near plane is taken there.
  */
 const POINT_PIVOT_NEAR_FRACTION = 1 / 50;
 /** A full-height drag turns this fraction of a turn about the pivot. */
@@ -169,9 +169,9 @@ export function surfacePointNearRay(
  * the cursor, and the pivot becomes the surface point under the view centre
  * (the `forward` ray from the new position, on the sphere of
  * `pivotRadius`). Zooming in stops at `minAltitude` above the surface, in
- * scene units, and a camera already below that (tilted to the profile, at
- * ground level) stops `minDistance` short of the ground point instead;
- * null when the camera is already there.
+ * scene units, and a camera already below that (tilted far at a short
+ * distance) stops `minDistance` short of the ground point instead; null
+ * when the camera is already there.
  */
 export function dollyTowardGround(
   position: THREE.Vector3,
@@ -338,7 +338,7 @@ export function createPointPivot(controls: OrbitControls) {
   /**
    * The direction along the ground the camera lies in from the pivot, its
    * azimuth; at nadir, where there is none, behind the bottom of the
-   * screen, so a profile keeps looking the way the view faces.
+   * screen, so an oblique view keeps looking the way the view faces.
    */
   function azimuthDirection() {
     const up = vertical();
@@ -366,22 +366,11 @@ export function createPointPivot(controls: OrbitControls) {
 
   /**
    * An animation of the tilt to `degrees` over `seconds`, eased in and out:
-   * `advance(dt)` moves it and is true while it has further to go. Given
-   * `fitHeight` (scene units, the cloud's height band), the camera also
-   * backs off until the band spans `PROFILE_FIT_FRACTION` of the view.
+   * `advance(dt)` moves it and is true while it has further to go.
    */
-  function tiltTo(
-    degrees: number,
-    fitHeight?: number,
-    seconds = TILT_ANIMATION_SECONDS
-  ) {
-    const from = { tilt: tilt(), distance: pivotDistance() };
-    const fit = fitHeight
-      ? fitHeight /
-        PROFILE_FIT_FRACTION /
-        (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)))
-      : 0;
-    const distance = Math.max(from.distance, fit);
+  function tiltTo(degrees: number, seconds = TILT_ANIMATION_SECONDS) {
+    const from = tilt();
+    const distance = pivotDistance();
     let elapsed = 0;
     return {
       advance(deltaSeconds: number) {
@@ -390,11 +379,7 @@ export function createPointPivot(controls: OrbitControls) {
         }
         elapsed += deltaSeconds;
         const s = Math.min(elapsed / seconds, 1);
-        const eased = s * s * (3 - 2 * s);
-        setTilt(
-          from.tilt + (degrees - from.tilt) * eased,
-          from.distance + (distance - from.distance) * eased
-        );
+        setTilt(from + (degrees - from) * s * s * (3 - 2 * s), distance);
         return s < 1;
       },
     };

@@ -210,7 +210,7 @@ It exists on the globe only; a flat projection stops at the finest level.
   (`neighbourhoodRange` in `src/lib/points/pointRange.ts`), refreshed as
   chunks land: the datum floats on the view's lowest height, so the cloud
   always rises from the sphere at the pivot, over a 3 000 m plateau as
-  over a beach, and a profile, whose window reaches the horizon, keeps it
+  over a beach, and a tilted view, whose window reaches farther, keeps it
   there. The exaggeration is 1 for now (both are shader uniforms). Positions are kept relative to each chunk's centre so that
   float32 resolves millimetres.
 - **Colour.** The colour is the height on the current colormap, over the
@@ -240,23 +240,24 @@ It exists on the globe only; a flat projection stops at the finest level.
   legend under the level picker while the tier is on: **the left button
   (one finger, the arrow keys) pans** in the ground plane, the pivot
   sliding along the surface; **shift + left, the right button (two
-  fingers) orbit** the pivot, tilting from nadir to 90° and turning about
+  fingers) orbit** the pivot, tilting from nadir to 85° and turning about
   the vertical with the horizon kept up; **the middle button and the wheel
   (+/-) dolly toward the ground under the cursor**, which stays under the
   cursor. The globe keeps its own buttons (left drag rotates it). The
   camera comes no closer than 200 m to the pivot and stays at least 100 m
-  above the surface, except tilted to the profile, where it is at ground
-  level and the wheel stops 200 m short of the pivot instead. Leaving puts
-  the camera back on the globe orbit above the pivot at its altitude.
+  above the surface; a camera tilted far at a short distance can be below
+  that floor, and the wheel then stops 200 m short of the ground point
+  instead. Leaving puts the camera back on the globe orbit above the pivot
+  at its altitude.
 - **Mode buttons.** **Pan** (the default) and **Orbit** under the legend
   set what a plain left drag (one finger) does; shift + left and the right
   button (two fingers) orbit whichever is on, and the arrow keys pan. The
   legend says which is on. The globe's buttons are untouched.
 - **Pivot height.** The pivot is lifted off the sphere to the middle of
   the relief around it (the datum to the highest point within the view's
-  height of it), so an orbit turns about the cloud and a profile centres
-  it; the pivot stays on the sphere's vertical, so a nadir view does not
-  notice. The lift follows the relief as chunks land.
+  height of it), so an orbit turns about the cloud and an oblique view
+  centres it; the pivot stays on the sphere's vertical, so a nadir view
+  does not notice. The lift follows the relief as chunks land.
 - **Opacity.** The panel's slider (0.05 to 1, 1 by default) scales the
   points' alpha (`pointOpacity`, a uniform of the falloff fragment shader),
   so dense tracks show their depth; the splat's soft edge stays.
@@ -265,13 +266,12 @@ It exists on the globe only; a flat projection stops at the finest level.
   view's depth), whether or not the pointer is over the canvas and whether
   or not the distance-scale toggle is on; elsewhere it follows the cursor
   as before. There is no vertical scale.
-- **View buttons.** Under the legend, **Top** and **Profile** animate the
-  tilt (0.6 s, eased) to nadir and to 90°, a side elevation of the cloud
-  with the up axis in view, keeping the azimuth and the pivot; from nadir
-  a profile backs away behind the bottom of the screen, so it looks the
-  way the view faced, and backs off (never in) until the relief around
-  the pivot spans 80 % of the view's height. Orbit drags work from either view. A
-  profile sees to the horizon, so its window grows to the fetch cap.
+- **View buttons.** Under the legend, **Top** and **Oblique** animate the
+  tilt (0.6 s, eased) to nadir and to 60° (not a side elevation: at 90°
+  the perspective shift pulls in a huge window), keeping the azimuth, the
+  pivot and the distance; from nadir the oblique view backs away behind
+  the bottom of the screen, so it looks the way the view faced. Orbit
+  drags work from either view.
 - **Panel.** A click pins the order-17 cell's digest, as on level 17.
 
 ## Filling the gaps between tracks

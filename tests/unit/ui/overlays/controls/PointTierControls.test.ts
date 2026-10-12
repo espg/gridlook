@@ -23,7 +23,7 @@ it("carries the legend and the view buttons", async () => {
     ">Drag pans · Shift+drag or right-drag orbits · wheel zooms to the cursor<"
   );
   expect(html).toMatch(/<button[^>]*>\s*Top\s*<\/button>/);
-  expect(html).toMatch(/<button[^>]*>\s*Profile\s*<\/button>/);
+  expect(html).toMatch(/<button[^>]*>\s*Oblique\s*<\/button>/);
 });
 
 it("marks the drag mode and words the legend for it", async () => {
@@ -77,11 +77,11 @@ it("carries the opacity slider, clamped to its range", async () => {
 it("asks the camera for a tilt once per press", () => {
   const store = useGlobeControlStore();
   expect(store.pointTierTilt).toBeUndefined();
-  store.requestPointTierTilt(POINT_PIVOT_TILTS.PROFILE);
-  expect(store.pointTierTilt).toEqual({ degrees: 90, serial: 1 });
+  store.requestPointTierTilt(POINT_PIVOT_TILTS.OBLIQUE);
+  expect(store.pointTierTilt).toEqual({ degrees: 60, serial: 1 });
   // the same view asked again is a new request: the watch fires again
-  store.requestPointTierTilt(POINT_PIVOT_TILTS.PROFILE);
-  expect(store.pointTierTilt).toEqual({ degrees: 90, serial: 2 });
+  store.requestPointTierTilt(POINT_PIVOT_TILTS.OBLIQUE);
+  expect(store.pointTierTilt).toEqual({ degrees: 60, serial: 2 });
   store.requestPointTierTilt(POINT_PIVOT_TILTS.TOP);
   expect(store.pointTierTilt).toEqual({ degrees: 0, serial: 3 });
 });
