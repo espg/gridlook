@@ -7,6 +7,7 @@ import {
 import { digestVariableOf, type TDigestVariable } from "./digestVariables.ts";
 import type { TDigestChunk } from "./tdigest.ts";
 
+import type { TStrataBytes } from "@/lib/data/levels.ts";
 import type { TDataSource } from "@/lib/types/GlobeTypes.ts";
 
 /**
@@ -115,19 +116,24 @@ export function duplicateStratumVariables(
 }
 
 /**
- * Bytes of the noise digest of a cell or a chunk relative to the signal's
- * (the ATL03 v3 store, over the Sierra window: 1.2×), and what a choice
- * costs relative to the signal alone: `both` reads the two.
+ * Bytes of the noise digest relative to the signal's, measured on the ATL03
+ * v3 store over the Sierra Nevada: per cell of a stored level (order 13,
+ * capped digests) and per leaf chunk (one centroid per photon, with the
+ * located words the point tier reads beside), and what a choice costs
+ * relative to the signal alone: `both` reads the two.
  */
-const NOISE_BYTES_RATIO = 1.2;
-export function strataBytesFactor(choice: TStratumChoice) {
+export const NOISE_BYTES_RATIO: TStrataBytes = { cell: 1.2, chunk: 4 };
+export function strataBytesFactor(choice: TStratumChoice): TStrataBytes {
   switch (choice) {
     case DIGEST_STRATA.NOISE:
       return NOISE_BYTES_RATIO;
     case DIGEST_STRATA.BOTH:
-      return 1 + NOISE_BYTES_RATIO;
+      return {
+        cell: 1 + NOISE_BYTES_RATIO.cell,
+        chunk: 1 + NOISE_BYTES_RATIO.chunk,
+      };
     default:
-      return 1;
+      return { cell: 1, chunk: 1 };
   }
 }
 

@@ -5,7 +5,7 @@ import PointTierControls from "./PointTierControls.vue";
 import { pointTierLegend } from "./pointTierLegend.ts";
 
 import { exceedsCellCap, finestLevel, POINT_TIER } from "@/lib/data/levels.ts";
-import { pointTierSource } from "@/lib/points/pointSource.ts";
+import { pointTierSources } from "@/lib/points/pointSource.ts";
 import type { TSourceLevel } from "@/lib/types/GlobeTypes.ts";
 import { useGlobeControlStore } from "@/store/store.ts";
 
@@ -38,15 +38,21 @@ const options = computed(() =>
 );
 
 // the point tier, when the finest level has observations under the shown
-// variable: listed before the levels, as the finest entry
+// variable: listed before the levels, as the finest entry, named by the
+// strata drawn
 const pointTier = computed(() => {
   const finest = finestLevel(props.levels);
-  const source =
+  const sources =
     finest === undefined
-      ? undefined
-      : pointTierSource(props.levels[finest], store.varnameSelector);
-  return source && finest !== undefined
-    ? { index: finest, label: `points (${source.stratum ?? source.array})` }
+      ? []
+      : pointTierSources(
+          props.levels[finest],
+          store.varnameSelector,
+          store.digestStratum
+        );
+  const strata = sources.map(({ stratum, array }) => stratum ?? array);
+  return sources.length && finest !== undefined
+    ? { index: finest, label: `points (${strata.join(" + ")})` }
     : undefined;
 });
 

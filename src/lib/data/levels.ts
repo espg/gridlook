@@ -168,6 +168,15 @@ export function digestCellBytes(order: number, strata = 1) {
 }
 
 /**
+ * What a stratum choice reads relative to the signal digest alone, per
+ * cell of a stored level and per leaf chunk (the digests of a leaf are
+ * one centroid per photon, so the noise, several photons to one of
+ * signal, weighs more there than in a capped stored digest).
+ */
+export type TStrataBytes = { cell: number; chunk: number };
+const SIGNAL_ALONE: TStrataBytes = { cell: 1, chunk: 1 };
+
+/**
  * Blocks a window of a digest variable may hold within a byte budget: cells
  * of `cellsPerBlock` on a stored level, leaf chunks on a derived one, each
  * priced at every stratum the choice reads (`strata`).
@@ -177,11 +186,11 @@ export function digestWindowBlocks(
   order: number,
   cellsPerBlock: number,
   budget = DEFAULT_VIEW_BUDGET_BYTES,
-  strata = 1
+  strata = SIGNAL_ALONE
 ) {
   const blockBytes = level.derived
-    ? DIGEST_CHUNK_BYTES * strata
-    : digestCellBytes(order, strata) * cellsPerBlock;
+    ? DIGEST_CHUNK_BYTES * strata.chunk
+    : digestCellBytes(order, strata.cell) * cellsPerBlock;
   return Math.max(Math.floor(budget / blockBytes), 1);
 }
 
@@ -285,7 +294,7 @@ export function windowCost(
   cells: number,
   digest: boolean,
   budget = DEFAULT_VIEW_BUDGET_BYTES,
-  strata = 1
+  strata = SIGNAL_ALONE
 ) {
   const margin = digest ? DIGEST_WINDOW_MARGIN : VIEW_WINDOW_MARGIN;
   cells *= (1 + 2 * margin) ** 2;
@@ -294,9 +303,10 @@ export function windowCost(
   }
   const bytes = level.derived
     ? (cells / 4 ** (DIGEST_CHUNK_ORDERS - level.derived.refinement)) *
-      DIGEST_CHUNK_BYTES
-    : cells * digestCellBytes(healpixOrderOf(level.resolution!));
-  return (bytes * strata) / budget;
+      DIGEST_CHUNK_BYTES *
+      strata.chunk
+    : cells * digestCellBytes(healpixOrderOf(level.resolution!), strata.cell);
+  return bytes / budget;
 }
 
 /** The coarsest of some levels: the least harmful when nothing fits. */
@@ -324,7 +334,7 @@ export type TLevelSelectionOptions = {
   /** Whether the variable shown is derived from a t-digest. */
   digest?: boolean;
   /** What the stratum choice reads relative to the signal digest alone. */
-  strata?: number;
+  strata?: TStrataBytes;
   pixelFloor?: number;
   budget?: number;
   slack?: number;

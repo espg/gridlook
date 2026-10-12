@@ -13,12 +13,16 @@ import { viewHeightAt, type TPivotLeftDrag } from "@/lib/camera/pointPivot.ts";
 import { currentLevel } from "@/lib/data/levels.ts";
 import { storeReaders, type TLeafReaders } from "@/lib/digest/digestField.ts";
 import { createByteLru } from "@/lib/digest/digestReader.ts";
+import { strataBytesFactor } from "@/lib/digest/strata.ts";
 import { healpixViewBlocks } from "@/lib/grids/healpixWindow.ts";
 import { MORTON_STORE_ELLIPSOID } from "@/lib/morton/convention.ts";
 import {
   decimatedCount,
   decimationStride,
   maxWindowChunks,
+  NOISE_POINT_SIZE,
+  OBSERVATION_CHUNK_BYTES,
+  OBSERVATION_FETCH_CAP,
   OBSERVATION_MARGIN,
 } from "@/lib/points/pointBudget.ts";
 import {
@@ -33,9 +37,9 @@ import { neighbourhoodRange, pointRange } from "@/lib/points/pointRange.ts";
 import {
   locationsArrayOf,
   pointArrayPath,
-  pointTierSource,
+  pointTierSources,
   timesArrayOf,
-  type TPointSource,
+  type TPointStratum,
 } from "@/lib/points/pointSource.ts";
 import { POINT_COLOURS, type TPointColour } from "@/lib/points/pointTimes.ts";
 import type { ProjectionHelper } from "@/lib/projection/projectionUtils.ts";
@@ -55,6 +59,8 @@ const POINT_PIXELS = 4;
 const POINT_CACHE_BYTES = 64 * 2 ** 20;
 /** Drawn after the (hidden) level (0) and before the overlays. */
 const POINT_RENDER_ORDER = 0.5;
+/** The muted cloud is drawn first, so the signal's reads over it. */
+const MUTED_RENDER_ORDER = 0.4;
 
 type TPointLayerOptions = {
   getDatasources: () => TSources | undefined;
@@ -141,7 +147,10 @@ function pointGeometry(drawn: TPointChunk, colour: TPointColour) {
  * every chunk is drawn. The colour range and the histogram are the drawn
  * values' (`pointRange`), heights or times (phase B: the times sibling is
  * read only when the colour asks for it), refreshed as the window changes,
- * until the tier is left and the level's rule again.
+ * until the tier is left and the level's rule again. The stratum choice
+ * (strata.ts) says which digests are drawn: one cloud per stratum, the
+ * noise of a `both` choice beneath the signal and muted, the range, the
+ * histogram and the point budget over their union.
  */
 // eslint-disable-next-line max-lines-per-function
 export function usePointLayer(options: TPointLayerOptions) {
@@ -149,11 +158,17 @@ export function usePointLayer(options: TPointLayerOptions) {
   const { logError } = useLog();
   const gridAt = createGrids();
   const cache = createByteLru<TPointChunk>(POINT_CACHE_BYTES, pointChunkBytes);
-  // the window on screen: its chunks, decoded, what is drawn of each
-  // (every stride-th point) and their objects
+  // the window on screen: one entry per stratum and chunk, decoded, what is
+  // drawn of each (every stride-th point) and their objects
   const window = new Map<
-    number,
-    { chunk: TPointChunk; drawn: TPointChunk; points: THREE.Points }
+    string,
+    {
+      source: TPointStratum;
+      index: number;
+      chunk: TPointChunk;
+      drawn: TPointChunk;
+      points: THREE.Points;
+    }
   >();
   let loaded: { chunks: number[]; chunkOrder: number } | undefined;
   let stride = 1;
@@ -161,23 +176,37 @@ export function usePointLayer(options: TPointLayerOptions) {
   let started = 0;
   let firstPointsMs: number | undefined;
   let decodeMs = 0;
-  let material: THREE.ShaderMaterial | undefined;
+  // the signal's material and the muted one, by `muted`
+  const materials = new Map<boolean, THREE.ShaderMaterial>();
   let revision = 0;
 
-  const source = computed(() => {
+  const sources = computed(() => {
     const sources = options.getDatasources();
     return sources
-      ? pointTierSource(currentLevel(sources), store.varnameSelector)
-      : undefined;
+      ? pointTierSources(
+          currentLevel(sources),
+          store.varnameSelector,
+          store.digestStratum
+        )
+      : [];
   });
   const active = computed(
     () =>
       store.pointTier &&
       !options.projectionHelper.value.isFlat &&
-      source.value !== undefined
+      sources.value.length > 0
   );
 
-  function pointMaterial() {
+  const entryKey = (source: TPointStratum, index: number) =>
+    `${source.array}/${index}`;
+
+  function updateOpacity(material: THREE.ShaderMaterial, muted: boolean) {
+    material.uniforms.pointOpacity.value =
+      store.pointTierOpacity * (muted ? store.pointTierNoiseOpacity : 1);
+  }
+
+  function pointMaterial(muted: boolean) {
+    let material = materials.get(muted);
     if (!material) {
       const { addOffset, scaleFactor } = getColormapScaleOffset(
         store.selection?.low as number,
@@ -190,7 +219,8 @@ export function usePointLayer(options: TPointLayerOptions) {
         scaleFactor,
         MORTON_STORE_ELLIPSOID.semi_major_axis
       );
-      material.uniforms.pointOpacity.value = store.pointTierOpacity;
+      updateOpacity(material, muted);
+      materials.set(muted, material);
     }
     return material;
   }
@@ -201,6 +231,7 @@ export function usePointLayer(options: TPointLayerOptions) {
 
   /** Scene units a height above the datum is drawn at (the shader's lift). */
   function lift(metres: number) {
+    const material = materials.get(false) ?? materials.get(true);
     return (
       (metres * (material?.uniforms.heightExaggeration.value ?? 1)) /
       MORTON_STORE_ELLIPSOID.semi_major_axis
@@ -209,25 +240,28 @@ export function usePointLayer(options: TPointLayerOptions) {
 
   function updatePointSize() {
     const distance = options.pointPivot.distance();
-    if (!material || distance === undefined) {
+    if (distance === undefined) {
       return;
     }
-    material.uniforms.basePointSize.value = POINT_PIXELS * distance;
+    for (const [muted, material] of materials) {
+      material.uniforms.basePointSize.value =
+        POINT_PIXELS * (muted ? NOISE_POINT_SIZE : 1) * distance;
+    }
   }
 
-  function remove(index: number) {
-    const entry = window.get(index);
+  function remove(key: string) {
+    const entry = window.get(key);
     if (entry) {
       entry.points.geometry.dispose();
       options.getScene()?.remove(entry.points);
-      window.delete(index);
+      window.delete(key);
     }
   }
 
   function clear() {
     revision++;
-    for (const index of [...window.keys()]) {
-      remove(index);
+    for (const key of [...window.keys()]) {
+      remove(key);
     }
     loaded = undefined;
     stride = 1;
@@ -242,23 +276,29 @@ export function usePointLayer(options: TPointLayerOptions) {
    * The datum and the relief around the pivot: the lowest and highest
    * drawn height within the view's height of it, so a tilted view, which sees
    * farther, keeps the datum under the cloud. The points are lifted from
-   * the datum; the pivot sits at the middle of the relief.
+   * the datum; the pivot sits at the middle of the relief. A muted cloud
+   * (the noise under `both`, spread over kilometres of height) is context
+   * and does not move either: the signal's relief is the ground's.
    */
   function publishDatum() {
     const pivot = options.pointPivot.direction();
     const distance = options.pointPivot.distance();
-    if (!material || !pivot || distance === undefined) {
+    if (materials.size === 0 || !pivot || distance === undefined) {
       return;
     }
     const around = neighbourhoodRange(
-      [...window.values()].map(({ drawn }) => drawn),
+      [...window.values()]
+        .filter(({ source }) => !source.muted)
+        .map(({ drawn }) => drawn),
       pivot.toArray(),
       viewHeightAt(distance, CAMERA_VERTICAL_FOV_DEGREES)
     );
     if (!around) {
       return;
     }
-    material.uniforms.heightReference.value = around.min;
+    for (const material of materials.values()) {
+      material.uniforms.heightReference.value = around.min;
+    }
     options.pointPivot.setHeight(lift((around.max - around.min) / 2));
   }
 
@@ -290,7 +330,7 @@ export function usePointLayer(options: TPointLayerOptions) {
       drawn += decimatedCount(chunk.count, stride);
     }
     store.setPointTierStats({
-      chunks: loaded?.chunks.length ?? 0,
+      chunks: (loaded?.chunks.length ?? 0) * sources.value.length,
       loaded: window.size,
       photons,
       drawn,
@@ -301,14 +341,15 @@ export function usePointLayer(options: TPointLayerOptions) {
     });
   }
 
-  function draw(index: number, chunk: TPointChunk) {
+  function draw(source: TPointStratum, index: number, chunk: TPointChunk) {
     const scene = options.getScene();
     if (!scene) {
       return;
     }
     const drawn = decimatePointChunk(chunk, stride);
     const geometry = pointGeometry(drawn, store.pointTierColour);
-    const entry = window.get(index);
+    const key = entryKey(source, index);
+    const entry = window.get(key);
     if (entry) {
       entry.points.geometry.dispose();
       entry.points.geometry = geometry;
@@ -316,12 +357,12 @@ export function usePointLayer(options: TPointLayerOptions) {
       entry.drawn = drawn;
       return;
     }
-    const points = new THREE.Points(geometry, pointMaterial());
+    const points = new THREE.Points(geometry, pointMaterial(source.muted));
     points.frustumCulled = false;
-    points.renderOrder = POINT_RENDER_ORDER;
+    points.renderOrder = source.muted ? MUTED_RENDER_ORDER : POINT_RENDER_ORDER;
     points.position.set(...chunk.origin);
     scene.add(points);
-    window.set(index, { chunk, drawn, points });
+    window.set(key, { source, index, chunk, drawn, points });
     options.updateColormap([points]);
   }
 
@@ -336,8 +377,8 @@ export function usePointLayer(options: TPointLayerOptions) {
       return;
     }
     stride = next;
-    for (const [index, { chunk }] of window) {
-      draw(index, chunk);
+    for (const { source, index, chunk } of window.values()) {
+      draw(source, index, chunk);
     }
   }
 
@@ -352,11 +393,15 @@ export function usePointLayer(options: TPointLayerOptions) {
       lat: footprint.centreLat,
       lon: footprint.centreLon,
     };
+    // priced at every stratum the choice reads
     const chunks = healpixViewBlocks(
       grid,
       { ...footprint, centreLat: centre.lat, centreLon: centre.lon },
       margin,
-      maxWindowChunks(),
+      maxWindowChunks(
+        OBSERVATION_FETCH_CAP,
+        OBSERVATION_CHUNK_BYTES * strataBytesFactor(store.digestStratum).chunk
+      ),
       0
     );
     return nearestFirst(chunks, grid, centre);
@@ -365,7 +410,7 @@ export function usePointLayer(options: TPointLayerOptions) {
   /** One chunk's points, decoded once per store. */
   async function decodedChunk(
     readers: TLeafReaders,
-    from: TPointSource,
+    from: TPointStratum,
     locations: string,
     chunkOrder: number,
     index: number
@@ -400,7 +445,7 @@ export function usePointLayer(options: TPointLayerOptions) {
   /** One chunk's points, with their times when the colour asks for them. */
   async function pointChunk(
     readers: TLeafReaders,
-    from: TPointSource,
+    from: TPointStratum,
     arrays: { locations: string; times?: string; chunkOrder: number },
     index: number
   ) {
@@ -432,7 +477,7 @@ export function usePointLayer(options: TPointLayerOptions) {
   }
 
   /** The leaf readers and what the source's arrays are. */
-  async function open(from: TPointSource) {
+  async function open(from: TPointStratum) {
     const readers = await storeReaders(from.store);
     if (!readers) {
       throw new Error("the point tier reads a hive store");
@@ -453,27 +498,51 @@ export function usePointLayer(options: TPointLayerOptions) {
     return { readers, arrays: { locations, times, chunkOrder } };
   }
 
+  /** One chunk of one stratum, drawn as it lands. */
+  async function land(
+    opened: Awaited<ReturnType<typeof open>>,
+    from: TPointStratum,
+    index: number,
+    request: number
+  ) {
+    const chunk = await pointChunk(opened.readers, from, opened.arrays, index);
+    if (request !== revision || !chunk) {
+      return;
+    }
+    firstPointsMs ??= performance.now() - started;
+    draw(from, index, chunk);
+    redecimate();
+    updatePointSize();
+    publishStats(false);
+    publishRange();
+    options.redraw();
+  }
+
   async function loadWindow() {
-    const from = source.value;
+    const from = sources.value;
     const footprint = store.viewFootprint;
-    if (!from || !footprint) {
+    if (from.length === 0 || !footprint) {
       return;
     }
     const request = ++revision;
     started = performance.now();
     firstPointsMs = undefined;
     decodeMs = 0;
-    const { readers, arrays } = await open(from);
+    const opened = await Promise.all(from.map(open));
     if (request !== revision) {
       return;
     }
-    store.setPointTierTimed(arrays.times !== undefined);
-    const chunkOrder = arrays.chunkOrder;
+    store.setPointTierTimed(
+      opened.every(({ arrays }) => arrays.times !== undefined)
+    );
+    const chunkOrder = opened[0].arrays.chunkOrder;
     const chunks = windowChunks(footprint, chunkOrder, OBSERVATION_MARGIN);
-    const wanted = new Set(chunks);
-    for (const index of [...window.keys()]) {
-      if (!wanted.has(index)) {
-        remove(index);
+    const wanted = new Set(
+      from.flatMap((source) => chunks.map((index) => entryKey(source, index)))
+    );
+    for (const key of [...window.keys()]) {
+      if (!wanted.has(key)) {
+        remove(key);
       }
     }
     loaded = { chunks, chunkOrder };
@@ -481,19 +550,9 @@ export function usePointLayer(options: TPointLayerOptions) {
     // every read is issued at once (the store coalesces neighbours); each
     // chunk is drawn as it lands, thinned again when the total asks for it
     await Promise.all(
-      chunks.map(async (index) => {
-        const chunk = await pointChunk(readers, from, arrays, index);
-        if (request !== revision || !chunk) {
-          return;
-        }
-        firstPointsMs ??= performance.now() - started;
-        draw(index, chunk);
-        redecimate();
-        updatePointSize();
-        publishStats(false);
-        publishRange();
-        options.redraw();
-      })
+      opened.flatMap((source, s) =>
+        chunks.map((index) => land(source, from[s], index, request))
+      )
     );
     if (request === revision) {
       publishStats(true);
@@ -501,9 +560,8 @@ export function usePointLayer(options: TPointLayerOptions) {
   }
 
   function windowStale() {
-    const from = source.value;
     const footprint = store.viewFootprint;
-    if (!from || !footprint) {
+    if (sources.value.length === 0 || !footprint) {
       return false;
     }
     if (loaded === undefined) {
@@ -540,23 +598,24 @@ export function usePointLayer(options: TPointLayerOptions) {
       reload();
     }
   });
-  // the colour choice: the window is drawn again, its times read if asked
+  // the colour choice: the window is drawn again, its times read if asked;
+  // the stratum choice: the strata' chunks are read
   watch(
-    () => store.pointTierColour,
+    () => [store.pointTierColour, store.digestStratum],
     () => {
       if (active.value) {
         reload();
       }
     }
   );
-  // the opacity slider
+  // the opacity slider, the muted cloud at its fraction of it
   watch(
     () => store.pointTierOpacity,
-    (opacity) => {
-      if (material) {
-        material.uniforms.pointOpacity.value = opacity;
-        options.redraw();
+    () => {
+      for (const [muted, material] of materials) {
+        updateOpacity(material, muted);
       }
+      options.redraw();
     }
   );
   // the mode buttons: what a plain left drag does
@@ -587,7 +646,9 @@ export function usePointLayer(options: TPointLayerOptions) {
   options.registerUpdateLOD(updatePointSize);
   onScopeDispose(() => {
     clear();
-    material?.dispose();
+    for (const material of materials.values()) {
+      material.dispose();
+    }
   });
 
   return { active };

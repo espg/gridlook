@@ -1,4 +1,9 @@
 import { digestVariableOf } from "@/lib/digest/digestVariables.ts";
+import {
+  DIGEST_STRATA,
+  strataArrays,
+  type TStratumChoice,
+} from "@/lib/digest/strata.ts";
 import type { TSourceLevel } from "@/lib/types/GlobeTypes.ts";
 
 /**
@@ -47,6 +52,37 @@ export function pointTierSource(
     array: digest.array,
     stratum: digest.stratum,
   };
+}
+
+/** A point source of a stratum choice. */
+export type TPointStratum = TPointSource & {
+  /** Drawn beneath the signal, muted: the noise of a `both` choice. */
+  muted: boolean;
+};
+
+/**
+ * The point sources of a stratum choice: one per digest array the choice
+ * reads for the variable shown (`strataArrays`), the signal first. Under
+ * `both` the noise is drawn muted so that the signal tracks still read;
+ * alone, at full strength. Empty where the level has no point source.
+ */
+export function pointTierSources(
+  level: Pick<TSourceLevel, "derived" | "datasources"> | undefined,
+  varname: string,
+  choice: TStratumChoice
+): TPointStratum[] {
+  const source = pointTierSource(level, varname);
+  if (!source || !level) {
+    return [];
+  }
+  return strataArrays(source, level.datasources, choice).map(
+    ({ array, stratum }, index) => ({
+      ...source,
+      array,
+      stratum,
+      muted: choice === DIGEST_STRATA.BOTH && index > 0,
+    })
+  );
 }
 
 /** The array path of a source's digest, or of a sibling array. */

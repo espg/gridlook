@@ -16,6 +16,16 @@ export const OBSERVATION_POINT_BUDGET = 300_000;
 export const POINT_OPACITY_RANGE = { min: 0.05, max: 1, step: 0.05 } as const;
 
 /**
+ * The noise cloud under the `both` choice, drawn beneath the signal's so
+ * the tracks still read: its opacity relative to the signal's (the store's
+ * `pointTierNoiseOpacity` default, a factor on the opacity slider) and its
+ * point size relative to the signal's. Alone, the noise draws at full
+ * strength.
+ */
+export const NOISE_POINT_OPACITY = 0.3;
+export const NOISE_POINT_SIZE = 0.6;
+
+/**
  * Bytes one window may fetch at most. Over it, the window is cut down
  * around the point below the camera, as a level picked by hand is.
  */
