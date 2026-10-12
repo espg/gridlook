@@ -28,6 +28,10 @@ const store = useGlobeControlStore();
 
 const urlParameterStore = useUrlParameterStore();
 
+const CAMERA_PARAMS = ["alt", "px", "py", "lat", "lon"];
+// ~37.3N 119.5W at 8,200 km: the state fills the view at the 7.5 degree FOV
+const CALIFORNIA_START = { lat: "37.3", lon: "-119.5", alt: "8200000" };
+
 const onHashChange = () => {
   if (location.hash.length > 1) {
     if (isDisplayMode.value || isPresenterActive.value) {
@@ -42,6 +46,16 @@ const onHashChange = () => {
     const paramString = paramArray.join("&");
 
     params.value = Object.fromEntries(new URLSearchParams(paramString));
+    // A zagg hive store opened without a camera starts above the whole of
+    // California (centred, zoom in from there) instead of the globe fit.
+    if (resource.startsWith("hive+")) {
+      if (!CAMERA_PARAMS.some((key) => key in params.value)) {
+        Object.assign(params.value, CALIFORNIA_START);
+      }
+      // the demo starts with both level aids off; the panel turns them on
+      store.setLevelParentBeneath(false);
+      store.setLevelRangeShared(false);
+    }
 
     for (const [key, value] of Object.entries(params.value) as [
       keyof typeof STORE_PARAM_MAPPING,
