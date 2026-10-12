@@ -370,6 +370,11 @@ export function useGridScene(options: UseGridSceneOptions) {
     },
     /** The pivot's place while the camera is on it, a few times a second. */
     ground: pivotGround,
+    /** The pivot's direction, a unit vector, exact; undefined off it. */
+    direction: () =>
+      pivotControls?.active && orbitControls
+        ? orbitControls.target.clone().normalize()
+        : undefined,
     /** The camera's distance to the pivot, scene units; undefined off it. */
     distance: () =>
       pivotControls?.active ? pivotControls.pivotDistance() : undefined,

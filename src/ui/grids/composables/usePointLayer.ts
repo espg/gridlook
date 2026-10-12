@@ -47,6 +47,7 @@ import type { TSources } from "@/lib/types/GlobeTypes.ts";
 import { useGlobeControlStore } from "@/store/store.ts";
 import { useLog } from "@/ui/common/useLog.ts";
 import type { useGridHistogram } from "@/ui/grids/composables/useGridHistogram.ts";
+import { usePointAxes } from "@/ui/grids/composables/usePointAxes.ts";
 
 /** Device pixels of a point at the pivot's depth (clamped to 1..8). */
 const POINT_PIXELS = 4;
@@ -73,6 +74,7 @@ type TPointLayerOptions = {
     setHeight: (above: number) => void;
     setLeftDrag: (mode: TPivotLeftDrag) => void;
     ground: Readonly<ShallowRef<{ lat: number; lon: number } | null>>;
+    direction: () => THREE.Vector3 | undefined;
     distance: () => number | undefined;
   };
 };
@@ -146,6 +148,7 @@ export function usePointLayer(options: TPointLayerOptions) {
   const { logError } = useLog();
   const gridAt = createGrids();
   const cache = createByteLru<TPointChunk>(POINT_CACHE_BYTES, pointChunkBytes);
+  const axes = usePointAxes({ getScene: options.getScene });
   // the window on screen: its chunks, decoded, and their objects
   const window = new Map<
     number,
@@ -205,12 +208,20 @@ export function usePointLayer(options: TPointLayerOptions) {
     );
   }
 
+  /** The point size and the axes follow the camera's distance to the pivot. */
   function updatePointSize() {
     const distance = options.pointPivot.distance();
-    if (!material || distance === undefined) {
+    const pivot = options.pointPivot.direction();
+    if (!material || distance === undefined || !pivot) {
+      axes.update(undefined);
       return;
     }
     material.uniforms.basePointSize.value = POINT_PIXELS * distance;
+    axes.update({
+      pivot,
+      distance,
+      exaggeration: material.uniforms.heightExaggeration.value,
+    });
   }
 
   function remove(index: number) {
@@ -230,6 +241,7 @@ export function usePointLayer(options: TPointLayerOptions) {
     loaded = undefined;
     stride = 1;
     band = undefined;
+    axes.update(undefined);
     store.setPointTierStats(undefined);
     if (store.pointTierBounds) {
       store.setPointTierBounds(undefined);
