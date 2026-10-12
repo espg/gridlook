@@ -213,6 +213,12 @@ let cellsReader:
 // whole level is loaded.
 let loadedBlocks: number[] | undefined;
 
+/**
+ * The ranges of a digest window nearest the camera read again once it has
+ * landed, for the cursor's distribution there: one round of reads in flight.
+ */
+const CENTRE_RANGES = 8;
+
 let mainMeshes: Array<THREE.Mesh | undefined> = new Array(HEALPIX_NUMCHUNKS);
 
 // The coarsest level of a multi-resolution dataset at the selected slice,
@@ -1378,6 +1384,15 @@ async function processHealpixChunks(
     } else {
       updateHealpixBatch(batch, target);
     }
+  }
+  if (ranges && level.digest) {
+    // the stream went through the working set nearest first, so the chunks
+    // under the camera left it first: read them once more, last
+    void readRanges(
+      ranges.slice(0, CENTRE_RANGES),
+      (range) => fetchCellRange(level, range, indices),
+      isCurrent
+    ).catch(() => undefined);
   }
   const parts: TFaceParts = new Map(
     [...(read?.assemblies ?? [])].map(([face, assembly]) => [

@@ -18,6 +18,8 @@ type TStoredLevel = {
   derivedChunk?: number;
   // a stored level's cells per chunk (65536 unless given)
   chunk?: number;
+  // the variable is derived from a t-digest
+  digest?: boolean;
   // reads land when the test releases them
   manual?: boolean;
   // added to a cell's value (its id plus one), to tell the level apart
@@ -70,7 +72,9 @@ function describeArray({ dataset }: TSource, variable: string) {
   return {
     shape: [3, cellCount(level)],
     chunks: [1, level.derivedChunk ?? level.chunk ?? 65536],
-    attrs: {},
+    attrs: level.digest
+      ? { digest: { array: "h_tdigest_signal", product: "percentile" } }
+      : {},
   };
 }
 
@@ -493,6 +497,24 @@ it("draws a window as its blocks land, the block under the camera first", async 
   expect(whole.length).toBeGreaterThan(256);
   expect(whole.length).toBe(fetchedCells("t"));
   expect(hover.lookup!(11, 31)!.value).toBe(under + 1);
+});
+
+it("reads the ranges under the camera again once a digest window has landed", async () => {
+  // the digests stream through a small working set nearest first: the
+  // chunks under the camera are read last as well, to be there for the cursor
+  stored.fine = { level: 9, chunk: 256, digest: true };
+  stored.coarse = { level: 3 };
+  await mount(11, 31, ["fine", "coarse"], 3);
+  const starts = () =>
+    fetches
+      .filter(({ dataset, variable }) => dataset === "fine" && variable === "t")
+      .map(({ start }) => start);
+  const window = new Set(starts()).size;
+  const again = Math.min(window, 8);
+  await until(() => starts().length === window + again);
+  expect(window).toBeGreaterThan(8);
+  expect(starts().slice(window)).toEqual(starts().slice(0, again));
+  expect(starts()[0]).toBeLessThanOrEqual(cellAt(9, 11, 31));
 });
 
 it("stops reading a window the view has left and draws nothing of it", async () => {
