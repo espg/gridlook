@@ -113,26 +113,6 @@ export function viewHeightAt(distance: number, fovDegrees: number) {
   return 2 * distance * Math.tan(THREE.MathUtils.degToRad(fovDegrees / 2));
 }
 
-/**
- * Where a point of the scene falls on the canvas, client coordinates of
- * `rect`; null when it is behind the camera. The camera's matrices must be
- * current (they are after a render).
- */
-export function screenPointOf(
-  point: THREE.Vector3,
-  camera: THREE.Camera,
-  rect: Pick<DOMRect, "left" | "top" | "width" | "height">
-) {
-  const ndc = point.clone().project(camera);
-  if (!(ndc.z < 1)) {
-    return null;
-  }
-  return {
-    clientX: rect.left + ((ndc.x + 1) * rect.width) / 2,
-    clientY: rect.top + ((1 - ndc.y) * rect.height) / 2,
-  };
-}
-
 /** The camera's near plane on the pivot, at `altitude` above the sphere. */
 export function pivotNearPlane(
   altitude: number,

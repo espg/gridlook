@@ -256,6 +256,32 @@ it("publishes the scale at the pivot on a tilted pivot camera, and follows a dol
   scope.stop();
 });
 
+it("reads the pivot camera's scale bar at the lifted pivot's depth", async () => {
+  const { grid, scope, camera } = setupRegionalScene();
+  const store = useGlobeControlStore();
+  grid.canvas.value = {
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }),
+  } as HTMLCanvasElement;
+  camera.position.setLength(1 + 3000 / EARTH_RADIUS_METERS);
+  camera.lookAt(0, 0, 0);
+  grid.pointPivot.enter();
+  grid.pointPivot.setHeight(500 / EARTH_RADIUS_METERS);
+  grid.pointPivot.tiltTo(85);
+  await vi.advanceTimersByTimeAsync(1000);
+  grid.redraw();
+  const distance = grid.pointPivot.distance()!;
+  const scale = store.distanceScale!;
+  // the ground plane's scale at the view centre, at the pivot's depth
+  const atPivot =
+    (2 *
+      distance *
+      Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) *
+      EARTH_RADIUS_METERS) /
+    600;
+  expect(scale.distanceMeters / scale.widthPx / atPivot).toBeCloseTo(1, 2);
+  scope.stop();
+});
+
 it.each(
   Object.values(PROJECTION_TYPES).filter(
     (type) => type !== PROJECTION_TYPES.NEARSIDE_PERSPECTIVE

@@ -133,9 +133,11 @@ export function getDistanceScale(
     y,
     earthRadiusMeters
   );
-  if (metersPerPixel === null) {
-    return null;
-  }
+  return metersPerPixel === null ? null : distanceScaleOf(metersPerPixel);
+}
+
+/** The scale bar of a scale: a round distance at most 150 pixels wide. */
+export function distanceScaleOf(metersPerPixel: number): TDistanceScale {
   const maxDistance = metersPerPixel * 150;
   const magnitude = 10 ** Math.floor(Math.log10(maxDistance));
   const normalized = maxDistance / magnitude;

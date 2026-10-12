@@ -41,7 +41,6 @@ import {
 import {
   createPointPivot,
   pivotNearPlane,
-  screenPointOf,
   surfacePointNearRay,
   wheelDollyScale,
   type TPivotLeftDrag,
@@ -49,6 +48,7 @@ import {
 } from "@/lib/camera/pointPivot.ts";
 import { getRegionalCameraPosition } from "@/lib/camera/regionalCamera.ts";
 import {
+  distanceScaleOf,
   getDistanceScale,
   metersPerPixelAt,
 } from "@/lib/projection/distanceScale.ts";
@@ -385,14 +385,18 @@ export function useGridScene(options: UseGridSceneOptions) {
   /**
    * The distance scale under the cursor; on the pivot camera, at the pivot
    * itself, so that the tier's scale bar reads the ground scale at the
-   * view's depth whether or not the pointer is over the canvas.
+   * pivot's depth whether or not the pointer is over the canvas (not the
+   * ground behind the lifted pivot).
    */
   function refreshDistanceScale() {
     const rect = canvas.value?.getBoundingClientRect();
-    const at =
-      pivotControls?.active && orbitControls && camera && rect
-        ? screenPointOf(orbitControls.target, camera, rect)
-        : lastPointerPosition;
+    if (pivotControls?.active && rect) {
+      store.distanceScale = distanceScaleOf(
+        pivotControls.metersPerPixel(rect.height)
+      );
+      return;
+    }
+    const at = lastPointerPosition;
     store.distanceScale =
       at && camera && rect
         ? getDistanceScale(

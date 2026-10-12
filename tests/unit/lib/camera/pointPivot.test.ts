@@ -15,7 +15,6 @@ import {
   POINT_PIVOT_MIN_ALTITUDE_METERS,
   POINT_PIVOT_MIN_DISTANCE_METERS,
   POINT_PIVOT_TILTS,
-  screenPointOf,
   surfacePointNearRay,
   viewHeightAt,
   wheelDollyScale,
@@ -50,6 +49,21 @@ function groundUnder(camera: THREE.Camera, x: number, y: number) {
   const raycaster = new THREE.Raycaster();
   raycaster.setFromCamera(new THREE.Vector2(x, y), camera);
   return groundPointOnRay(raycaster.ray.origin, raycaster.ray.direction);
+}
+
+/** Where a point falls on a canvas `rect`, client coordinates; null behind the camera. */
+function screenPointOf(
+  point: THREE.Vector3,
+  camera: THREE.Camera,
+  rect: { left: number; top: number; width: number; height: number }
+) {
+  const ndc = point.clone().project(camera);
+  return ndc.z < 1
+    ? {
+        clientX: rect.left + ((ndc.x + 1) * rect.width) / 2,
+        clientY: rect.top + ((1 - ndc.y) * rect.height) / 2,
+      }
+    : null;
 }
 
 function forwardOf(camera: THREE.Camera) {
