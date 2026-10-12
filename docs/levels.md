@@ -242,8 +242,9 @@ It exists on the globe only; a flat projection stops at the finest level.
   sliding along the surface; **shift + left, the right button (two
   fingers) orbit** the pivot, tilting from nadir to 85° and turning about
   the vertical with the horizon kept up; **the middle button and the wheel
-  (+/-) dolly toward the ground under the cursor**, which stays under the
-  cursor. The globe keeps its own buttons (left drag rotates it). The
+  dolly toward the ground under the cursor** (a middle drag toward where it
+  began, a pinch toward the fingers' middle), which stays under the cursor;
+  **+/- dolly toward the pivot**. The globe keeps its own buttons (left drag rotates it). The
   camera comes no closer than 200 m to the pivot and stays at least 100 m
   above the surface; a camera tilted far at a short distance can be below
   that floor, and the wheel then stops 200 m short of the ground point
