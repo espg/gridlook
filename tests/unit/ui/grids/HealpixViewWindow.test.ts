@@ -99,7 +99,11 @@ vi.mock("@/ui/grids/composables/useGridScene.ts", async () => {
       pointPivot: {
         enter: vi.fn(),
         leave: vi.fn(),
+        tiltTo: vi.fn(),
+        setHeight: vi.fn(),
+        setLeftDrag: vi.fn(),
         ground: ref(null),
+        direction: () => undefined,
         distance: () => undefined,
       },
     }),
