@@ -18,7 +18,8 @@ import { EARTH_RADIUS_METERS } from "./cameraSettings.ts";
  * - the pivot is lifted off the sphere by `setHeight`, to the cloud's
  *   mid-height, so that an orbit turns about the cloud and an oblique
  *   view centres it rather than the ground; the lifted pivot keeps its
- *   place on the sphere's vertical, so a nadir view does not notice;
+ *   place on the sphere's vertical and the camera moves with it, so the
+ *   view keeps its tilt, azimuth and distance as the lift changes;
  * - the left button (one finger, the arrow keys) pans: it moves the pivot
  *   in its tangent plane (`screenSpacePanning` off with a vertical up) and
  *   the pivot is put back on the sphere after every update, so a drag
@@ -415,10 +416,16 @@ export function createPointPivot(controls: OrbitControls) {
     };
   }
 
-  /** Lift the pivot `above` the sphere (scene units): the cloud's mid-height. */
+  /**
+   * Lift the pivot `above` the sphere (scene units): the cloud's mid-height.
+   * The camera rises with it, so the view keeps its tilt, azimuth and
+   * distance and does not turn as the lift changes.
+   */
   function setHeight(above: number) {
-    height = Math.max(above, 0);
+    const rise = Math.max(above, 0) - height;
+    height += rise;
     if (active) {
+      camera.position.addScaledVector(vertical(), rise);
       settlePivot();
       orbit.update();
     }

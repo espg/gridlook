@@ -460,7 +460,8 @@ describe("createPointPivot", () => {
       controls.target.clone().normalize().distanceTo(onSphere(37, -119.5)) * R
     ).toBeLessThan(1e-3);
     expect(1 - Math.abs(camera.quaternion.dot(quaternion))).toBeLessThan(1e-9);
-    expect(pivot.pivotDistance() * R).toBeCloseTo(2750, 3);
+    // and the camera rose with it
+    expect(pivot.pivotDistance() * R).toBeCloseTo(3000, 3);
     // a pan slides it at its height, a tilt orbits it there
     controls._pan(150, 90);
     controls.update();
@@ -484,6 +485,26 @@ describe("createPointPivot", () => {
     pivot.leave();
     pivot.enter(surfacePointNearRay(camera.position, forwardOf(camera)));
     expect(controls.target.length()).toBeCloseTo(1, 12);
+  });
+
+  it("keeps a tilted view still as the lift changes", () => {
+    const { camera, controls, pivot } = pivotControls(3000);
+    pivot.enter(surfacePointNearRay(camera.position, forwardOf(camera)));
+    controls.enableDamping = false;
+    pivot.tiltTo(60).advance(1);
+    const offset = camera.position.clone().sub(controls.target);
+    const quaternion = camera.quaternion.clone();
+    const position = camera.position.clone();
+    pivot.setHeight(84 / R);
+    expect(
+      camera.position.clone().sub(controls.target).distanceTo(offset)
+    ).toBeLessThan(1e-12);
+    expect(pivot.pivotDistance()).toBeCloseTo(offset.length(), 12);
+    expect(1 - Math.abs(camera.quaternion.dot(quaternion))).toBeLessThan(1e-12);
+    // the camera only moved along the vertical, by the lift
+    const moved = camera.position.clone().sub(position);
+    expect(moved.length() * R).toBeCloseTo(84, 6);
+    expect(moved.angleTo(controls.target)).toBeLessThan(1e-9);
   });
 
   it("lets the left button orbit instead, with shift + left orbiting either way", () => {

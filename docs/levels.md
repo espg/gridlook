@@ -256,8 +256,9 @@ It exists on the globe only; a flat projection stops at the finest level.
 - **Pivot height.** The pivot is lifted off the sphere to the middle of
   the relief around it (the datum to the highest point within the view's
   height of it), so an orbit turns about the cloud and an oblique view
-  centres it; the pivot stays on the sphere's vertical, so a nadir view
-  does not notice. The lift follows the relief as chunks land.
+  centres it; the pivot stays on the sphere's vertical and the camera
+  rises and falls with it, so the view keeps its tilt, azimuth and
+  distance (a tilted view does not turn) as the lift changes. The lift follows the relief as chunks land.
 - **Opacity.** The panel's slider (0.05 to 1, 1 by default) scales the
   points' alpha (`pointOpacity`, a uniform of the falloff fragment shader),
   so dense tracks show their depth; the splat's soft edge stays.
