@@ -201,8 +201,10 @@ let levelChunkCells = Infinity;
 // whether the variable is derived from a t-digest: its window is priced in
 // bytes, not cells
 let levelDigest = false;
-// whether the budget left blocks out of the loaded window
+// whether the budget left blocks out of the loaded window, and the point
+// below the camera when it was loaded
 let windowCut = false;
+let windowCentre = { centreLon: 0, centreLat: 0 };
 let sortedCells: ReturnType<typeof createSortedCells> | undefined;
 // The coordinate reader of a sparse level, kept while the level stays the
 // same so that its chunks are read once.
@@ -634,6 +636,7 @@ function viewWindowStale() {
         loadedBlocks,
         missing,
         store.viewFootprint!,
+        windowCentre,
         blockDepth
       )
     : true;
@@ -739,6 +742,8 @@ function prepareWindow(
     : undefined;
   loadedBlocks = window?.blocks;
   windowCut = window?.cut ?? false;
+  const { centreLon = 0, centreLat = 0 } = store.viewFootprint ?? {};
+  windowCentre = { centreLon, centreLat };
   store.setViewWindowClipped(window?.clipped ?? false);
 }
 

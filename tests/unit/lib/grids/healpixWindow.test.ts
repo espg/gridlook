@@ -295,7 +295,8 @@ it("calls a cut window stale once the camera has moved a block", () => {
       healpixViewWindow(grid, view, 0, 100).blocks.filter(
         (block) => !loaded.blocks.includes(block)
       ),
-      view
+      view,
+      wide
     );
   expect(stale(wide)).toBe(false);
   expect(stale(shifted(wide, 0.1 * side, 0))).toBe(false);
@@ -308,6 +309,30 @@ it("calls a cut window that loaded nothing stale once blocks are in view", () =>
   using grid = new Grid({ scheme: "nested", level: 12 });
   const inView = healpixViewWindow(grid, box, 0).blocks;
   expect(inView.length).toBeGreaterThan(0);
-  expect(cutWindowStale(grid, [], inView, box)).toBe(true);
-  expect(cutWindowStale(grid, [], [], box)).toBe(false);
+  expect(cutWindowStale(grid, [], inView, box, box)).toBe(true);
+  expect(cutWindowStale(grid, [], [], box, box)).toBe(false);
+});
+
+it("does not call a cut window at a pole stale at the camera it loaded at", () => {
+  using grid = new Grid({ scheme: "nested", level: 12 });
+  const side = 58.63 / 2 ** 6;
+  const polar = {
+    latMin: 70,
+    latMax: 90,
+    lonStart: -180,
+    lonSpan: 360,
+    centreLat: 84,
+    centreLon: 30,
+  };
+  const loaded = healpixViewWindow(grid, polar, 0.5, 100).blocks;
+  // the window at the view is another shape: blocks in view are missing
+  const missing = healpixViewWindow(grid, polar, 0, 100).blocks.filter(
+    (block) => !loaded.includes(block)
+  );
+  expect(missing.length).toBeGreaterThan(0);
+  expect(cutWindowStale(grid, loaded, missing, polar, polar)).toBe(false);
+  const nudged = { ...polar, centreLat: polar.centreLat - 0.1 * side };
+  expect(cutWindowStale(grid, loaded, missing, nudged, polar)).toBe(false);
+  const moved = { ...polar, centreLat: polar.centreLat - 3 * side };
+  expect(cutWindowStale(grid, loaded, missing, moved, polar)).toBe(true);
 });
