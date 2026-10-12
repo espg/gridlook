@@ -38,11 +38,7 @@ import {
   timeWordsOf,
   type TPointSource,
 } from "@/lib/points/pointSource.ts";
-import {
-  POINT_COLOURS,
-  type TPointColour,
-  type TTimeWords,
-} from "@/lib/points/pointTimes.ts";
+import { POINT_COLOURS, type TTimeWords } from "@/lib/points/pointTimes.ts";
 import type { ProjectionHelper } from "@/lib/projection/projectionUtils.ts";
 import type { TViewFootprint } from "@/lib/projection/viewFootprint.ts";
 import {
@@ -122,15 +118,13 @@ function nearestFirst(
 }
 
 /** The drawn points: their places, heights and what colours them. */
-function pointGeometry(drawn: TPointChunk, colour: TPointColour) {
+function pointGeometry(drawn: TPointChunk, values: Float32Array) {
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute(
     "position",
     new THREE.BufferAttribute(drawn.offsets, 3)
   );
   geometry.setAttribute("height", new THREE.BufferAttribute(drawn.heights, 1));
-  const values =
-    colour === POINT_COLOURS.TIME && drawn.times ? drawn.times : drawn.heights;
   geometry.setAttribute("data_value", new THREE.BufferAttribute(values, 1));
   return geometry;
 }
@@ -241,6 +235,8 @@ export function usePointLayer(options: TPointLayerOptions) {
       material.uniforms.heightReference.value = 0;
     }
     store.setPointTierStats(undefined);
+    // whether the next source has times is for its own metadata to say
+    store.setPointTierTimed(false);
     if (store.pointTierBounds) {
       store.setPointTierBounds(undefined);
       options.restoreHistogram();
@@ -321,7 +317,17 @@ export function usePointLayer(options: TPointLayerOptions) {
       return;
     }
     const drawn = decimatePointChunk(chunk, stride);
-    const geometry = pointGeometry(drawn, store.pointTierColour);
+    const byTime = store.pointTierColouredByTime();
+    if (byTime && !drawn.times) {
+      // coloured by time, a chunk without its times is not drawn: its
+      // heights would be read as dates and mixed into the days' range
+      remove(index);
+      return;
+    }
+    const geometry = pointGeometry(
+      drawn,
+      byTime ? drawn.times! : drawn.heights
+    );
     const entry = window.get(index);
     if (entry) {
       entry.points.geometry.dispose();
@@ -494,6 +500,11 @@ export function usePointLayer(options: TPointLayerOptions) {
       return;
     }
     store.setPointTierTimed(arrays.times !== undefined);
+    if (!arrays.times && store.pointTierColour === POINT_COLOURS.TIME) {
+      // a source without times is coloured by height (the watch reloads)
+      store.setPointTierColour(POINT_COLOURS.HEIGHT);
+      return;
+    }
     const chunkOrder = arrays.chunkOrder;
     const chunks = windowChunks(footprint, chunkOrder, OBSERVATION_MARGIN);
     const wanted = new Set(chunks);

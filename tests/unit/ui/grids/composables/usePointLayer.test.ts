@@ -344,3 +344,60 @@ it("moves the datum with the pivot, with or without photons in reach", async () 
   expect(material.uniforms.heightReference.value).toBe(0);
   scope.stop();
 });
+
+it("colours by time only with the times at hand, never mixing them with heights", async () => {
+  // chunk 0 has its times (days 100..109), chunk 1's read finds none
+  fake.window = [0, 1];
+  fake.chunks.set(
+    0,
+    chunkOf(10, (i) => 300 + i)
+  );
+  fake.chunks.set(
+    1,
+    chunkOf(10, (i) => 400 + i)
+  );
+  const epoch = BigInt(Date.UTC(2018, 0, 1) - Date.UTC(1850, 0, 1)) * 1000000n;
+  fake.times.set(
+    0,
+    BigUint64Array.from({ length: 10 }, (_, i) => {
+      const ns = epoch + BigInt(100 + i) * 86_400_000_000_000n;
+      return ((ns >> 31n) << 32n) | (1n << 31n) | (ns & 0x7fffffffn);
+    })
+  );
+  const { store, scene, scope } = setup(true);
+  store.setPointTier(true);
+  await settle();
+  expect(store.pointTierTimed).toBe(true);
+  expect(store.pointTierColouredByTime()).toBe(false);
+  expect(store.pointTierBounds!.high).toBeGreaterThan(400);
+  store.setPointTierColour("time");
+  await settle();
+  expect(store.pointTierColouredByTime()).toBe(true);
+  // chunk 1 is not drawn in days' company, and the range is days
+  expect(pointsOf(scene)).toHaveLength(1);
+  expect(store.pointTierBounds!.low).toBeGreaterThan(99);
+  expect(store.pointTierBounds!.high).toBeLessThan(110);
+  // back to heights: both chunks, in metres
+  store.setPointTierColour("height");
+  await settle();
+  expect(pointsOf(scene)).toHaveLength(2);
+  expect(store.pointTierBounds!.high).toBeGreaterThan(400);
+  scope.stop();
+});
+
+it("falls back to heights on a source without times, and labels them so", async () => {
+  fake.window = [0];
+  fake.chunks.set(
+    0,
+    chunkOf(10, (i) => 300 + i)
+  );
+  const { store, scope } = setup(false);
+  store.setPointTierColour("time");
+  store.setPointTier(true);
+  await settle();
+  expect(store.pointTierTimed).toBe(false);
+  expect(store.pointTierColour).toBe("height");
+  expect(store.pointTierColouredByTime()).toBe(false);
+  expect(store.pointTierBounds!.low).toBeGreaterThanOrEqual(300);
+  scope.stop();
+});

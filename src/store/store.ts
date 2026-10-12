@@ -422,6 +422,17 @@ export const useGlobeControlStore = defineStore("globeControl", {
     setPointTierTimed(timed: boolean) {
       this.pointTierTimed = timed;
     },
+    /**
+     * The points on screen are coloured by time: chosen, and the source has
+     * times. Their range is then labelled as dates.
+     */
+    pointTierColouredByTime(): boolean {
+      return (
+        this.pointTier &&
+        this.pointTierColour === POINT_COLOURS.TIME &&
+        this.pointTierTimed
+      );
+    },
     setPointTierOpacity(opacity: number) {
       this.pointTierOpacity = Number.isFinite(opacity)
         ? Math.min(

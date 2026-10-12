@@ -2,7 +2,7 @@
 import { storeToRefs } from "pinia";
 import { computed } from "vue";
 
-import { formatPointTime, POINT_COLOURS } from "@/lib/points/pointTimes.ts";
+import { formatPointTime } from "@/lib/points/pointTimes.ts";
 import type { TBounds } from "@/lib/types/GlobeTypes.ts";
 import { useGlobeControlStore } from "@/store/store.ts";
 
@@ -68,7 +68,7 @@ function formatNum(val: number | undefined) {
   if (isNaN(n)) {
     return "—";
   }
-  return store.pointTier && store.pointTierColour === POINT_COLOURS.TIME
+  return store.pointTierColouredByTime()
     ? formatPointTime(n)
     : n.toPrecision(4);
 }
