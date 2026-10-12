@@ -1,7 +1,7 @@
 import { registry } from "zarrita";
 
 import { digestChunkFromVlen, type TDigestChunk } from "./tdigest.ts";
-import { decodeVlenChunk } from "./vlenChunk.ts";
+import { decodeVlenChunk, type TVlenChunk } from "./vlenChunk.ts";
 
 /**
  * Reads the chunks of a level by key, decoded and cached: the t-digest
@@ -35,12 +35,22 @@ type TChunkArray<T> = {
 };
 export type TDigestArray = TChunkArray<TDigestChunk>;
 type TDenseChunk = Int32Array | Uint32Array | Float32Array | Float64Array;
+/**
+ * The morton words of one chunk of a ragged `uint64` array (a digest's
+ * `locations` sibling), flat: cell `i` owns `offsets[i] .. offsets[i + 1]`.
+ */
+export type TWordChunk = {
+  offsets: Uint32Array;
+  words: BigUint64Array;
+};
 
 const VLEN_BYTES = "vlen-bytes";
 /** Charged for a chunk that does not exist, so that it is remembered. */
 const ABSENT_BYTES = 64;
 const DEFAULT_DIGEST_CACHE_BYTES = 256 * 2 ** 20;
 const DEFAULT_DENSE_CACHE_BYTES = 64 * 2 ** 20;
+const DEFAULT_WORD_CACHE_BYTES = 64 * 2 ** 20;
+const WORD_BYTES = 8;
 const DENSE_TYPES = {
   int32: Int32Array,
   uint32: Uint32Array,
@@ -143,6 +153,34 @@ export async function digestArrayFromMetadata(
     chunkCells,
     decode: async (bytes) =>
       digestChunkFromVlen(decodeVlenChunk(await unpack(bytes))),
+  };
+}
+
+/** Split a ragged chunk of little-endian `uint64` words. */
+function wordChunkFromVlen(chunk: TVlenChunk): TWordChunk {
+  const offsets = new Uint32Array(chunk.offsets.length);
+  for (let cell = 0; cell < offsets.length; cell++) {
+    if (chunk.offsets[cell] % WORD_BYTES !== 0) {
+      throw new Error("located chunk is not uint64 words");
+    }
+    offsets[cell] = chunk.offsets[cell] / WORD_BYTES;
+  }
+  // a copy: the payload bytes are not 8-byte aligned
+  const words = new BigUint64Array(chunk.bytes.byteLength / WORD_BYTES);
+  new Uint8Array(words.buffer).set(chunk.bytes);
+  return { offsets, words };
+}
+
+/** The decoder of a ragged `uint64` array, from its `zarr.json`. */
+async function wordArrayFromMetadata(
+  metadata: Record<string, unknown>
+): Promise<TChunkArray<TWordChunk>> {
+  const { cells, chunkCells, unpack } = await chunkGrid(metadata, VLEN_BYTES);
+  return {
+    cells,
+    chunkCells,
+    decode: async (bytes) =>
+      wordChunkFromVlen(decodeVlenChunk(await unpack(bytes))),
   };
 }
 
@@ -261,6 +299,19 @@ export function createDenseReader(
     store,
     denseArrayFromMetadata,
     (chunk) => chunk.byteLength,
+    maxBytes
+  );
+}
+
+/** The morton-word chunks of a store's ragged `uint64` arrays, by key. */
+export function createWordReader(
+  store: TDigestStore,
+  maxBytes = DEFAULT_WORD_CACHE_BYTES
+) {
+  return createChunkReader(
+    store,
+    wordArrayFromMetadata,
+    (chunk) => chunk.offsets.byteLength + chunk.words.byteLength,
     maxBytes
   );
 }

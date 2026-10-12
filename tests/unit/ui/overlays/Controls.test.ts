@@ -84,3 +84,29 @@ it("uses magnitude bounds and restores the scalar's custom bounds", async () => 
     scope.stop();
   }
 });
+
+it("takes the point tier's range as the data range while it is set", async () => {
+  const { store, scope } = setupControls();
+  try {
+    await nextTick();
+    // the URL's custom range rules until it is cleared
+    expect(store.selection).toEqual({ low: 0, high: 600 });
+    store.resetUserBounds();
+    await nextTick();
+    expect(store.selection).toEqual({ low: 100, high: 500 });
+    store.setPointTierBounds({ low: 1200, high: 1500 });
+    await nextTick();
+    expect(store.selection).toEqual({ low: 1200, high: 1500 });
+    // a custom range still wins
+    store.updateLowUserBound(0);
+    store.updateHighUserBound(3000);
+    await nextTick();
+    expect(store.selection).toEqual({ low: 0, high: 3000 });
+    store.resetUserBounds();
+    store.setPointTierBounds(undefined);
+    await nextTick();
+    expect(store.selection).toEqual({ low: 100, high: 500 });
+  } finally {
+    scope.stop();
+  }
+});

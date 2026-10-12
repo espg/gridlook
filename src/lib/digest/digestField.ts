@@ -2,6 +2,7 @@ import { createPooledDigests, derivedGroup } from "./derivedLevel.ts";
 import {
   createDenseReader,
   createDigestReader,
+  createWordReader,
   type TDigestSource,
 } from "./digestReader.ts";
 import { DIGEST_PRODUCTS, type TDigestVariable } from "./digestVariables.ts";
@@ -103,11 +104,16 @@ function openReaders(storePath: string) {
   return createHiveStore(parseStorePath(storePath).url).then((store) => {
     const digests = createDigestReader(store);
     return {
+      store,
+      digests,
       pooled: createPooledDigests(digests),
       dense: createDenseReader(store),
+      words: createWordReader(store),
     };
   });
 }
+
+export type TLeafReaders = Awaited<ReturnType<typeof openReaders>>;
 
 let current:
   { store: string; readers: ReturnType<typeof openReaders> } | undefined;
@@ -115,8 +121,10 @@ let current:
 /**
  * The chunk readers of a store, one store at a time (the decoded chunks of
  * the previous store are let go). Only a hive store serves ragged chunks.
+ * The point tier reads the leaf digests and their located words through
+ * the same readers a derived level fills its caches from.
  */
-function storeReaders(storePath: string) {
+export function storeReaders(storePath: string) {
   if (!isHiveStorePath(storePath)) {
     return undefined;
   }

@@ -4,7 +4,12 @@ import { computed } from "vue";
 
 import { useGlobeControlStore } from "@/store/store.ts";
 
-const { distanceScale, showDistanceScale } = storeToRefs(
+/**
+ * The horizontal distance scale: under the cursor when switched on, and
+ * always on the point tier, in the upper-left corner, reading the ground
+ * scale at the pivot (useGridScene.ts).
+ */
+const { distanceScale, showDistanceScale, pointTier } = storeToRefs(
   useGlobeControlStore()
 );
 const label = computed(() => {
@@ -16,10 +21,11 @@ const label = computed(() => {
 
 <template>
   <div
-    v-if="showDistanceScale && distanceScale"
+    v-if="(showDistanceScale || pointTier) && distanceScale"
     class="distance-scale has-text-white is-size-6"
+    :class="{ 'is-pivot': pointTier }"
     role="img"
-    :aria-label="`Local horizontal distance scale at cursor: ${label}`"
+    :aria-label="`Local horizontal distance scale at ${pointTier ? 'the pivot' : 'cursor'}: ${label}`"
   >
     <div>{{ label }}</div>
     <div
@@ -40,6 +46,11 @@ const label = computed(() => {
   border-radius: 4px;
   background: rgba(17, 24, 39, 0.85);
   font-variant-numeric: tabular-nums;
+}
+
+.distance-scale.is-pivot {
+  top: 18px;
+  bottom: auto;
 }
 
 .distance-scale-bar {

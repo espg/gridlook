@@ -6,7 +6,8 @@ vi.stubGlobal("localStorage", { getItem: () => null });
 const { createPinia, setActivePinia } = await import("pinia");
 const { EARTH_RADIUS_METERS, CAMERA_VERTICAL_FOV_DEGREES } =
   await import("@/lib/camera/cameraSettings.ts");
-const { DEFAULT_PIXELS_PER_CELL } = await import("@/lib/data/levels.ts");
+const { DEFAULT_PIXELS_PER_CELL, POINT_TIER_PIXELS_PER_CELL } =
+  await import("@/lib/data/levels.ts");
 const { PROJECTION_TYPES } =
   await import("@/lib/projection/projectionUtils.ts");
 const { ZARR_FORMAT } = await import("@/lib/types/GlobeTypes.ts");
@@ -199,6 +200,142 @@ it("lifts the cap for levels loaded by view, not for one that is loaded whole", 
     store.metersPerPixel = scaleFor(12) * 1.01;
     await nextPick();
     expect(store.selectedLevel).toBe(1);
+  } finally {
+    scope.stop();
+  }
+});
+
+/** A hive store's ladder: derived 17..14 over stored 13, a height variable. */
+function hivePyramid() {
+  const sources = pyramid([17, 16, 15, 14, 13]);
+  for (const [index, level] of sources.value.levels.entries()) {
+    const order = 17 - index;
+    const digest = {
+      store: "hive+s",
+      dataset: String(order),
+      attrs: {
+        digest: {
+          array: "h_tdigest_signal",
+          product: "percentile",
+          stratum: "signal",
+        },
+      },
+    };
+    Object.assign(level, {
+      datasources: {
+        count: { store: "hive+s", dataset: String(order), attrs: {} },
+        h_percentile_signal: digest, // eslint-disable-line camelcase
+      },
+      cellCount: 0,
+      ...(order > 13
+        ? { derived: { dataset: "19", refinement: 19 - order } }
+        : {}),
+    });
+  }
+  return sources;
+}
+
+/** The ground scale at which an order-17 cell spans `pixels`. */
+function order17At(pixels: number) {
+  return resolution(17) / pixels;
+}
+
+it("turns the point tier on past the finest level and off again with hysteresis", async () => {
+  const store = useGlobeControlStore();
+  store.varnameSelector = "h_percentile_signal";
+  store.viewLoading = true;
+  const scope = effectScope();
+  scope.run(() => useLevelSelection(hivePyramid(), () => VIEWPORT));
+  try {
+    store.metersPerPixel = order17At(40);
+    await nextPick();
+    expect(store.selectedLevel).toBe(0);
+    expect(store.pointTier).toBe(false);
+
+    store.metersPerPixel = order17At(POINT_TIER_PIXELS_PER_CELL + 1);
+    await nextPick();
+    expect(store.pointTier).toBe(true);
+    expect(store.selectedLevel).toBe(0);
+    expect(store.levelAuto).toBe(true);
+
+    // back inside the band: still on; below it: off, the level stays
+    store.metersPerPixel = order17At(55);
+    await nextPick();
+    expect(store.pointTier).toBe(true);
+    store.metersPerPixel = order17At(45);
+    await nextPick();
+    expect(store.pointTier).toBe(false);
+    expect(store.selectedLevel).toBe(0);
+  } finally {
+    scope.stop();
+  }
+});
+
+it("never shows points on a flat projection or under a stored variable", async () => {
+  const store = useGlobeControlStore();
+  store.varnameSelector = "h_percentile_signal";
+  store.viewLoading = true;
+  const scope = effectScope();
+  scope.run(() => useLevelSelection(hivePyramid(), () => VIEWPORT));
+  try {
+    store.metersPerPixel = order17At(200);
+    await nextPick();
+    expect(store.pointTier).toBe(true);
+
+    store.projectionMode = PROJECTION_TYPES.ROBINSON;
+    await nextTick();
+    expect(store.pointTier).toBe(false);
+    expect(store.selectedLevel).toBe(0);
+    store.projectionMode = PROJECTION_TYPES.NEARSIDE_PERSPECTIVE;
+    await nextTick();
+    expect(store.pointTier).toBe(true);
+
+    store.varnameSelector = "count";
+    await nextTick();
+    expect(store.pointTier).toBe(false);
+    expect(store.selectedLevel).toBe(0);
+  } finally {
+    scope.stop();
+  }
+});
+
+it("leaves the points when a level is picked by hand, and returns on auto", async () => {
+  const store = useGlobeControlStore();
+  store.varnameSelector = "h_percentile_signal";
+  store.viewLoading = true;
+  const scope = effectScope();
+  scope.run(() => useLevelSelection(hivePyramid(), () => VIEWPORT));
+  try {
+    store.metersPerPixel = order17At(200);
+    await nextPick();
+    expect(store.pointTier).toBe(true);
+
+    store.selectLevel(2);
+    expect(store.pointTier).toBe(false);
+    expect(store.levelAuto).toBe(false);
+    store.metersPerPixel = order17At(300);
+    await nextPick();
+    expect(store.pointTier).toBe(false);
+    expect(store.selectedLevel).toBe(2);
+
+    // and the points can be picked by hand too
+    store.selectPointTier(0);
+    expect(store.pointTier).toBe(true);
+    expect(store.selectedLevel).toBe(0);
+    expect(store.levelAuto).toBe(false);
+
+    store.setLevelAuto(true);
+    await nextTick();
+    expect(store.pointTier).toBe(true);
+    expect(store.selectedLevel).toBe(0);
+
+    // a hand-picked tier ends on a flat projection all the same
+    store.selectPointTier(0);
+    store.projectionMode = PROJECTION_TYPES.ROBINSON;
+    await nextTick();
+    expect(store.pointTier).toBe(false);
+    expect(store.levelAuto).toBe(false);
+    expect(store.selectedLevel).toBe(0);
   } finally {
     scope.stop();
   }

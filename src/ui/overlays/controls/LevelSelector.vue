@@ -1,7 +1,12 @@
 <script lang="ts" setup>
 import { computed } from "vue";
 
-import { exceedsCellCap } from "@/lib/data/levels.ts";
+import PointTierControls from "./PointTierControls.vue";
+import { pointTierLegend } from "./pointTierLegend.ts";
+
+import { exceedsCellCap, finestLevel, POINT_TIER } from "@/lib/data/levels.ts";
+import { pointTierSource } from "@/lib/points/pointSource.ts";
+import { PROJECTION_TYPES } from "@/lib/projection/projectionUtils.ts";
 import type { TSourceLevel } from "@/lib/types/GlobeTypes.ts";
 import { useGlobeControlStore } from "@/store/store.ts";
 
@@ -33,8 +38,43 @@ const options = computed(() =>
   }))
 );
 
+// the point tier, when the finest level has observations under the shown
+// variable and the globe is drawn: listed before the levels, as the finest
+// entry
+const pointTier = computed(() => {
+  const finest = finestLevel(props.levels);
+  const source =
+    finest === undefined ||
+    store.projectionMode !== PROJECTION_TYPES.NEARSIDE_PERSPECTIVE
+      ? undefined
+      : pointTierSource(props.levels[finest], store.varnameSelector);
+  return source && finest !== undefined
+    ? { index: finest, label: `points (${source.stratum ?? source.array})` }
+    : undefined;
+});
+
+const selected = computed(() =>
+  store.pointTier && pointTier.value ? POINT_TIER : store.selectedLevel
+);
+
+const countFormat = new Intl.NumberFormat();
+const pointTierTitle = computed(() => {
+  const stats = store.pointTier ? store.pointTierStats : undefined;
+  const legend = pointTierLegend(store.pointTierLeftDrag);
+  if (!stats) {
+    return `The observations themselves, drawn at their height in place of the finest level. ${legend}`;
+  }
+  const thinned = stats.stride > 1 ? ` (1 in ${stats.stride})` : "";
+  return `${countFormat.format(stats.photons)} observations in ${stats.loaded} of ${stats.chunks} chunks, ${countFormat.format(stats.drawn)} drawn${thinned}. ${legend}`;
+});
+
 function onLevelChange(event: Event) {
-  store.selectLevel(Number((event.target as HTMLSelectElement).value));
+  const value = (event.target as HTMLSelectElement).value;
+  if (value === POINT_TIER && pointTier.value) {
+    store.selectPointTier(pointTier.value.index);
+    return;
+  }
+  store.selectLevel(Number(value));
 }
 
 function onAutoChange(event: Event) {
@@ -58,11 +98,10 @@ function onRangeSharedChange(event: Event) {
         class="select is-fullwidth mb-2"
         :class="{ 'is-loading': store.loading }"
       >
-        <select
-          :value="store.selectedLevel"
-          class="form-control"
-          @change="onLevelChange"
-        >
+        <select :value="selected" class="form-control" @change="onLevelChange">
+          <option v-if="pointTier" :value="POINT_TIER" :title="pointTierTitle">
+            {{ pointTier.label }}
+          </option>
           <option
             v-for="option in options"
             :key="option.index"
@@ -77,6 +116,7 @@ function onRangeSharedChange(event: Event) {
           </option>
         </select>
       </div>
+      <PointTierControls v-if="store.pointTier" />
       <label class="checkbox is-size-7">
         <input
           :checked="store.levelAuto"

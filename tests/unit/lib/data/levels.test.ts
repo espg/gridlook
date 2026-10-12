@@ -9,13 +9,16 @@ import {
   currentLevel,
   DEFAULT_MAX_VIEW_CELLS,
   DIGEST_PIXELS_PER_CELL,
+  finestLevel,
   pickResolution,
   DEFAULT_HYSTERESIS_ORDERS,
   DEFAULT_MAX_LEVEL_CELLS,
   DEFAULT_PIXELS_PER_CELL,
   exceedsCellCap,
   groundMetersPerPixel,
+  POINT_TIER_PIXELS_PER_CELL,
   selectLevel,
+  selectPointTier,
   type TLevelSelectionCamera,
 } from "@/lib/data/levels.ts";
 import { ZARR_FORMAT, type TSources } from "@/lib/types/GlobeTypes.ts";
@@ -324,5 +327,56 @@ describe("the finest level of a hive store", () => {
     expect(selectLevel(metersPerPixel(32), levels, 1)).toBe(1);
     expect(selectLevel(metersPerPixel(16), levels, 0)).toBe(0);
     expect(selectLevel(metersPerPixel(16), levels, 1)).toBe(1);
+  });
+});
+
+describe("finestLevel", () => {
+  it("is the level with the smallest cells, whatever the order listed", () => {
+    expect(finestLevel(LADDER)).toBe(0);
+    expect(finestLevel([...LADDER].reverse())).toBe(LADDER.length - 1);
+    expect(finestLevel([{ resolution: 100 }, {}])).toBe(0);
+    expect(finestLevel([{}, {}])).toBeUndefined();
+    expect(finestLevel([])).toBeUndefined();
+  });
+});
+
+describe("selectPointTier", () => {
+  const order17 = resolution(17);
+  /** The ground scale at which an order-17 cell spans `pixels`. */
+  const scaleAt = (pixels: number) => order17 / pixels;
+
+  it("comes on where the finest cells reach twice the digest target", () => {
+    expect(POINT_TIER_PIXELS_PER_CELL).toBe(2 * DIGEST_PIXELS_PER_CELL);
+    expect(selectPointTier(scaleAt(63), order17, false)).toBe(false);
+    expect(selectPointTier(scaleAt(64), order17, false)).toBe(true);
+    expect(selectPointTier(scaleAt(300), order17, false)).toBe(true);
+  });
+
+  it("stays on through the hysteresis band and goes off below it", () => {
+    const leave = POINT_TIER_PIXELS_PER_CELL / 2 ** DEFAULT_HYSTERESIS_ORDERS;
+    expect(leave).toBeCloseTo(50.2, 1);
+    for (const pixels of [63, 55, 51]) {
+      expect(selectPointTier(scaleAt(pixels), order17, true)).toBe(true);
+      expect(selectPointTier(scaleAt(pixels), order17, false)).toBe(false);
+    }
+    expect(selectPointTier(scaleAt(49), order17, true)).toBe(false);
+    expect(selectPointTier(scaleAt(49), order17, true, 0)).toBe(false);
+    expect(selectPointTier(scaleAt(63), order17, true, 0)).toBe(false);
+    expect(selectPointTier(scaleAt(33), order17, true, 1)).toBe(true);
+  });
+
+  it("reads the camera as selectLevel does, and never comes on without a scale", () => {
+    // cameraFor puts a cell at DEFAULT_PIXELS_PER_CELL: 4x closer is 64 px
+    const camera = cameraFor(order17);
+    expect(selectPointTier(camera, order17, false)).toBe(false);
+    expect(
+      selectPointTier(
+        { ...camera, altitudeMeters: camera.altitudeMeters / 4 },
+        order17,
+        false
+      )
+    ).toBe(true);
+    expect(selectPointTier(0, order17, true)).toBe(false);
+    expect(selectPointTier(scaleAt(300), NaN, true)).toBe(false);
   });
 });

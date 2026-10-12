@@ -91,6 +91,18 @@ export function useScalarFieldCache(options: TOptions) {
     options.redraw();
   }
 
+  /** The histogram of the frame on screen again, after another layer's. */
+  function restoreHistogram() {
+    if (!visibleFrame) {
+      return;
+    }
+    options.updateHistogram(
+      visibleFrame.histogram ? [visibleFrame.histogram] : undefined,
+      visibleFrame.info.bounds.low ?? NaN,
+      visibleFrame.info.bounds.high ?? NaN
+    );
+  }
+
   function clear() {
     generation++;
     displayRevision++;
@@ -163,5 +175,11 @@ export function useScalarFieldCache(options: TOptions) {
   }
 
   onScopeDispose(clear);
-  return { captureScalar, restoreScalar, showMagnitude, clear };
+  return {
+    captureScalar,
+    restoreScalar,
+    restoreHistogram,
+    showMagnitude,
+    clear,
+  };
 }

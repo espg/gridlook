@@ -115,8 +115,9 @@ const menuCollapsed: Ref<boolean> = ref(false);
 const mobileMenuCollapsed: Ref<boolean> = ref(true);
 const isMobileView: Ref<boolean> = ref(false);
 
+// the drawn points' range stands in for the level's under the point tier
 const dataBounds = computed(() => {
-  return varinfo.value?.bounds ?? {};
+  return store.pointTierBounds ?? varinfo.value?.bounds ?? {};
 });
 
 const currentBounds = computed(() => {

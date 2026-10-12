@@ -14,6 +14,7 @@ import compressedLutFragmentShader from "./glsl/compressedLut.frag.glsl";
 import gpuProjectedMeshVertexShader from "./glsl/gpuProjectedMesh.vert.glsl";
 import gpuProjectedPointVertexShader from "./glsl/gpuProjectedPoint.vert.glsl";
 import gpuProjectedTextureVertexShader from "./glsl/gpuProjectedTexture.vert.glsl";
+import heightPointVertexShader from "./glsl/heightPoint.vert.glsl";
 import pointFalloffFragmentShader from "./glsl/pointFalloff.frag.glsl";
 import scalarColormapFragmentShader from "./glsl/scalarColormap.frag.glsl";
 import screenQuadValueVertexShader from "./glsl/screenQuadValue.vert.glsl";
@@ -192,6 +193,7 @@ export function makeGpuProjectedPointMaterial(
       posterizeLevels: { value: 0.0 },
       hideBelowValue: { value: -1e38 },
       hideAboveValue: { value: 1e38 },
+      pointOpacity: { value: 1.0 },
       colormap: { value: availableColormaps[colormap] },
       // Projection uniforms
       projectionType: {
@@ -208,6 +210,48 @@ export function makeGpuProjectedPointMaterial(
     fragmentShader: pointFalloffFragmentShader,
   });
   return material;
+}
+
+/**
+ * The material of the observation tier's points (globe only): positions
+ * relative to the object's origin on the unit sphere, lifted by their
+ * height, coloured by it with the same colormap uniforms as every grid.
+ * `earthRadius` is the metres one scene unit stands for; the reference
+ * height and the exaggeration are uniforms for the controls to come.
+ */
+export function makeHeightPointMaterial(
+  colormap: TColorMap,
+  addOffset: number,
+  scaleFactor: number,
+  earthRadius: number
+) {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      addOffset: { value: addOffset },
+      scaleFactor: { value: scaleFactor },
+      basePointSize: { value: 1.0 },
+      minPointSize: { value: 1.0 },
+      maxPointSize: { value: 8.0 },
+      posterizeLevels: { value: 0.0 },
+      hideBelowValue: { value: -1e38 },
+      hideAboveValue: { value: 1e38 },
+      pointOpacity: { value: 1.0 },
+      colormap: { value: availableColormaps[colormap] },
+      heightReference: { value: 0.0 },
+      heightExaggeration: { value: 1.0 },
+      earthRadius: { value: earthRadius },
+    },
+    transparent: true,
+    depthWrite: false,
+    // the level is hidden under the cloud, but the base sphere is not: the
+    // points under the datum (the lowest 2 % around the pivot, and lower
+    // ground farther off) sit beneath it and must still show. The cost:
+    // points are blended in draw order, not by depth, so in an oblique view
+    // a far point drawn later can cover a near one
+    depthTest: false,
+    vertexShader: heightPointVertexShader,
+    fragmentShader: pointFalloffFragmentShader,
+  });
 }
 
 /**

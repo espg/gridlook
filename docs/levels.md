@@ -149,9 +149,9 @@ levels from the leaf column down (order 13 and coarser). The orders in
 between are not stored. Gridlook lists them as levels of their own, named
 "order 15 (derived)", and computes them in the browser from the leaf chunks.
 The two finest orders, 18 and 19, are no level: past derived order 17 the
-viewer is to show the points themselves (`POINT_TIER_ORDERS` in
-`hiveStore.ts`), so order 18 is not derived and the leaves, `/19`, are not in
-the level list. They stay in the hierarchy as the source every derived level
+viewer shows the points themselves (`POINT_TIER_ORDERS` in `hiveStore.ts`,
+and "The point tier" below), so order 18 is not derived and the leaves,
+`/19`, are not in the level list. They stay in the hierarchy as the source every derived level
 and the distribution panel read from. The zoom therefore stops at order 17,
 and a level index kept from a longer list falls back to the finest level.
 
@@ -179,6 +179,112 @@ and a level index kept from a longer list falls back to the finest level.
 The distribution panel shows the pooled digest of a derived cell: the
 derived level names the leaf group it is computed from (`derived.dataset`),
 and the digests are read there whether or not that group is a level.
+
+## The point tier
+
+Past derived order 17 the viewer shows the observations themselves: the
+photons of the leaf chunks under the view, each drawn at its height. The
+tier is a mode of the level selector, not a level: the picker shows
+"points (signal)" while it is on, and the order-17 mesh is hidden, so the
+cloud is drawn on black (the level is still read: a click pins its cells).
+It exists on the globe only; a flat projection stops at the finest level.
+
+- **Hand-off.** The tier comes on when a cell of the finest level would span
+  **64 pixels** on screen (`POINT_TIER_PIXELS_PER_CELL`, twice the digest
+  target), and stays on until the cells shrink by the usual 0.35 orders
+  (about 50 px), so a view at the boundary does not flap. It needs a
+  variable derived from a t-digest; under `count` the ladder ends at the
+  finest level. A manual pick of a level turns it off, and "points" can be
+  picked by hand too.
+- **What is drawn.** For each leaf chunk under the view plus a half-view
+  margin (the window a derived level reads, so a view that just left order
+  17 reads nothing new), every centroid of the displayed digest
+  (`h_tdigest_signal`) is one point: its height is the centroid's mean, its
+  place the order-29 cell its located word names (`h_tdigest_signal_locations`,
+  one word per centroid), decoded on the uint32 halves of the word. A lossy
+  centroid (weight above 1, about one cell in 100 000) is one point at its
+  mean, at the centre of its ancestor cell. Noise is not read.
+- **Height.** A point sits at `r = 1 + (h − h_ref) · exaggeration / R` globe
+  radii, with `R` the store's semi-major axis. The reference height `h_ref`
+  is the 2nd percentile of the heights drawn within the view's height of
+  the pivot (`neighbourhoodRange` in `src/lib/points/pointRange.ts`, a
+  percentile so that a stray return far below the ground does not pull it
+  down), refreshed as chunks land and as the pivot moves (with nothing
+  drawn within reach, a pivot between tracks, the whole window's 2nd
+  percentile): the datum floats on the view's lowest
+  heights, so the cloud
+  always rises from the sphere at the pivot, over a 3 000 m plateau as
+  over a beach, and a tilted view, whose window reaches farther, keeps it
+  there. The exaggeration is 1 for now (both are shader uniforms). Positions are kept relative to each chunk's centre so that
+  float32 resolves millimetres.
+- **Colour.** The colour is the height on the current colormap, over the
+  drawn points' own range: their 2nd to 98th percentile
+  (`src/lib/points/pointRange.ts`), read from a uniform sample of at most
+  65 536 of them and refreshed as chunks land or the decimation changes;
+  the histogram in the appearance panel is the same sample's. A custom
+  range still wins. Leaving the tier puts the level's range and histogram
+  back (the shared range across levels, unless that is off). **Colour by
+  time** (the panel's choice, offered when the digest declares a `times`
+  sibling) colours each point by when it was observed instead: the
+  sibling's toc words (zagg spec §8.3, one per centroid, read only then
+  and cached with the chunk) decoded to days since 2018-01-01
+  (`src/lib/points/pointTimes.ts`; a range word at its start). The words
+  are read as the sibling's own `temporal` block declares them
+  (`timeWordsOf` in `src/lib/points/pointSource.ts`): `zagg-toc/1`,
+  `per-centroid`, `mortie-toc/1` as toc words, no block as the legacy
+  int64 microseconds since 1970; any other revision, shape or grammar is
+  refused and the time colour is not offered. With the same 2nd to 98th percentile
+  range, labelled as UTC dates on the colour bar; a custom range is typed
+  in those days.
+- **Budget.** At most `OBSERVATION_POINT_BUDGET` (300 000) points are drawn:
+  over it, every k-th centroid of every chunk is drawn, uniformly and
+  deterministically, never by place. A window is priced before it is read
+  at `OBSERVATION_CHUNK_BYTES` (74 KB) per chunk and cut down around the
+  pivot to `OBSERVATION_FETCH_CAP` (24 MB). Decoded chunks are cached (64 MB)
+  beside the digest chunks they came from. Everything is in
+  `src/lib/points/pointBudget.ts`.
+- **Camera.** On entering, the orbit's target moves from the globe's centre
+  to the ground under the view centre and the camera's up to the local
+  vertical. The controls, espg's ruling on gridlook#25, shown as a one-line
+  legend under the level picker while the tier is on: **the left button
+  (one finger, the arrow keys) pans** in the ground plane, the pivot
+  sliding along the surface; **shift + left, the right button (two
+  fingers) orbit** the pivot, tilting from nadir to 85° and turning about
+  the vertical with the horizon kept up; **the middle button and the wheel
+  dolly toward the ground under the cursor** (a middle drag toward where it
+  began, a pinch toward the fingers' middle), which stays under the cursor;
+  **+/- dolly toward the pivot**. The globe keeps its own buttons (left drag rotates it). The
+  camera comes no closer than 200 m to the pivot and stays at least 100 m
+  above the surface; a camera tilted far at a short distance can be below
+  that floor, and the wheel then stops 200 m short of the ground point
+  instead. Leaving puts the camera back on the globe orbit above the pivot
+  at its altitude.
+- **Mode buttons.** **Pan** (the default) and **Orbit** under the legend
+  set what a plain left drag (one finger) does; shift + left and the right
+  button (two fingers) orbit whichever is on, and the arrow keys pan. The
+  legend says which is on. The globe's buttons are untouched.
+- **Pivot height.** The pivot is lifted off the sphere to the middle of
+  the relief around it (the datum to the 98th percentile of the heights
+  within the view's height of it, so a cloud return does not lift it), so an orbit turns about the cloud and an oblique view
+  centres it; the pivot stays on the sphere's vertical and the camera
+  rises and falls with it, so the view keeps its tilt, azimuth and
+  distance (a tilted view does not turn) as the lift changes. The lift follows the relief as chunks land and as the pivot
+  moves.
+- **Opacity.** The panel's slider (0.05 to 1, 1 by default) scales the
+  points' alpha (`pointOpacity`, a uniform of the falloff fragment shader),
+  so dense tracks show their depth; the splat's soft edge stays.
+- **Scale bar.** While the tier is on, the distance scale sits in the
+  view's upper-left corner and reads the ground scale at the pivot (at the
+  view's depth), whether or not the pointer is over the canvas and whether
+  or not the distance-scale toggle is on; elsewhere it follows the cursor
+  as before. There is no vertical scale.
+- **View buttons.** Under the legend, **Top** and **Oblique** animate the
+  tilt (0.6 s, eased) to nadir and to 60° (not a side elevation: at 90°
+  the perspective shift pulls in a huge window), keeping the azimuth, the
+  pivot and the distance; from nadir the oblique view backs away behind
+  the bottom of the screen, so it looks the way the view faced. Orbit
+  drags work from either view.
+- **Panel.** A click pins the order-17 cell's digest, as on level 17.
 
 ## Filling the gaps between tracks
 

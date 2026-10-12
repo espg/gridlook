@@ -2,6 +2,10 @@ import { defineStore } from "pinia";
 import { markRaw } from "vue";
 
 import {
+  POINT_PIVOT_LEFT_DRAGS,
+  type TPivotLeftDrag,
+} from "@/lib/camera/pointPivot.ts";
+import {
   levelAxesAreIdentical,
   type TStreamlineLevelInfo,
   type TVectorVariablePair,
@@ -19,6 +23,8 @@ import {
   LAND_SEA_MASK_MODES,
   type TLandSeaMaskMode,
 } from "@/lib/layers/landSeaMask.ts";
+import { POINT_OPACITY_RANGE } from "@/lib/points/pointBudget.ts";
+import { POINT_COLOURS, type TPointColour } from "@/lib/points/pointTimes.ts";
 import type { TDistanceScale } from "@/lib/projection/distanceScale.ts";
 import {
   PROJECTION_TYPES,
@@ -48,6 +54,22 @@ export type THoveredGridPoint = {
   interpolated?: boolean;
   screenX: number;
   screenY: number;
+};
+
+/** What the point tier has on screen (usePointLayer.ts), for the selector. */
+export type TPointTierStats = {
+  /** Leaf chunks in the window, and how many have landed. */
+  chunks: number;
+  loaded: number;
+  /** Observations decoded in the window, and drawn after decimation. */
+  photons: number;
+  drawn: number;
+  stride: number;
+  /** Milliseconds from the window's request to its first points, and to all. */
+  firstPointsMs?: number;
+  windowMs?: number;
+  /** Milliseconds spent decoding, over the window. */
+  decodeMs: number;
 };
 
 export const LAYER_KINDS = {
@@ -256,6 +278,25 @@ export const useGlobeControlStore = defineStore("globeControl", {
       // whether the camera picks it (a manual pick turns that off)
       selectedLevel: 0 as number,
       levelAuto: true,
+      // the point tier (levels.ts): the observations themselves are drawn
+      // over the finest level, which `selectedLevel` then is
+      pointTier: false,
+      pointTierStats: undefined as TPointTierStats | undefined,
+      // the colour range of the drawn points, in place of the level's data
+      // range while the tier is on (a custom range still wins)
+      pointTierBounds: undefined as TBounds | undefined,
+      // what a plain left drag does on the tier's camera (pointPivot.ts)
+      pointTierLeftDrag: POINT_PIVOT_LEFT_DRAGS.PAN as TPivotLeftDrag,
+      // what the points are coloured by (pointTimes.ts), and whether the
+      // source has times to colour by
+      pointTierColour: POINT_COLOURS.HEIGHT as TPointColour,
+      pointTierTimed: false,
+      // the points' opacity, 0.05 to 1
+      pointTierOpacity: 1,
+      // the tilt the tier's camera is asked to animate to, degrees from
+      // nadir (pointPivot.ts); the serial makes every request its own
+      pointTierTilt: undefined as
+        { degrees: number; serial: number } | undefined,
       // whether every level shares the coarsest level's colour range and
       // histogram (right for a mean, e.g. elevation) or each level takes its
       // own (right for a sum, e.g. a count, which grows 4x per level)
@@ -327,6 +368,7 @@ export const useGlobeControlStore = defineStore("globeControl", {
         this.newDatasetSignifier += 1;
       }
       this.resetStreamlineSelection();
+      this.pointTier = false;
       this.digestPin = undefined;
       this.digestProbe = undefined;
       this.volumeSelections = [];
@@ -351,10 +393,59 @@ export const useGlobeControlStore = defineStore("globeControl", {
     selectLevel(index: number, manual = true) {
       if (manual) {
         this.levelAuto = false;
+        this.pointTier = false;
       }
       if (this.selectedLevel !== index) {
         this.selectedLevel = index;
       }
+    },
+    // the points over the finest level, `index`; by hand unless told otherwise
+    selectPointTier(index: number, manual = true) {
+      this.selectLevel(index, manual);
+      this.pointTier = true;
+    },
+    setPointTier(on: boolean) {
+      this.pointTier = on;
+    },
+    setPointTierStats(stats: TPointTierStats | undefined) {
+      this.pointTierStats = stats;
+    },
+    setPointTierBounds(bounds: TBounds | undefined) {
+      this.pointTierBounds = bounds;
+    },
+    setPointTierLeftDrag(mode: TPivotLeftDrag) {
+      this.pointTierLeftDrag = mode;
+    },
+    setPointTierColour(colour: TPointColour) {
+      this.pointTierColour = colour;
+    },
+    setPointTierTimed(timed: boolean) {
+      this.pointTierTimed = timed;
+    },
+    /**
+     * The points on screen are coloured by time: chosen, and the source has
+     * times. Their range is then labelled as dates.
+     */
+    pointTierColouredByTime(): boolean {
+      return (
+        this.pointTier &&
+        this.pointTierColour === POINT_COLOURS.TIME &&
+        this.pointTierTimed
+      );
+    },
+    setPointTierOpacity(opacity: number) {
+      this.pointTierOpacity = Number.isFinite(opacity)
+        ? Math.min(
+            Math.max(opacity, POINT_OPACITY_RANGE.min),
+            POINT_OPACITY_RANGE.max
+          )
+        : 1;
+    },
+    requestPointTierTilt(degrees: number) {
+      this.pointTierTilt = {
+        degrees,
+        serial: (this.pointTierTilt?.serial ?? 0) + 1,
+      };
     },
     setLevelAuto(auto: boolean) {
       this.levelAuto = auto;

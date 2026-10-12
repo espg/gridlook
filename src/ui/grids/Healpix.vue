@@ -4,7 +4,7 @@ import "@/utils/disposablePolyfill.ts";
 import * as healpixGeo from "healpix-geo";
 import { storeToRefs } from "pinia";
 import * as THREE from "three";
-import { onBeforeMount, onBeforeUnmount, ref } from "vue";
+import { onBeforeMount, onBeforeUnmount, ref, watch } from "vue";
 import * as zarr from "zarrita";
 
 import {
@@ -15,6 +15,7 @@ import { useDigestField } from "./composables/useDigestField.ts";
 import { useDigestProbe } from "./composables/useDigestProbe.ts";
 import { useGapFill } from "./composables/useGapFill.ts";
 import { useGridDataLoader } from "./composables/useGridDataLoader.ts";
+import { usePointLayer } from "./composables/usePointLayer.ts";
 import { useScalarFieldCache } from "./composables/useScalarFieldCache.ts";
 import { useSharedGridLogic } from "./composables/useSharedGridLogic.ts";
 import { useStreamlineLayer } from "./composables/useStreamlineLayer.ts";
@@ -143,10 +144,12 @@ const {
   onMotionStateChange,
   onColormapChange,
   registerAnimationCallback,
+  registerUpdateLOD,
   canvas,
   box,
   hoveredGeoPoint,
   clickedGeoPoint,
+  pointPivot,
 } = useSharedGridLogic();
 
 const { setHoverLookup, clearHoverLookup } =
@@ -210,14 +213,30 @@ function drawnMeshes() {
   return [...backdropMeshes, ...mainMeshes];
 }
 
-onColormapChange(() => updateColormap(drawnMeshes()));
+/**
+ * The level's colours, and whether it is drawn at all: under the point tier
+ * the level and its backdrop are hidden (the cloud is drawn on black), which
+ * `updateColormap` undoes before it redraws, so the meshes it is given are
+ * only those to be shown.
+ */
+function updateLevelColormap() {
+  const shown = pointLayer.active.value ? [] : drawnMeshes();
+  for (const mesh of drawnMeshes()) {
+    if (mesh && !shown.includes(mesh)) {
+      mesh.visible = false;
+    }
+  }
+  updateColormap(shown);
+}
+
+onColormapChange(updateLevelColormap);
 
 onProjectionChange(updateMeshProjectionUniforms);
 onMotionStateChange(updateMeshProjectionUniforms);
 
 const scalarCache = useScalarFieldCache({
   updateHistogram,
-  updateColormap: () => updateColormap(drawnMeshes()),
+  updateColormap: updateLevelColormap,
   redraw,
 });
 
@@ -262,7 +281,7 @@ const { datasourceUpdate, getData } = useGridDataLoader({
   canLoadByView: () => levelWindowable,
   viewWindowStale,
   updateLandSeaMask,
-  updateColormap: () => updateColormap(drawnMeshes()),
+  updateColormap: updateLevelColormap,
   refreshStreamlines: async (reuseCached) => {
     if (lastStreamlineContext) {
       await updateStreamlines(lastStreamlineContext, reuseCached);
@@ -278,7 +297,7 @@ const { datasourceUpdate, getData } = useGridDataLoader({
 // Variables derived from a t-digest are computed here, not read.
 async function recompute() {
   await getData();
-  updateColormap(drawnMeshes());
+  updateLevelColormap();
 }
 const digestFields = useDigestField({
   getDatasources: () => props.datasources,
@@ -294,6 +313,24 @@ useDigestProbe({
   clickedGeoPoint,
   getInterpolated: gapFill.interpolated,
   filledRevision: gapFill.revision,
+});
+// the point tier: the observations in place of the finest level (levels.ts)
+const pointLayer = usePointLayer({
+  getDatasources: () => props.datasources,
+  getScene,
+  redraw,
+  registerUpdateLOD,
+  onColormapChange,
+  updateColormap,
+  updateHistogram,
+  restoreHistogram: scalarCache.restoreHistogram,
+  projectionHelper,
+  pointPivot,
+});
+// the level comes and goes with the tier; its data stays for the probe
+watch(pointLayer.active, () => {
+  updateLevelColormap();
+  redraw();
 });
 
 function coerceInteger(value: unknown): number | null {
@@ -1037,6 +1074,7 @@ function createHealpixMesh(
     projectionHelper.value.type
   );
   mesh.frustumCulled = false;
+  mesh.visible = !pointLayer.active.value;
   if (target === backdropMeshes) {
     // after the layers stacked below the grid (-1 and down), before the grid
     mesh.renderOrder = -0.5;

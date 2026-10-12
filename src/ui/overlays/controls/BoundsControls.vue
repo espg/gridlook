@@ -2,6 +2,7 @@
 import { storeToRefs } from "pinia";
 import { computed } from "vue";
 
+import { formatPointTime } from "@/lib/points/pointTimes.ts";
 import type { TBounds } from "@/lib/types/GlobeTypes.ts";
 import { useGlobeControlStore } from "@/store/store.ts";
 
@@ -61,12 +62,15 @@ const isInverted = computed(
     (userBoundsLow.value as number) > (userBoundsHigh.value as number)
 );
 
+// the point tier coloured by time shows its data range as dates
 function formatNum(val: number | undefined) {
   const n = Number(val);
   if (isNaN(n)) {
     return "—";
   }
-  return n.toPrecision(4);
+  return store.pointTierColouredByTime()
+    ? formatPointTime(n)
+    : n.toPrecision(4);
 }
 </script>
 
