@@ -206,25 +206,35 @@ const DEFAULT_MERGED_CACHE_BYTES = 32 * 2 ** 20;
  * one source serves every stratum choice. Merged chunks are kept, bounded
  * by bytes; `peek` merges only what is in memory for every array.
  */
+/**
+ * The parts merged, from `cache` when they were before; undefined while a
+ * part is not in memory.
+ */
+function mergedParts(
+  cache: ReturnType<typeof createByteLru<TDigestChunk>>,
+  parts: (TDigestChunk | null | undefined)[],
+  key: string
+) {
+  if (parts.some((part) => part === undefined)) {
+    return undefined;
+  }
+  let chunk = cache.get(key);
+  if (!chunk) {
+    chunk = mergeDigestChunks(parts as (TDigestChunk | null)[]) ?? undefined;
+    if (chunk) {
+      cache.set(key, chunk);
+    }
+  }
+  return chunk ?? null;
+}
+
 export function createMergedDigests(
   pooled: { at(group: number): TDigestSource },
   maxBytes = DEFAULT_MERGED_CACHE_BYTES
 ) {
   const cache = createByteLru<TDigestChunk>(maxBytes, chunkBytes);
-
-  function merged(parts: (TDigestChunk | null | undefined)[], key: string) {
-    if (parts.some((part) => part === undefined)) {
-      return undefined;
-    }
-    let chunk = cache.get(key);
-    if (!chunk) {
-      chunk = mergeDigestChunks(parts as (TDigestChunk | null)[]) ?? undefined;
-      if (chunk) {
-        cache.set(key, chunk);
-      }
-    }
-    return chunk ?? null;
-  }
+  const merged = (parts: (TDigestChunk | null | undefined)[], key: string) =>
+    mergedParts(cache, parts, key);
 
   function at(group: number): TDigestSource {
     const source = pooled.at(group);
@@ -237,6 +247,10 @@ export function createMergedDigests(
         if (paths.length === 1) {
           return source.chunk(path, index, row);
         }
+        const kept = cache.get(key(path, index, row));
+        if (kept) {
+          return kept;
+        }
         const parts = await Promise.all(
           paths.map((part) => source.chunk(part, index, row))
         );
@@ -244,13 +258,12 @@ export function createMergedDigests(
       },
       peek(path, index, row = 0) {
         const paths = splitMergedPath(path);
-        if (paths.length === 1) {
-          return source.peek(path, index, row);
-        }
-        return merged(
-          paths.map((part) => source.peek(part, index, row)),
-          key(path, index, row)
-        );
+        return paths.length === 1
+          ? source.peek(path, index, row)
+          : merged(
+              paths.map((part) => source.peek(part, index, row)),
+              key(path, index, row)
+            );
       },
     };
   }
