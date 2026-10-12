@@ -51,10 +51,11 @@ ground distance one screen pixel covers at the point below the camera and
 picks the **finest level that passes two tests**:
 
 - its cells span at least **2 pixels** on screen, stored or derived;
-- its window fits: the cells the viewport holds at that scale, priced in
-  bytes for a variable derived from a t-digest (per cell on a stored level,
-  per leaf chunk on a derived one) against the 1 GB window budget, or in
-  cells against the view cap for any other variable.
+- its window fits: the cells the viewport holds at that scale, priced
+  against the 1 GB window budget in leaf chunks on a derived level (for
+  every variable) and in bytes per cell for a variable derived from a
+  t-digest on a stored level, or in cells against the view cap for any
+  other variable of a stored level.
 
 A level loaded whole must also be under the whole-level cell cap. The active
 level keeps **1.5×** slack on both tests, so a slow zoom across a boundary
@@ -111,7 +112,11 @@ The window is reloaded in place once the view leaves it; moving inside it
 fetches nothing. While the camera keeps moving, a window that is already
 loading is shown before the next one is requested. With a level picked by
 hand that is too fine for the view, the window is cut down to the budget
-around the point below the camera.
+around the point below the camera; such a window is reloaded once the camera
+has moved a block's width from where it was loaded. Over a store that says
+where it has data (a hive store), the blocks it holds nothing for are left
+out before the budget, so a regional store's blocks in view are not cut
+while they fit.
 
 The coarsest level is the exception: it is always loaded whole, and the
 colour range and histogram are taken from it, so colours do not shift as the
@@ -128,8 +133,8 @@ blocks are read, the window of the parent at the same view (its own block
 size, the same margin, the same budget rule) is read and drawn beneath; the
 level's blocks then land over it face by face, and the parent stays visible
 wherever the level has no cell: not yet landed, outside its window, or left
-out by its budget. A parent whose window is itself over its budget at this
-view is skipped for the next coarser level that fits, down to the coarsest,
+out by its budget. A parent whose budget cuts into the view itself (a trimmed
+margin does not count) is skipped for the next coarser level that fits, down to the coarsest,
 which is loaded whole and always fits. A level derived from the leaves is
 never the parent: its window would read the same leaf chunks as the level's
 own, and show nothing sooner. The parent is drawn with the colour range of
@@ -152,8 +157,10 @@ beneath" checkbox in the **Variable** card turns
 the fill off (it is on by default); the colour range is taken from the
 coarsest level either way.
 
-A level that is loaded by view can be of any size, so automatic selection has
-no cap for it. Streamlines and the volume layer read the whole level: while
+A level that is loaded by view is not held to the whole-level cap: automatic
+selection prices only its window, against the window budget or the view cap
+(above). A sparse regional level loaded whole is drawn over the coarsest
+level, as a window is. Streamlines and the volume layer read the whole level: while
 either is on, the cap below applies and levels up to it are loaded whole.
 
 HEALPix levels in ring order or with an unsorted `cell` coordinate, rotated
@@ -201,7 +208,9 @@ zoom in, or pick a coarser level._ The digests are a stream: each chunk is decod
 let go, so a window may read far more than the browser could hold decoded,
 and a percentile change reads the window again. A small working set of
 decoded chunks (32 MB) serves the cells under the cursor and a clicked cell's
-distribution.
+distribution; once a window has landed, the few chunks nearest the point
+below the camera are read once more, so that the working set holds them
+rather than the far margin.
 
 Clicking a cell pins it in the **Height distribution** panel: the photons per
 metre of height of the signal and, muted, of the noise, with the selected
