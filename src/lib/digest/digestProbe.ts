@@ -1,6 +1,11 @@
 import type { TDigestCell } from "./digestField.ts";
 import { digestVariableOf } from "./digestVariables.ts";
 import {
+  DEFAULT_STRATUM,
+  primaryStratum,
+  type TStratumChoice,
+} from "./strata.ts";
+import {
   digestCumulativeWeight,
   digestQuantile,
   digestWeight,
@@ -50,19 +55,21 @@ export type TDigestPlot = {
   peak: number;
 };
 
-const TARGET_STRATUM = "signal";
 // The plot reaches this fraction of the value range past either end.
 const PLOT_PADDING = 0.04;
 
 /**
  * The digest arrays of a level, from the variables derived from them; the
- * signal first, as it sets the range of the plot. `dataset` is the group
- * they are read in when it is not the level's own (a derived level).
+ * stratum `choice` draws first (the signal by default) first, as it sets
+ * the range of the plot. `dataset` is the group they are read in when it is
+ * not the level's own (a derived level).
  */
 export function digestStrata(
   datasources: Record<string, TDataSource>,
-  dataset?: string
+  dataset?: string,
+  choice: TStratumChoice = DEFAULT_STRATUM
 ): TDigestStratum[] {
+  const target = primaryStratum(choice);
   const strata = new Map<string, TDigestStratum>();
   for (const source of Object.values(datasources)) {
     const digest = digestVariableOf(source.attrs);
@@ -76,8 +83,7 @@ export function digestStrata(
     }
   }
   return [...strata.values()].sort(
-    (a, b) =>
-      Number(b.name === TARGET_STRATUM) - Number(a.name === TARGET_STRATUM)
+    (a, b) => Number(b.name === target) - Number(a.name === target)
   );
 }
 

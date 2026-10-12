@@ -11,6 +11,7 @@ import {
   digestVariableOf,
   type TDigestVariable,
 } from "@/lib/digest/digestVariables.ts";
+import { primaryStratum } from "@/lib/digest/strata.ts";
 import { digestWeight } from "@/lib/digest/tdigest.ts";
 import type { TDataSource } from "@/lib/types/GlobeTypes.ts";
 import { useGlobeControlStore } from "@/store/store.ts";
@@ -94,8 +95,11 @@ const markers = computed(() => {
         ? [store.digestPercentileLow, store.digestPercentileHigh]
         : [];
   const values =
-    probePercentiles(probe.value, percentiles, displayed.value?.stratum)
-      ?.values ?? [];
+    probePercentiles(
+      probe.value,
+      percentiles,
+      primaryStratum(store.digestStratum)
+    )?.values ?? [];
   return values.map(({ percentile, value }) => ({
     label: `p${percentile}`,
     x: Math.min(Math.max(scaleX(value), 0), WIDTH),
@@ -105,7 +109,11 @@ const markers = computed(() => {
 const summary = computed(
   () =>
     probe.value &&
-    probePercentiles(probe.value, SUMMARY_PERCENTILES, displayed.value?.stratum)
+    probePercentiles(
+      probe.value,
+      SUMMARY_PERCENTILES,
+      primaryStratum(store.digestStratum)
+    )
 );
 
 const axis = computed(() => {

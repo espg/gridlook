@@ -277,7 +277,7 @@ describe("createHiveStore with a t-digest field", () => {
     expect(percentile.shape).toEqual([1, 12 * 4 ** 12]);
     expect(percentile.chunks).toEqual([1, 256]);
     expect(percentile.attrs).toMatchObject({
-      long_name: "height percentile (signal)", // eslint-disable-line camelcase
+      long_name: "height percentile", // eslint-disable-line camelcase
       digest: { array: "h_tdigest_signal", product: "percentile" },
     });
     const before = inner.log.length;

@@ -50,7 +50,11 @@ export function useDigestProbe(options: {
       return undefined;
     }
     const current = currentLevel(sources);
-    const strata = digestStrata(current.datasources, current.derived?.dataset);
+    const strata = digestStrata(
+      current.datasources,
+      current.derived?.dataset,
+      store.digestStratum
+    );
     const source = Object.values(current.datasources)[0];
     const from = source && strata.length > 0 && levelSource(current, source);
     return from ? { grid, strata, reader: from.digests } : undefined;
@@ -141,9 +145,15 @@ export function useDigestProbe(options: {
       store.setDigestPin({ lat: point.lat, lon: point.lon });
     }
   });
-  // a pinned place is a cell of whatever level is on screen
+  // a pinned place is a cell of whatever level is on screen; the stratum
+  // choice orders the strata shown
   watch(
-    [() => store.digestPin, options.getGrid, options.filledRevision],
+    [
+      () => store.digestPin,
+      options.getGrid,
+      options.filledRevision,
+      () => store.digestStratum,
+    ],
     showPinned,
     { immediate: true }
   );

@@ -5,24 +5,56 @@ import {
   DIGEST_PRODUCTS,
   type TDigestVariable,
 } from "@/lib/digest/digestVariables.ts";
+import { DIGEST_STRATA, type TStratumChoice } from "@/lib/digest/strata.ts";
 import { GAP_FILL_SIZES, gaussianSigma } from "@/lib/grids/gapFill.ts";
 import { useGlobeControlStore } from "@/store/store.ts";
 import RangeSlider from "@/ui/common/RangeSlider.vue";
 
-const props = defineProps<{
-  /** The digest the selected variable is derived from. */
-  digest: TDigestVariable;
-  /**
-   * Whether the level on screen is derived from the leaves. Only such a
-   * level is smoothed, so the gap controls are shown there alone; the
-   * setting itself is kept across levels.
-   */
-  derivedLevel: boolean;
-}>();
+const props = withDefaults(
+  defineProps<{
+    /** The digest the selected variable is derived from. */
+    digest: TDigestVariable;
+    /** The strata the store's digests hold (`signal`, `noise`). */
+    strata?: string[];
+    /**
+     * Whether the level on screen is derived from the leaves. Only such a
+     * level is smoothed, so the gap controls are shown there alone; the
+     * setting itself is kept across levels.
+     */
+    derivedLevel: boolean;
+  }>(),
+  { strata: () => [] }
+);
 
 const store = useGlobeControlStore();
 
 const isRange = computed(() => props.digest.product === DIGEST_PRODUCTS.RANGE);
+
+// the stratum choice, offered once the store holds more than one stratum;
+// `both` needs the signal and the noise
+const STRATA: { choice: TStratumChoice; label: string; title: string }[] = [
+  {
+    choice: DIGEST_STRATA.SIGNAL,
+    label: "signal",
+    title: "The photons classified as signal",
+  },
+  {
+    choice: DIGEST_STRATA.NOISE,
+    label: "noise",
+    title: "The photons classified as noise",
+  },
+  {
+    choice: DIGEST_STRATA.BOTH,
+    label: "both",
+    title:
+      "Every photon: the signal and noise digests of each cell merged, and both clouds in the point view",
+  },
+];
+const offered = (choice: TStratumChoice) =>
+  choice === DIGEST_STRATA.BOTH
+    ? props.strata.includes(DIGEST_STRATA.SIGNAL) &&
+      props.strata.includes(DIGEST_STRATA.NOISE)
+    : props.strata.includes(choice);
 
 const number = (event: Event) =>
   Number((event.target as HTMLInputElement).value);
@@ -46,6 +78,23 @@ function setHigh(high: number) {
 
 <template>
   <div class="column digest-controls">
+    <div v-if="strata.length > 1" class="digest-row">
+      <span class="is-size-7 has-text-grey">Photons</span>
+      <div class="buttons has-addons are-small mb-0">
+        <button
+          v-for="{ choice, label, title } in STRATA"
+          :key="choice"
+          type="button"
+          class="button"
+          :class="{ 'is-selected is-link': store.digestStratum === choice }"
+          :disabled="!offered(choice)"
+          :title="title"
+          @click="store.setDigestStratum(choice)"
+        >
+          {{ label }}
+        </button>
+      </div>
+    </div>
     <template v-if="isRange">
       <div class="is-size-7 has-text-grey">
         Percentile range: p{{ store.digestPercentileHigh }} − p{{

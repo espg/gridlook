@@ -34,6 +34,7 @@ const URL_PARAMETERS = {
   PERCENTILE_HIGH: "percentilehigh",
   SMOOTH: "smooth",
   SMOOTH_KERNEL: "smoothkernel",
+  STRATUM: "stratum",
 } as const;
 
 type TURLParameterValues = (typeof URL_PARAMETERS)[keyof typeof URL_PARAMETERS];

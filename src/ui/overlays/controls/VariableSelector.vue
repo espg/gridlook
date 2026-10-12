@@ -2,6 +2,7 @@
 import { storeToRefs } from "pinia";
 import { computed } from "vue";
 
+import { duplicateStratumVariables } from "@/lib/digest/strata.ts";
 import type { TModelInfo } from "@/lib/types/GlobeTypes.js";
 import { useGlobeControlStore } from "@/store/store.ts";
 
@@ -32,10 +33,15 @@ const displayedVariableValue = computed(() =>
     : selectedBasename.value
 );
 
+// the per-stratum variables the stratum choice stands in for (strata.ts)
+const duplicates = computed(() =>
+  duplicateStratumVariables(props.modelInfo.vars, model.value)
+);
+
 const groups = computed(() => {
   const groups: Record<string, string[]> = {};
   for (const varname in props.modelInfo.vars) {
-    if (props.modelInfo.vars[varname].hidden) {
+    if (props.modelInfo.vars[varname].hidden || duplicates.value.has(varname)) {
       continue;
     }
     if (varname.lastIndexOf("/") > 0) {

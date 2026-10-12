@@ -62,6 +62,7 @@ const GLOBE_URL_SYNC_MAP: TUrlSyncEntry[] = [
   { key: "digestPercentile", param: URL_PARAMETERS.PERCENTILE },
   { key: "digestPercentileLow", param: URL_PARAMETERS.PERCENTILE_LOW },
   { key: "digestPercentileHigh", param: URL_PARAMETERS.PERCENTILE_HIGH },
+  { key: "digestStratum", param: URL_PARAMETERS.STRATUM },
   {
     key: "gapFill",
     param: URL_PARAMETERS.SMOOTH,

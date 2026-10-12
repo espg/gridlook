@@ -19,6 +19,7 @@ import VariableSelector from "./controls/VariableSelector.vue";
 
 // Import control components
 import type { T_GRID_TYPES } from "@/lib/data/gridTypeDetector.ts";
+import { digestStrata } from "@/lib/digest/digestProbe.ts";
 import { digestVariableOf } from "@/lib/digest/digestVariables.ts";
 import {
   clamp,
@@ -99,11 +100,16 @@ const {
   paramPercentileHigh,
   paramSmooth,
   paramSmoothKernel,
+  paramStratum,
 } = storeToRefs(urlParameterStore);
 
 // the digest the selected variable is derived from, if it is
 const selectedDigest = computed(() =>
   digestVariableOf(props.modelInfo?.vars[varnameSelector.value]?.attrs)
+);
+// the strata the store's digests hold, offered as the choice
+const strata = computed(() =>
+  digestStrata(props.modelInfo?.vars ?? {}).map(({ name }) => name)
 );
 // whether the level on screen is computed from the leaves (see levels.ts)
 const derivedLevel = computed(() => {
@@ -346,6 +352,8 @@ function initFromParams() {
       Number(paramPercentileHigh.value ?? store.digestPercentileHigh)
     );
   }
+  // a URL naming a per-stratum variable reads that stratum
+  store.setDigestStratum(paramStratum.value ?? selectedDigest.value?.stratum);
   store.setGapFill(paramSmooth.value === "true");
   if (paramSmoothKernel.value) {
     store.setGapFillSize(Number(paramSmoothKernel.value));
@@ -433,6 +441,7 @@ defineExpose({
           <DigestControls
             v-if="selectedDigest"
             :digest="selectedDigest"
+            :strata="strata"
             :derived-level="derivedLevel"
           />
           <LevelSelector

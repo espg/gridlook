@@ -19,7 +19,7 @@ describe("digestVariablesOf", () => {
       "h_range_signal",
     ]);
     expect(variables.h_percentile_signal.attributes).toEqual({
-      long_name: "height percentile (signal)", // eslint-disable-line camelcase
+      long_name: "height percentile", // eslint-disable-line camelcase
       units: "m (WGS84 ellipsoid)",
       digest: {
         array: "h_tdigest_signal",
@@ -29,7 +29,7 @@ describe("digestVariablesOf", () => {
     });
     // a difference of heights has no datum
     expect(variables.h_range_signal.attributes).toMatchObject({
-      long_name: "height percentile range (signal)", // eslint-disable-line camelcase
+      long_name: "height percentile range", // eslint-disable-line camelcase
       units: "m",
     });
   });

@@ -18,6 +18,11 @@ import {
   DEFAULT_PERCENTILE_HIGH,
   DEFAULT_PERCENTILE_LOW,
 } from "@/lib/digest/digestVariables.ts";
+import {
+  DEFAULT_STRATUM,
+  isStratumChoice,
+  type TStratumChoice,
+} from "@/lib/digest/strata.ts";
 import { DEFAULT_GAP_FILL_SIZE, GAP_FILL_SIZES } from "@/lib/grids/gapFill.ts";
 import {
   LAND_SEA_MASK_MODES,
@@ -314,6 +319,9 @@ export const useGlobeControlStore = defineStore("globeControl", {
       digestPercentile: DEFAULT_PERCENTILE as number,
       digestPercentileLow: DEFAULT_PERCENTILE_LOW as number,
       digestPercentileHigh: DEFAULT_PERCENTILE_HIGH as number,
+      // the stratum of the observations a digest variable reads (strata.ts):
+      // the signal, the noise, or the two merged
+      digestStratum: DEFAULT_STRATUM as TStratumChoice,
       // whether the blank cells of a digest variable are filled from their
       // neighbours, and the size of the Gaussian kernel, in cells across
       gapFill: false,
@@ -466,6 +474,11 @@ export const useGlobeControlStore = defineStore("globeControl", {
       const clamped = [low, high].map((v) => Math.min(Math.max(v, 0), 100));
       this.digestPercentileLow = Math.min(...clamped);
       this.digestPercentileHigh = Math.max(...clamped);
+    },
+    setDigestStratum(choice: unknown) {
+      if (isStratumChoice(choice)) {
+        this.digestStratum = choice;
+      }
     },
     setGapFill(enabled: boolean) {
       this.gapFill = enabled;

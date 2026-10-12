@@ -81,10 +81,10 @@ export function digestVariablesOf(
     variables[[quantity, product, stratum].filter(Boolean).join("_")] = {
       ...digest,
       attributes: {
+        // the stratum is not in the label: the viewer's stratum choice
+        // says which one is read (strata.ts)
         // eslint-disable-next-line camelcase
-        long_name:
-          `${known?.label ?? quantity} ${PRODUCT_LABELS[product]}` +
-          (stratum ? ` (${stratum})` : ""),
+        long_name: `${known?.label ?? quantity} ${PRODUCT_LABELS[product]}`,
         // a difference of two heights has no datum
         ...(known && product === DIGEST_PRODUCTS.PERCENTILE
           ? { units: `${known.units} (${known.datum})` }

@@ -205,6 +205,7 @@ function registerGridDataLoaderWatches(
   watch(() => options.getDatasources()?.selectedLevel, regrid);
   watch(() => store.levelRangeShared, regrid);
   watch(() => store.levelParentBeneath, regrid);
+  watch(() => store.digestStratum, regrid);
   async function reloadWindow() {
     if (!options.viewWindowStale?.()) {
       return;

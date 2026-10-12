@@ -8,6 +8,7 @@ import {
   DIGEST_PRODUCTS,
   digestVariableOf,
 } from "@/lib/digest/digestVariables.ts";
+import { strataArrays } from "@/lib/digest/strata.ts";
 import type { TSources } from "@/lib/types/GlobeTypes.ts";
 import { useGlobeControlStore } from "@/store/store.ts";
 
@@ -75,22 +76,31 @@ export function useDigestField(options: {
             { product: DIGEST_PRODUCTS.PERCENTILE },
             { ...params(), percentile },
           ];
+    // the stratum choice rewrites the array the variable reads
+    const [array] = strataArrays(
+      digest,
+      level.datasources,
+      store.digestStratum
+    );
     return from.digests.then((reader) =>
-      digestField(reader, from.path(digest.array), product, at, start, end)
+      digestField(reader, from.path(array.array), product, at, start, end)
     );
   }
 
   /** What a frame of the displayed variable depends on beside its cells. */
   function key() {
-    return derived(store.varnameSelector) ? JSON.stringify(params()) : "";
+    return derived(store.varnameSelector)
+      ? JSON.stringify([params(), store.digestStratum])
+      : "";
   }
 
   if (derived(store.varnameSelector)) {
     // a percentile is comparable across levels, as a mean is
     store.setLevelRangeShared(true);
   }
+  // the stratum is left out: its window is priced anew, by the loader
   watchDebounced(
-    key,
+    () => JSON.stringify(params()),
     () => {
       if (derived(store.varnameSelector)) {
         options.reload();
