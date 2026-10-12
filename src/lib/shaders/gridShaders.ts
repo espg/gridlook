@@ -193,6 +193,7 @@ export function makeGpuProjectedPointMaterial(
       posterizeLevels: { value: 0.0 },
       hideBelowValue: { value: -1e38 },
       hideAboveValue: { value: 1e38 },
+      pointOpacity: { value: 1.0 },
       colormap: { value: availableColormaps[colormap] },
       // Projection uniforms
       projectionType: {
@@ -234,6 +235,7 @@ export function makeHeightPointMaterial(
       posterizeLevels: { value: 0.0 },
       hideBelowValue: { value: -1e38 },
       hideAboveValue: { value: 1e38 },
+      pointOpacity: { value: 1.0 },
       colormap: { value: availableColormaps[colormap] },
       heightReference: { value: 0.0 },
       heightExaggeration: { value: 1.0 },

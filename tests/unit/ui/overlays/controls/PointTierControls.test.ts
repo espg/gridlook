@@ -58,6 +58,22 @@ it("offers the colour by time only when the source has times", async () => {
   expect(timed).not.toMatch(/<button[^>]*disabled[^>]*>\s*time\s*<\/button>/);
 });
 
+it("carries the opacity slider, clamped to its range", async () => {
+  const store = useGlobeControlStore();
+  expect(store.pointTierOpacity).toBe(1);
+  expect(await render()).toMatch(
+    /<input id="point_opacity"[^>]*type="range"[^>]*min="0.05"[^>]*max="1"[^>]*step="0.05"[^>]*value="1"/
+  );
+  store.setPointTierOpacity(0.3);
+  expect(await render()).toContain('value="0.3"');
+  store.setPointTierOpacity(0);
+  expect(store.pointTierOpacity).toBe(0.05);
+  store.setPointTierOpacity(7);
+  expect(store.pointTierOpacity).toBe(1);
+  store.setPointTierOpacity(NaN);
+  expect(store.pointTierOpacity).toBe(1);
+});
+
 it("asks the camera for a tilt once per press", () => {
   const store = useGlobeControlStore();
   expect(store.pointTierTilt).toBeUndefined();

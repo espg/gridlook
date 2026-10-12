@@ -199,6 +199,7 @@ export function usePointLayer(options: TPointLayerOptions) {
         scaleFactor,
         MORTON_STORE_ELLIPSOID.semi_major_axis
       );
+      material.uniforms.pointOpacity.value = store.pointTierOpacity;
     }
     return material;
   }
@@ -565,6 +566,16 @@ export function usePointLayer(options: TPointLayerOptions) {
     () => {
       if (active.value) {
         reload();
+      }
+    }
+  );
+  // the opacity slider
+  watch(
+    () => store.pointTierOpacity,
+    (opacity) => {
+      if (material) {
+        material.uniforms.pointOpacity.value = opacity;
+        options.redraw();
       }
     }
   );

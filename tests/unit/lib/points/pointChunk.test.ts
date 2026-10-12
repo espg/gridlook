@@ -192,6 +192,11 @@ describe("the radius law", () => {
     const material = makeHeightPointMaterial("viridis", 0, 1, 6378137);
     expect(material.uniforms.heightReference.value).toBe(0);
     expect(material.uniforms.heightExaggeration.value).toBe(1);
+    // opaque unless the slider says otherwise; the falloff still shapes the splat
+    expect(material.uniforms.pointOpacity.value).toBe(1);
+    expect(material.fragmentShader).toContain(
+      "gl_FragColor.a = falloff * pointOpacity;"
+    );
     expect(material.uniforms.earthRadius.value).toBe(6378137);
     expect(material.vertexShader).toContain(
       "float lift = (height - heightReference) * heightExaggeration / earthRadius;"

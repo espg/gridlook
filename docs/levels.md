@@ -257,6 +257,9 @@ It exists on the globe only; a flat projection stops at the finest level.
   height of it), so an orbit turns about the cloud and a profile centres
   it; the pivot stays on the sphere's vertical, so a nadir view does not
   notice. The lift follows the relief as chunks land.
+- **Opacity.** The panel's slider (0.05 to 1, 1 by default) scales the
+  points' alpha (`pointOpacity`, a uniform of the falloff fragment shader),
+  so dense tracks show their depth; the splat's soft edge stays.
 - **Axes.** A gizmo at the datum under the pivot: east, north and up bars
   ticked at half and full length in metres (km from 1 km), the up bar
   scaled like the points. The bars are the largest nice length (1, 2, 5 ×

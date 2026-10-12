@@ -8,6 +8,7 @@ import {
   POINT_PIVOT_TILTS,
   type TPivotLeftDrag,
 } from "@/lib/camera/pointPivot.ts";
+import { POINT_OPACITY_RANGE } from "@/lib/points/pointBudget.ts";
 import { POINT_COLOURS, type TPointColour } from "@/lib/points/pointTimes.ts";
 import { useGlobeControlStore } from "@/store/store.ts";
 
@@ -17,10 +18,14 @@ import { useGlobeControlStore } from "@/store/store.ts";
  * drag does (shift + left and the right button orbit either way), and the
  * view buttons, which animate the camera's tilt (pointPivot.ts) to the top
  * (nadir) or to a profile (the cloud seen edge-on along the ground),
- * keeping the azimuth and the pivot, and the colour choice: the height,
- * or the time when the source has one (pointTimes.ts).
+ * keeping the azimuth and the pivot, the colour choice: the height, or
+ * the time when the source has one (pointTimes.ts), and the points'
+ * opacity.
  */
 const store = useGlobeControlStore();
+
+const number = (event: Event) =>
+  Number((event.target as HTMLInputElement).value);
 
 const legend = computed(() => pointTierLegend(store.pointTierLeftDrag));
 const legendTitle = computed(() =>
@@ -97,6 +102,32 @@ const DRAG_MODES: { mode: TPivotLeftDrag; label: string; title: string }[] = [
       </div>
     </div>
     <div class="point-tier-row">
+      <label
+        class="is-size-7 has-text-grey point-tier-label"
+        for="point_opacity"
+        >Opacity</label
+      >
+      <input
+        id="point_opacity"
+        class="slider point-tier-slider"
+        type="range"
+        :min="POINT_OPACITY_RANGE.min"
+        :max="POINT_OPACITY_RANGE.max"
+        :step="POINT_OPACITY_RANGE.step"
+        :value="store.pointTierOpacity"
+        @input="store.setPointTierOpacity(number($event))"
+      />
+      <input
+        class="input is-small point-tier-number"
+        type="number"
+        :min="POINT_OPACITY_RANGE.min"
+        :max="POINT_OPACITY_RANGE.max"
+        :step="POINT_OPACITY_RANGE.step"
+        :value="store.pointTierOpacity"
+        @change="store.setPointTierOpacity(number($event))"
+      />
+    </div>
+    <div class="point-tier-row">
       <span class="is-size-7 has-text-grey point-tier-label">View</span>
       <div class="buttons has-addons are-small mb-0">
         <button
@@ -134,5 +165,15 @@ const DRAG_MODES: { mode: TPivotLeftDrag; label: string; title: string }[] = [
 
 .point-tier-label {
   flex: 0 0 4rem;
+}
+
+.point-tier-slider {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.point-tier-number {
+  flex: 0 0 4.5rem;
+  width: 4.5rem;
 }
 </style>
