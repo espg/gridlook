@@ -553,6 +553,43 @@ describe("createHiveStore on a windowed hive", () => {
       [`${OVERVIEW}/12/count/c/0`]: int64s(256, 2000),
     });
 
+  it("lists a level per cell order of a dataset", async () => {
+    const inner = windowed();
+    const objects = {
+      "morton_hive.json": {
+        ...manifest,
+        spec: "morton-hive/2",
+        multiscales: [
+          {
+            ...manifest.multiscales[0],
+            datasets: [
+              { order: 9, cells: [16, 13], artifact: "column" },
+              { order: 8, cells: [12], artifact: "overview" },
+            ],
+          },
+        ],
+        temporal: { schedule: "yearly", epoch: "2024-01-01T00:00:00+00:00" },
+      },
+    };
+    const store = await createHiveStore("mem://multi", {
+      ...inner,
+      get: async (key) =>
+        key === "/morton_hive.json"
+          ? new TextEncoder().encode(
+              JSON.stringify(objects["morton_hive.json"])
+            )
+          : inner.get(key),
+    });
+    const groups = store
+      .contents()
+      .filter(({ kind }) => kind === "group")
+      .map(({ path }) => path);
+    expect(groups).toEqual(
+      expect.arrayContaining(["/19", "/16", "/13", "/12", "/17"])
+    );
+    expect(groups).not.toContain("/15");
+  });
+
   it("probes the years from the epoch and counts those present", async () => {
     const inner = windowed();
     await createHiveStore("mem://windowed", inner);

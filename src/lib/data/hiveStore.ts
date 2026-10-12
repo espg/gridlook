@@ -322,20 +322,24 @@ function manifestLevels(manifest: HiveManifest): THiveLevel[] {
     if (!isRecord(dataset) || !Array.isArray(dataset.cells)) {
       continue;
     }
-    const cellOrder = Number(dataset.cells[0]);
     const nodeOrder = Number(dataset.order);
     const artifact =
       dataset.artifact === HiveArtifact.COLUMN
         ? HiveArtifact.COLUMN
         : HiveArtifact.OVERVIEW;
-    if (Number.isInteger(cellOrder) && Number.isInteger(nodeOrder)) {
-      levels.push({
-        cellOrder,
-        nodeOrder,
-        artifact,
-        nodes: new Map(),
-        merged: windowed && artifact === HiveArtifact.COLUMN,
-      });
+    // one level per cell order the dataset's object holds (a column holds
+    // several groups: `cells: [16, 15, 14, 13]`)
+    for (const cells of dataset.cells) {
+      const cellOrder = Number(cells);
+      if (Number.isInteger(cellOrder) && Number.isInteger(nodeOrder)) {
+        levels.push({
+          cellOrder,
+          nodeOrder,
+          artifact,
+          nodes: new Map(),
+          merged: windowed && artifact === HiveArtifact.COLUMN,
+        });
+      }
     }
   }
   return levels;
