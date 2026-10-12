@@ -600,13 +600,13 @@ it("keeps the coarser level beneath where the budget cut the level's window", as
   stored.parent = { level: 10, offset: 0.5 };
   stored.grand = { level: 9, offset: 0.25 };
   stored.coarse = { level: 3 };
-  // a view too wide for order 11 within the cell cap, and for order 10
-  // with its margin: order 9 is the level that fits beneath
+  // a view too wide for order 11 within the cell cap, and for order 10 in
+  // view itself (not only its margin): order 9 is the level that fits beneath
   const { store } = await mount(
     11,
     31,
     ["fine", "parent", "grand", "coarse"],
-    30
+    50
   );
   expect(store.viewWindowClipped).toBe(true);
   expect(fetchedCells("t")).toBeLessThanOrEqual(DEFAULT_MAX_VIEW_CELLS);

@@ -130,11 +130,14 @@ export function useAncestorFill(options: {
   describe: (
     sources: TSources
   ) => Promise<Pick<TReadLevel, "datavar" | "grid"> | undefined>;
-  /** The blocks of a level's window at the view, and whether the budget cut it. */
+  /**
+   * The blocks of a level's window at the view, and whether the budget cut
+   * into the view itself.
+   */
   window: (
     level: TReadLevel,
     margin: number
-  ) => { blocks: number[]; cut: boolean };
+  ) => { blocks: number[]; clipped: boolean };
   /**
    * Read `blocks` of a level and draw its faces beneath as they land, with
    * the parts of `seed` already in; the faces read and built.
@@ -344,8 +347,9 @@ export function useAncestorFill(options: {
         level,
         viewWindowMargin(level.datavar.attrs)
       );
-      if (window.cut) {
-        // over budget here: the next coarser level is the parent instead
+      if (window.clipped) {
+        // over budget in view here (a trimmed margin is not): the next
+        // coarser level is the parent instead
         continue;
       }
       return await fill(index, level, window.blocks, key, indices, isCurrent);
