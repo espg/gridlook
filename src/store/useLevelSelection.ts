@@ -17,6 +17,7 @@ import {
   selectViewLevel,
 } from "@/lib/data/levels.ts";
 import { digestVariableOf } from "@/lib/digest/digestVariables.ts";
+import { strataBytesFactor } from "@/lib/digest/strata.ts";
 import { pointTierSource } from "@/lib/points/pointSource.ts";
 import { PROJECTION_TYPES } from "@/lib/projection/projectionUtils.ts";
 import type { TSources } from "@/lib/types/GlobeTypes.ts";
@@ -84,7 +85,10 @@ function viewLevel(
       byView: store.loadsLevelByView(index),
     })),
     store.selectedLevel,
-    { digest: isDigest(datasources, store.varnameSelector) }
+    {
+      digest: isDigest(datasources, store.varnameSelector),
+      strata: strataBytesFactor(store.digestStratum),
+    }
   );
 }
 
@@ -135,6 +139,7 @@ export function useLevelSelection(
   watch(
     () => [
       store.varnameSelector,
+      store.digestStratum,
       store.levelAuto,
       store.projectionMode,
       ...(datasources.value?.levels ?? []).map((_, index) =>

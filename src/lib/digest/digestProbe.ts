@@ -2,6 +2,8 @@ import type { TDigestCell } from "./digestField.ts";
 import { digestVariableOf } from "./digestVariables.ts";
 import {
   DEFAULT_STRATUM,
+  DIGEST_STRATA,
+  mergeDigestCells,
   primaryStratum,
   type TStratumChoice,
 } from "./strata.ts";
@@ -96,23 +98,34 @@ export function probeDigests(probe: TDigestProbe) {
   );
 }
 
+/** The lowest and highest centroid of some digests. */
+function digestSpan(digests: TDigestCell[]) {
+  let first = Infinity;
+  let last = -Infinity;
+  for (const { chunk, cell } of digests) {
+    first = Math.min(first, chunk.means[chunk.offsets[cell]]);
+    last = Math.max(last, chunk.means[chunk.offsets[cell + 1] - 1]);
+  }
+  return { first, last };
+}
+
 /**
  * The densities of a probe's strata over `bins` bins spanning the first
- * stratum with data (the signal, when the cell has any), all in
- * observations per unit, so that the curves compare. Undefined for a cell
- * without data.
+ * stratum with data (the signal, when the cell has any), or every stratum
+ * under the `both` choice, all in observations per unit, so that the
+ * curves compare. Undefined for a cell without data.
  */
 export function digestPlot(
   probe: TDigestProbe,
-  bins = 96
+  bins = 96,
+  choice?: TStratumChoice
 ): TDigestPlot | undefined {
   const digests = probeDigests(probe);
   if (digests.length === 0) {
     return undefined;
   }
-  const { chunk, cell } = digests[0].digest;
-  const first = chunk.means[chunk.offsets[cell]];
-  const last = chunk.means[chunk.offsets[cell + 1] - 1];
+  const spanned = choice === DIGEST_STRATA.BOTH ? digests : digests.slice(0, 1);
+  const { first, last } = digestSpan(spanned.map(({ digest }) => digest));
   const padding = (last - first) * PLOT_PADDING || 1;
   const min = first - padding;
   const step = (last + padding - min) / bins;
@@ -130,9 +143,19 @@ export function digestPlot(
   return { x, curves, peak };
 }
 
+/** The strata of a probe merged into one, named by them. */
+function mergedStratum(probe: TDigestProbe) {
+  const digests = probeDigests(probe);
+  const digest = mergeDigestCells(digests.map(({ digest }) => digest));
+  return (
+    digest && { name: digests.map(({ name }) => name).join(" + "), digest }
+  );
+}
+
 /**
  * The values at `percentiles` (0..100) of one stratum of a probe: `stratum`
- * when the cell has data in it, else the first stratum that has.
+ * when the cell has data in it, else the first stratum that has; under the
+ * `both` choice, of every stratum merged.
  */
 export function probePercentiles(
   probe: TDigestProbe,
@@ -140,7 +163,10 @@ export function probePercentiles(
   stratum?: string
 ) {
   const digests = probeDigests(probe);
-  const source = digests.find(({ name }) => name === stratum) ?? digests[0];
+  const source =
+    stratum === DIGEST_STRATA.BOTH
+      ? mergedStratum(probe)
+      : (digests.find(({ name }) => name === stratum) ?? digests[0]);
   if (!source) {
     return undefined;
   }

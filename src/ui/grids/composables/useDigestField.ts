@@ -76,14 +76,12 @@ export function useDigestField(options: {
             { product: DIGEST_PRODUCTS.PERCENTILE },
             { ...params(), percentile },
           ];
-    // the stratum choice rewrites the array the variable reads
-    const [array] = strataArrays(
-      digest,
-      level.datasources,
-      store.digestStratum
-    );
+    // the stratum choice rewrites the arrays the variable reads: one, or
+    // the two merged cell by cell
+    const arrays = strataArrays(digest, level.datasources, store.digestStratum);
+    const path = from.path(arrays.map(({ array }) => array));
     return from.digests.then((reader) =>
-      digestField(reader, from.path(array.array), product, at, start, end)
+      digestField(reader, path, product, at, start, end)
     );
   }
 

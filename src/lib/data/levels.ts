@@ -159,25 +159,29 @@ export const DIGEST_CHUNK_BYTES = 34 * 1024;
  * store: 1.7 KB at order 13 (1.29 GB over 759 000 cells), 2.0 KB at 12
  * (370 MB over 190 000) and about as much above, where a cell holds more
  * photons but its digest is capped. An estimate until the store's chunk
- * index prices each chunk.
+ * index prices each chunk. `strata` is what the stratum choice reads
+ * relative to the signal digest alone (`strataBytesFactor`): the signal
+ * and the noise together cost 2.2 cells' worth.
  */
-export function digestCellBytes(order: number) {
-  return order >= 13 ? 1700 : 2000;
+export function digestCellBytes(order: number, strata = 1) {
+  return (order >= 13 ? 1700 : 2000) * strata;
 }
 
 /**
  * Blocks a window of a digest variable may hold within a byte budget: cells
- * of `cellsPerBlock` on a stored level, leaf chunks on a derived one.
+ * of `cellsPerBlock` on a stored level, leaf chunks on a derived one, each
+ * priced at every stratum the choice reads (`strata`).
  */
 export function digestWindowBlocks(
   level: Pick<TSourceLevel, "derived">,
   order: number,
   cellsPerBlock: number,
-  budget = DEFAULT_VIEW_BUDGET_BYTES
+  budget = DEFAULT_VIEW_BUDGET_BYTES,
+  strata = 1
 ) {
   const blockBytes = level.derived
-    ? DIGEST_CHUNK_BYTES
-    : digestCellBytes(order) * cellsPerBlock;
+    ? DIGEST_CHUNK_BYTES * strata
+    : digestCellBytes(order, strata) * cellsPerBlock;
   return Math.max(Math.floor(budget / blockBytes), 1);
 }
 
@@ -273,13 +277,15 @@ export function cellsInView(
  * variable derived from a t-digest, bytes against the window budget (per
  * cell on a stored level, per leaf chunk on a derived one); for any other,
  * cells against the view cap. `cells` are the cells in view; the window
- * reaches a margin past the view on every side, and is priced with it.
+ * reaches a margin past the view on every side, and is priced with it, at
+ * every stratum the choice reads (`strata`, relative to the signal alone).
  */
 export function windowCost(
   level: Pick<TSourceLevel, "resolution" | "derived">,
   cells: number,
   digest: boolean,
-  budget = DEFAULT_VIEW_BUDGET_BYTES
+  budget = DEFAULT_VIEW_BUDGET_BYTES,
+  strata = 1
 ) {
   const margin = digest ? DIGEST_WINDOW_MARGIN : VIEW_WINDOW_MARGIN;
   cells *= (1 + 2 * margin) ** 2;
@@ -290,7 +296,7 @@ export function windowCost(
     ? (cells / 4 ** (DIGEST_CHUNK_ORDERS - level.derived.refinement)) *
       DIGEST_CHUNK_BYTES
     : cells * digestCellBytes(healpixOrderOf(level.resolution!));
-  return bytes / budget;
+  return (bytes * strata) / budget;
 }
 
 /** The coarsest of some levels: the least harmful when nothing fits. */
@@ -317,6 +323,8 @@ export type TViewLevel = Pick<
 export type TLevelSelectionOptions = {
   /** Whether the variable shown is derived from a t-digest. */
   digest?: boolean;
+  /** What the stratum choice reads relative to the signal digest alone. */
+  strata?: number;
   pixelFloor?: number;
   budget?: number;
   slack?: number;
@@ -358,8 +366,13 @@ export function selectViewLevel(
     );
     return (
       level.resolution! / metersPerPixel >= floor / give &&
-      windowCost(level, cells, options.digest ?? false, options.budget) <=
-        give &&
+      windowCost(
+        level,
+        cells,
+        options.digest ?? false,
+        options.budget,
+        options.strata
+      ) <= give &&
       (level.byView || !exceedsCellCap(level))
     );
   };

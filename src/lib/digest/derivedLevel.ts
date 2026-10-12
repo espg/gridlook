@@ -31,7 +31,7 @@ export function derivedGroup(refinement: number) {
 }
 
 /** Sort the centroids `start .. end` of one cell by mean, in place. */
-function sortCentroids(
+export function sortCentroids(
   means: Float32Array,
   weights: Float32Array,
   start: number,

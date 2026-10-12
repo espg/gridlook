@@ -6,6 +6,7 @@ import {
   type TDigestSource,
 } from "./digestReader.ts";
 import { DIGEST_PRODUCTS, type TDigestVariable } from "./digestVariables.ts";
+import { createMergedDigests, mergedPath } from "./strata.ts";
 import {
   digestQuantile,
   digestQuantileRange,
@@ -103,10 +104,12 @@ export async function digestCell(
 function openReaders(storePath: string) {
   return createHiveStore(parseStorePath(storePath).url).then((store) => {
     const digests = createDigestReader(store);
+    const pooled = createPooledDigests(digests);
     return {
       store,
       digests,
-      pooled: createPooledDigests(digests),
+      pooled,
+      merged: createMergedDigests(pooled),
       dense: createDenseReader(store),
       words: createWordReader(store),
     };
@@ -137,7 +140,9 @@ export function storeReaders(storePath: string) {
 /**
  * Where the variables of a level are computed from: the group its arrays
  * are read in (the leaves' for a derived level) and the leaf cells pooled
- * into one of its cells.
+ * into one of its cells. `path` names one array, or several to be read and
+ * merged cell by cell (the strata of a `both` choice); `digests` serves
+ * either.
  */
 export function levelSource(
   level: Pick<TSourceLevel, "derived">,
@@ -149,10 +154,12 @@ export function levelSource(
   }
   const group = derivedGroup(level.derived?.refinement ?? 0);
   const dataset = level.derived?.dataset ?? source.dataset;
+  const path = (array: string) => [dataset, array].filter(Boolean).join("/");
   return {
     group,
-    path: (array: string) => [dataset, array].filter(Boolean).join("/"),
-    digests: readers.then(({ pooled }) => pooled.at(group)),
+    path: (arrays: string | string[]) =>
+      Array.isArray(arrays) ? mergedPath(arrays.map(path)) : path(arrays),
+    digests: readers.then(({ merged }) => merged.at(group)),
     dense: readers.then(({ dense }) => dense),
   };
 }

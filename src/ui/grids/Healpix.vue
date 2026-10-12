@@ -35,6 +35,7 @@ import {
   currentLevel,
   DEFAULT_MAX_LEVEL_CELLS,
   DEFAULT_MAX_VIEW_CELLS,
+  DEFAULT_VIEW_BUDGET_BYTES,
   DEFAULT_VIEW_LOAD_CELLS,
   digestWindowBlocks,
   STREAMLINES_NEED_WHOLE_LEVEL,
@@ -56,6 +57,7 @@ import {
 import type { TAxisRange } from "@/lib/data/viewWindow.ts";
 import { ZarrDataManager } from "@/lib/data/ZarrDataManager.ts";
 import { digestVariableOf } from "@/lib/digest/digestVariables.ts";
+import { strataBytesFactor } from "@/lib/digest/strata.ts";
 import {
   getGridVariableData,
   terminateGridDataWorker,
@@ -614,7 +616,13 @@ function levelWindow(
   const nodes =
     source && hiveNodes(parseStorePath(source.store).url, grid.level);
   const maxBlocks = level.digest
-    ? digestWindowBlocks(currentLevel(sources), grid.level, cellsPerBlock)
+    ? digestWindowBlocks(
+        currentLevel(sources),
+        grid.level,
+        cellsPerBlock,
+        DEFAULT_VIEW_BUDGET_BYTES,
+        strataBytesFactor(store.digestStratum)
+      )
     : Math.floor(DEFAULT_MAX_VIEW_CELLS / cellsPerBlock);
   return store.viewFootprint
     ? healpixViewWindow(

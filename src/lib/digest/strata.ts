@@ -1,4 +1,11 @@
+import { sortCentroids } from "./derivedLevel.ts";
+import {
+  chunkBytes,
+  createByteLru,
+  type TDigestSource,
+} from "./digestReader.ts";
 import { digestVariableOf, type TDigestVariable } from "./digestVariables.ts";
+import type { TDigestChunk } from "./tdigest.ts";
 
 import type { TDataSource } from "@/lib/types/GlobeTypes.ts";
 
@@ -13,6 +20,11 @@ import type { TDataSource } from "@/lib/types/GlobeTypes.ts";
  * `noise` read that stratum's array, `both` reads the two and merges them
  * cell by cell. A URL that names a per-stratum variable still works: its
  * stratum seeds the choice.
+ *
+ * Merging two cells' digests is the operation a derived level pools its
+ * leaf cells with (`poolDigestChunk`): the centroids concatenated and sorted
+ * by mean, their weights kept, nothing compressed. Where the leaves are
+ * lossless the merged digest is the exact sample of every photon.
  */
 
 export const DIGEST_STRATA = {
@@ -100,4 +112,148 @@ export function duplicateStratumVariables(
     }
   }
   return duplicates;
+}
+
+/**
+ * Bytes of the noise digest of a cell or a chunk relative to the signal's
+ * (the ATL03 v3 store, over the Sierra window: 1.2×), and what a choice
+ * costs relative to the signal alone: `both` reads the two.
+ */
+const NOISE_BYTES_RATIO = 1.2;
+export function strataBytesFactor(choice: TStratumChoice) {
+  switch (choice) {
+    case DIGEST_STRATA.NOISE:
+      return NOISE_BYTES_RATIO;
+    case DIGEST_STRATA.BOTH:
+      return 1 + NOISE_BYTES_RATIO;
+    default:
+      return 1;
+  }
+}
+
+/** The arrays of a merged path, joined: `19/h_tdigest_signal|19/h_tdigest_noise`. */
+const MERGED_SEPARATOR = "|";
+export const mergedPath = (paths: string[]) => paths.join(MERGED_SEPARATOR);
+const splitMergedPath = (path: string) => path.split(MERGED_SEPARATOR);
+
+/**
+ * The digests of `chunks` merged cell by cell: the centroids of a cell from
+ * every chunk, sorted by mean with their weights, so the quantile law reads
+ * the merged sample as it reads a pooled one. A chunk the store does not
+ * have (null) adds nothing; null when none is there. One chunk is itself.
+ */
+function mergeDigestChunks(
+  chunks: (TDigestChunk | null)[]
+): TDigestChunk | null {
+  const present = chunks.filter((chunk) => chunk !== null);
+  if (present.length < 2) {
+    return present[0] ?? null;
+  }
+  const cells = present[0].offsets.length - 1;
+  if (present.some((chunk) => chunk.offsets.length !== cells + 1)) {
+    throw new Error("the strata to merge differ in cells");
+  }
+  const offsets = new Uint32Array(cells + 1);
+  for (let cell = 0; cell < cells; cell++) {
+    let total = 0;
+    for (const chunk of present) {
+      total += chunk.offsets[cell + 1] - chunk.offsets[cell];
+    }
+    offsets[cell + 1] = offsets[cell] + total;
+  }
+  const means = new Float32Array(offsets[cells]);
+  const weights = new Float32Array(offsets[cells]);
+  for (let cell = 0; cell < cells; cell++) {
+    let at = offsets[cell];
+    for (const chunk of present) {
+      const [from, to] = [chunk.offsets[cell], chunk.offsets[cell + 1]];
+      means.set(chunk.means.subarray(from, to), at);
+      weights.set(chunk.weights.subarray(from, to), at);
+      at += to - from;
+    }
+    sortCentroids(means, weights, offsets[cell], offsets[cell + 1]);
+  }
+  return { offsets, means, weights };
+}
+
+/** One cell of a chunk as a chunk of its own. */
+function cellChunk(chunk: TDigestChunk, cell: number): TDigestChunk {
+  const [from, to] = [chunk.offsets[cell], chunk.offsets[cell + 1]];
+  return {
+    offsets: Uint32Array.of(0, to - from),
+    means: chunk.means.subarray(from, to),
+    weights: chunk.weights.subarray(from, to),
+  };
+}
+
+/** The digests of some cells merged into one, as cell 0 of its chunk. */
+export function mergeDigestCells(
+  cells: { chunk: TDigestChunk; cell: number }[]
+) {
+  const merged = mergeDigestChunks(
+    cells.map(({ chunk, cell }) => cellChunk(chunk, cell))
+  );
+  return merged && { chunk: merged, cell: 0 };
+}
+
+// a working set, as the pooled digests' (see derivedLevel)
+const DEFAULT_MERGED_CACHE_BYTES = 32 * 2 ** 20;
+
+/**
+ * The digests of some arrays merged: `at(group)` reads like the pooled
+ * source it wraps, and a path made of several arrays' paths (`mergedPath`)
+ * reads each and merges them cell by cell. A single path passes through, so
+ * one source serves every stratum choice. Merged chunks are kept, bounded
+ * by bytes; `peek` merges only what is in memory for every array.
+ */
+export function createMergedDigests(
+  pooled: { at(group: number): TDigestSource },
+  maxBytes = DEFAULT_MERGED_CACHE_BYTES
+) {
+  const cache = createByteLru<TDigestChunk>(maxBytes, chunkBytes);
+
+  function merged(parts: (TDigestChunk | null | undefined)[], key: string) {
+    if (parts.some((part) => part === undefined)) {
+      return undefined;
+    }
+    let chunk = cache.get(key);
+    if (!chunk) {
+      chunk = mergeDigestChunks(parts as (TDigestChunk | null)[]) ?? undefined;
+      if (chunk) {
+        cache.set(key, chunk);
+      }
+    }
+    return chunk ?? null;
+  }
+
+  function at(group: number): TDigestSource {
+    const source = pooled.at(group);
+    const key = (path: string, index: number, row: number) =>
+      `${group}/${path}/${row}/${index}`;
+    return {
+      array: (path) => source.array(splitMergedPath(path)[0]),
+      async chunk(path, index, row = 0) {
+        const paths = splitMergedPath(path);
+        if (paths.length === 1) {
+          return source.chunk(path, index, row);
+        }
+        const parts = await Promise.all(
+          paths.map((part) => source.chunk(part, index, row))
+        );
+        return merged(parts, key(path, index, row)) ?? null;
+      },
+      peek(path, index, row = 0) {
+        const paths = splitMergedPath(path);
+        if (paths.length === 1) {
+          return source.peek(path, index, row);
+        }
+        return merged(
+          paths.map((part) => source.peek(part, index, row)),
+          key(path, index, row)
+        );
+      },
+    };
+  }
+
+  return { at };
 }

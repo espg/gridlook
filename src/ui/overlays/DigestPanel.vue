@@ -11,7 +11,6 @@ import {
   digestVariableOf,
   type TDigestVariable,
 } from "@/lib/digest/digestVariables.ts";
-import { primaryStratum } from "@/lib/digest/strata.ts";
 import { digestWeight } from "@/lib/digest/tdigest.ts";
 import type { TDataSource } from "@/lib/types/GlobeTypes.ts";
 import { useGlobeControlStore } from "@/store/store.ts";
@@ -36,7 +35,9 @@ const probe = computed(() => store.digestProbe);
 const displayed = computed<TDigestVariable | undefined>(() =>
   digestVariableOf(props.vars?.[store.varnameSelector]?.attrs)
 );
-const plot = computed(() => probe.value && digestPlot(probe.value));
+const plot = computed(
+  () => probe.value && digestPlot(probe.value, undefined, store.digestStratum)
+);
 
 const countFormat = new Intl.NumberFormat();
 const metres = (value: number) => `${value.toFixed(1)} m`;
@@ -95,11 +96,8 @@ const markers = computed(() => {
         ? [store.digestPercentileLow, store.digestPercentileHigh]
         : [];
   const values =
-    probePercentiles(
-      probe.value,
-      percentiles,
-      primaryStratum(store.digestStratum)
-    )?.values ?? [];
+    probePercentiles(probe.value, percentiles, store.digestStratum)?.values ??
+    [];
   return values.map(({ percentile, value }) => ({
     label: `p${percentile}`,
     x: Math.min(Math.max(scaleX(value), 0), WIDTH),
@@ -109,11 +107,7 @@ const markers = computed(() => {
 const summary = computed(
   () =>
     probe.value &&
-    probePercentiles(
-      probe.value,
-      SUMMARY_PERCENTILES,
-      primaryStratum(store.digestStratum)
-    )
+    probePercentiles(probe.value, SUMMARY_PERCENTILES, store.digestStratum)
 );
 
 const axis = computed(() => {
