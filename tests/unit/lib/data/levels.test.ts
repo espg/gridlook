@@ -30,6 +30,10 @@ import {
 } from "@/lib/data/levels.ts";
 import { ZARR_FORMAT, type TSources } from "@/lib/types/GlobeTypes.ts";
 
+// both strata: 2.2 cells' worth per cell of a stored level, 4 chunks' worth
+// per leaf chunk (the ratios the store measures are in strata.ts)
+const BOTH = { cell: 2.2, chunk: 4 };
+
 // HEALPix cell size halves per order: sqrt(4π / (12 · 4^order)) radians.
 function resolution(order: number) {
   return (EARTH_RADIUS_METERS * Math.sqrt(Math.PI / 3)) / 2 ** order;
@@ -202,6 +206,33 @@ describe("selectViewLevel", () => {
     );
   });
 
+  it("prices every stratum the choice reads, and picks a coarser level for it", () => {
+    // order 13 at 2.5 px fits the budget for the signal alone (570 MB with
+    // the margin) and not with the noise beside it (2.2× that)
+    const close = scaleFor(13, 2.5);
+    const cells = cellsInView(resolution(13), close, VIEWPORT_PIXELS);
+    const signal = windowCost(healpixLevel(13), cells, true);
+    expect(
+      windowCost(healpixLevel(13), cells, true, undefined, BOTH)
+    ).toBeCloseTo(signal * 2.2);
+    expect(windowCost(healpixLevel(13), cells, false, undefined, BOTH)).toBe(
+      windowCost(healpixLevel(13), cells, false)
+    );
+    expect(windowCost(derived(15), cells, true, undefined, BOTH)).toBeCloseTo(
+      windowCost(derived(15), cells, true) * 4
+    );
+    expect(digestCellBytes(13, 2.2)).toBeCloseTo(1700 * 2.2);
+    expect(
+      selectViewLevel(close, VIEWPORT_PIXELS, HIVE, at(4), { digest: true })
+    ).toBe(at(13));
+    expect(
+      selectViewLevel(close, VIEWPORT_PIXELS, HIVE, at(4), {
+        digest: true,
+        strata: BOTH,
+      })
+    ).toBe(at(12));
+  });
+
   it("brings the derived levels on at the one floor, once their chunks fit", () => {
     const options = { digest: true };
     // a derived level costs a leaf chunk per cell of ground whatever its
@@ -347,6 +378,19 @@ describe("digestWindowBlocks", () => {
     expect(digestWindowBlocks({}, 12, 64)).toBeLessThan(
       digestWindowBlocks({}, 13, 64)
     );
+    // both strata: 2.2 cells' worth per cell, 2.2 chunks' worth per chunk
+    expect(
+      digestWindowBlocks({}, 13, 256, DEFAULT_VIEW_BUDGET_BYTES, BOTH)
+    ).toBe(Math.floor(DEFAULT_VIEW_BUDGET_BYTES / (1700 * 2.2 * 256)));
+    expect(
+      digestWindowBlocks(
+        { derived: { dataset: "19", refinement: 4 } },
+        15,
+        256,
+        DEFAULT_VIEW_BUDGET_BYTES,
+        BOTH
+      )
+    ).toBe(Math.floor(DEFAULT_VIEW_BUDGET_BYTES / (DIGEST_CHUNK_BYTES * 4)));
     // a derived level costs a leaf chunk per block whatever its order
     const derived = { derived: { dataset: "leaf", refinement: 2 } };
     expect(digestWindowBlocks(derived, 15, 256)).toBe(

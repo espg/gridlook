@@ -193,6 +193,14 @@ describe("the probe of one cell", () => {
       { name: "signal", path: "8/h_tdigest_signal" },
       { name: "noise", path: "8/h_tdigest_noise" },
     ]);
+    // the noise first under the noise choice, the signal under both
+    expect(digestStrata(datasources, "19", "noise").map((s) => s.name)).toEqual(
+      ["noise", "signal"]
+    );
+    expect(digestStrata(datasources, "19", "both").map((s) => s.name)).toEqual([
+      "signal",
+      "noise",
+    ]);
   });
 
   it("plots every stratum in observations per unit over the signal's range", async () => {

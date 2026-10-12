@@ -19,9 +19,33 @@ const digest = {
 
 beforeEach(() => setActivePinia(createPinia()));
 
-function render(derivedLevel: boolean) {
-  return renderToString(createSSRApp(DigestControls, { digest, derivedLevel }));
+function render(derivedLevel: boolean, strata?: string[]) {
+  return renderToString(
+    createSSRApp(DigestControls, { digest, derivedLevel, strata })
+  );
 }
+
+const button = (html: string, label: string) =>
+  html.match(new RegExp(`<button[^>]*>\\s*${label}\\s*</button>`))?.[0];
+
+it("offers the stratum choice once the store holds two strata", async () => {
+  const store = useGlobeControlStore();
+  const html = await render(false, ["signal", "noise"]);
+  expect(html).toContain("Photons");
+  expect(button(html, "signal")).toContain("is-selected");
+  expect(button(html, "noise")).not.toContain("is-selected");
+  expect(button(html, "both")).not.toContain("disabled");
+  store.setDigestStratum("both");
+  expect(button(await render(false, ["signal", "noise"]), "both")).toContain(
+    "is-selected"
+  );
+  // one stratum: no choice to make; a noise-less store cannot merge
+  expect(await render(false, ["signal"])).not.toContain("Photons");
+  expect(await render(false)).not.toContain("Photons");
+  const odd = await render(false, ["signal", "ocean"]);
+  expect(button(odd, "noise")).toContain("disabled");
+  expect(button(odd, "both")).toContain("disabled");
+});
 
 it("offers the gap smoothing on a derived level only", async () => {
   const store = useGlobeControlStore();

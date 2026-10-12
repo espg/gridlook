@@ -51,6 +51,27 @@ it("lists the points before the finest level under a height variable", async () 
   expect(html.indexOf("points (signal)")).toBeLessThan(
     html.indexOf("order 17 (derived)")
   );
+  // the strata drawn name the entry
+  store.setDigestStratum("both");
+  expect(await render()).toContain("points (signal)");
+  const noise = {
+    ...height,
+    attrs: {
+      digest: {
+        array: "h_tdigest_noise",
+        product: "percentile",
+        stratum: "noise",
+      },
+    },
+  };
+  const strata = levels.map((level) => ({
+    ...level,
+    datasources: { ...level.datasources, h_percentile_noise: noise }, // eslint-disable-line camelcase
+  }));
+  expect(await render(strata)).toContain("points (signal + noise)");
+  store.setDigestStratum("noise");
+  expect(await render(strata)).toContain("points (noise)");
+  store.setDigestStratum("signal");
   // not under count, nor without a derived finest level
   store.varnameSelector = "count";
   expect(await render()).not.toContain("points (");

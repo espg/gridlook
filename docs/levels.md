@@ -211,6 +211,43 @@ panel follows the cursor from the digests already in memory; hovering never
 reads the store, so over a stored variable such as `count` only a click opens
 the panel.
 
+### Strata
+
+An ATL03 store keeps two disjoint digests per cell, the photons the ATBD
+classifies as signal (`h_tdigest_signal`) and the rest (`h_tdigest_noise`),
+each with its own located and timed siblings; the store lists a variable per
+stratum (`h_percentile_signal`, `h_percentile_noise`). The viewer shows one
+height variable and, beside the percentile controls, a **Photons** choice:
+**signal** (the default), **noise** or **both**. The choice rewrites which
+digest array the variable reads (`src/lib/digest/strata.ts`): the noise
+variables are left out of the variable list, but a URL that names one still
+reads as it says, its stratum seeding the choice. The choice applies to every
+view computed from the digests: the percentile and range levels, stored and
+derived, the distribution panel, the hover readout and the point tier. The
+`count` variable is a stored total of every photon in the cell and is not
+affected. The choice is part of the shareable URL (`stratum`).
+
+Under **both**, a cell's two digests are merged before the percentile is
+taken: the centroids concatenated and sorted by mean, their weights kept,
+the law a derived level pools its leaf cells with. Where the leaves are
+lossless the merged digest is the exact sample of every photon; at a stored
+level it is the merge of two capped digests. The ancestor fill and the gap
+smoothing work on the resulting field as on any other. On the ATL03 store a
+cell's noise digest runs 1.2× the signal's bytes at a stored level (capped
+digests: over the Sierra at 1500 km, the same 635-chunk order-13 window
+with its order-12 parent beneath reads 364 MB of signal alone and 802 MB
+under `both`, 438 MB of it noise) and about 4× at the leaves (one centroid
+per photon, several of noise to one of signal: 1.03 MB of noise digest and
+locations beside 0.25 MB of signal over the same six chunks), so a `both`
+window is priced at 2.2 cells' worth
+per cell and 5 chunks' worth per leaf chunk (`NOISE_BYTES_RATIO` in
+`strata.ts`) against the same 1 GB budget, and the level picker comes on a
+level coarser where the signal alone would have fitted. The distribution
+panel keeps drawing the strata as
+two curves, the signal setting the plot's range (both strata's under
+`both`), and marks and lists the percentiles of the stratum chosen, or of the
+two merged (`signal + noise`).
+
 ## Levels derived from the leaves
 
 A zagg store holds its leaves (cell order 19 in the stores so far) and then
@@ -277,7 +314,15 @@ It exists on the globe only; a flat projection stops at the finest level.
   place the order-29 cell its located word names (`h_tdigest_signal_locations`,
   one word per centroid), decoded on the uint32 halves of the word. A lossy
   centroid (weight above 1, about one cell in 100 000) is one point at its
-  mean, at the centre of its ancestor cell. Noise is not read.
+  mean, at the centre of its ancestor cell. The **Photons** choice says
+  which digests: the signal's (the default), the noise's, or both, read as
+  two clouds stacked, the noise beneath the signal and muted (its opacity
+  `pointTierNoiseOpacity`, 0.3 of the slider's, and its points 0.6 the size:
+  `NOISE_POINT_OPACITY`, `NOISE_POINT_SIZE` in `pointBudget.ts`) so the
+  signal tracks still read; alone, the noise draws at full strength. The
+  colour range, the histogram and the point budget are taken over the union
+  of the clouds; the datum and the pivot's relief follow the signal alone,
+  since the noise spreads over kilometres of height.
 - **Height.** A point sits at `r = 1 + (h − h_ref) · exaggeration / R` globe
   radii, with `R` the store's semi-major axis. The reference height `h_ref`
   is the lowest height drawn within the view's height of the pivot
@@ -303,9 +348,10 @@ It exists on the globe only; a flat projection stops at the finest level.
   in those days.
 - **Budget.** At most `OBSERVATION_POINT_BUDGET` (300 000) points are drawn:
   over it, every k-th centroid of every chunk is drawn, uniformly and
-  deterministically, never by place. A window is priced before it is read
-  at `OBSERVATION_CHUNK_BYTES` (74 KB) per chunk and cut down around the
-  pivot to `OBSERVATION_FETCH_CAP` (24 MB). Decoded chunks are cached (64 MB)
+  deterministically, never by place, whichever stratum it is from. A window
+  is priced before it is read at `OBSERVATION_CHUNK_BYTES` (74 KB) per
+  chunk, times 4 for the noise and 5 for both strata, and cut down around
+  the pivot to `OBSERVATION_FETCH_CAP` (24 MB). Decoded chunks are cached (64 MB)
   beside the digest chunks they came from. Everything is in
   `src/lib/points/pointBudget.ts`.
 - **Camera.** On entering, the orbit's target moves from the globe's centre

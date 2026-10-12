@@ -17,6 +17,7 @@ import {
   locationsArrayOf,
   pointArrayPath,
   pointTierSource,
+  pointTierSources,
   timesArrayOf,
 } from "@/lib/points/pointSource.ts";
 import { POINT_TIME_EPOCH, wordsToDays } from "@/lib/points/pointTimes.ts";
@@ -211,6 +212,7 @@ describe("the radius law", () => {
   });
 });
 
+// eslint-disable-next-line max-lines-per-function
 describe("pointTierSource", () => {
   const variable = (attrs: Record<string, unknown>) => ({
     store: "hive+s",
@@ -249,6 +251,45 @@ describe("pointTierSource", () => {
       pointTierSource({ ...level, derived: undefined }, "h_percentile_signal")
     ).toBeUndefined();
     expect(pointTierSource(undefined, "h_percentile_signal")).toBeUndefined();
+  });
+
+  it("names one source per stratum the choice reads, the noise muted under both", () => {
+    const strata = {
+      ...level,
+      datasources: {
+        ...level.datasources,
+        // eslint-disable-next-line camelcase
+        h_percentile_noise: variable({
+          digest: {
+            array: "h_tdigest_noise",
+            product: "percentile",
+            stratum: "noise",
+          },
+        }),
+      },
+    };
+    const signal = {
+      store: "hive+s",
+      dataset: "19",
+      array: "h_tdigest_signal",
+    };
+    const noise = { ...signal, array: "h_tdigest_noise" };
+    expect(pointTierSources(strata, "h_percentile_signal", "both")).toEqual([
+      { ...signal, stratum: "signal", muted: false },
+      { ...noise, stratum: "noise", muted: true },
+    ]);
+    // alone, the noise draws at full strength; without a noise array the
+    // choice reads the signal
+    expect(pointTierSources(strata, "h_percentile_signal", "noise")).toEqual([
+      { ...noise, stratum: "noise", muted: false },
+    ]);
+    expect(pointTierSources(level, "h_percentile_signal", "both")).toEqual([
+      { ...signal, stratum: "signal", muted: false },
+    ]);
+    expect(pointTierSources(level, "count", "both")).toEqual([]);
+    expect(
+      pointTierSources(undefined, "h_percentile_signal", "signal")
+    ).toEqual([]);
   });
 
   it("reads the locations sibling off the digest array's attributes", () => {

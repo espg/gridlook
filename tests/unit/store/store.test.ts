@@ -235,6 +235,20 @@ it("keeps the percentiles of a digest variable in 0..100 and in order", () => {
   ]);
 });
 
+it("keeps the stratum choice to signal, noise or both", () => {
+  const store = useGlobeControlStore();
+  expect(store.digestStratum).toBe("signal");
+  store.setDigestStratum("both");
+  expect(store.digestStratum).toBe("both");
+  store.setDigestStratum("all");
+  store.setDigestStratum(undefined);
+  expect(store.digestStratum).toBe("both");
+  store.setDigestStratum("noise");
+  expect(store.digestStratum).toBe("noise");
+  // the noise cloud's opacity under both, relative to the slider
+  expect(store.pointTierNoiseOpacity).toBe(0.3);
+});
+
 it("drops the pinned cell with its panel, and with the dataset", () => {
   const store = useGlobeControlStore();
   const probe = {

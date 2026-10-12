@@ -23,6 +23,20 @@ describe("pointRange", () => {
     expect(range.sample[999]).toBe(999);
   });
 
+  it("spans the union of the clouds drawn: the signal's and the noise's", () => {
+    // a signal track at 1000..1100 m and a noise cloud at -500..2500 m
+    const signal = Float32Array.from({ length: 101 }, (_, i) => 1000 + i);
+    const noise = Float32Array.from({ length: 301 }, (_, i) => -500 + 10 * i);
+    const alone = pointRange([signal])!;
+    expect([alone.low, alone.high]).toEqual([1002, 1098]);
+    const union = pointRange([signal, noise])!;
+    expect(union.sample.length).toBe(402);
+    expect(union.low).toBeLessThan(alone.low);
+    expect(union.high).toBeGreaterThan(alone.high);
+    expect(union.low).toBe(-420);
+    expect(union.high).toBe(2420);
+  });
+
   it("reads every k-th height when the drawn total is over the cap", () => {
     const chunks = [
       Float32Array.from({ length: 1000 }, (_, i) => i),
