@@ -384,20 +384,31 @@ export function createPointPivot(
 
   /**
    * An animation of the tilt to `degrees` over `seconds`, eased in and out:
-   * `advance(dt)` moves it and is true while it has further to go.
+   * `advance(dt)` moves it and is true while it has further to go. It keeps
+   * whatever distance a zoom meanwhile set, and stops where it is when a
+   * drag (or OrbitControls' wheel) takes over.
    */
   function tiltTo(degrees: number, seconds = TILT_ANIMATION_SECONDS) {
     const from = tilt();
-    const distance = pivotDistance();
     let elapsed = 0;
+    let interrupted = false;
+    const interrupt = () => {
+      interrupted = true;
+      orbit.removeEventListener("start", interrupt);
+    };
+    orbit.addEventListener("start", interrupt);
     return {
       advance(deltaSeconds: number) {
-        if (!active) {
+        if (!active || interrupted) {
+          interrupt();
           return false;
         }
         elapsed += deltaSeconds;
         const s = Math.min(elapsed / seconds, 1);
-        setTilt(from + (degrees - from) * s * s * (3 - 2 * s), distance);
+        setTilt(from + (degrees - from) * s * s * (3 - 2 * s), pivotDistance());
+        if (s >= 1) {
+          interrupt();
+        }
         return s < 1;
       },
     };

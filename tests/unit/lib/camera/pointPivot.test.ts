@@ -533,6 +533,28 @@ describe("createPointPivot", () => {
     expect(pivot.tiltTo(POINT_PIVOT_TILTS.OBLIQUE).advance(0.1)).toBe(false);
   });
 
+  it("keeps a zoom made during the tilt animation, and stops for a drag", () => {
+    const { camera, controls, pivot } = pivotControls(3000);
+    pivot.enter(surfacePointNearRay(camera.position, forwardOf(camera)));
+    controls.enableDamping = false;
+    const animation = pivot.tiltTo(POINT_PIVOT_TILTS.OBLIQUE);
+    animation.advance(0.2);
+    pivot.zoom(0.8, new THREE.Vector2(0, 0));
+    const zoomed = pivot.pivotDistance();
+    while (animation.advance(0.1)) {
+      expect(pivot.pivotDistance()).toBeCloseTo(zoomed, 12);
+    }
+    expect(pivot.tilt()).toBeCloseTo(60, 6);
+    expect(pivot.pivotDistance()).toBeCloseTo(zoomed, 12);
+    // a drag starting mid-animation leaves the tilt to it
+    const back = pivot.tiltTo(POINT_PIVOT_TILTS.TOP);
+    back.advance(0.2);
+    const tilt = pivot.tilt();
+    controls.dispatchEvent({ type: "start" });
+    expect(back.advance(0.1)).toBe(false);
+    expect(pivot.tilt()).toBeCloseTo(tilt, 9);
+  });
+
   it("lifts the pivot to the cloud's mid-height and keeps it there", () => {
     const { camera, controls, pivot } = pivotControls(3000);
     pivot.enter(surfacePointNearRay(camera.position, forwardOf(camera)));
