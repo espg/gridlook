@@ -25,7 +25,10 @@ import { EARTH_RADIUS_METERS } from "./cameraSettings.ts";
  *   in its tangent plane (`screenSpacePanning` off with a vertical up) and
  *   the pivot is put back on the sphere after every update, so a drag
  *   slides it along the ground; near nadir the roll is carried over from
- *   frame to frame rather than taken from the vertical;
+ *   frame to frame rather than taken from the vertical. `setLeftDrag` makes
+ *   the left button (one finger) orbit instead; shift + left and the right
+ *   button orbit either way (OrbitControls reads shift on a pan button as
+ *   an orbit, so a shift press in orbit mode is shown a pan button);
  * - the wheel is handled here, not by OrbitControls: the camera dollies
  *   toward the ground point under the cursor, which therefore stays under
  *   the cursor, and the pivot becomes the ground point under the view
@@ -40,6 +43,10 @@ import { EARTH_RADIUS_METERS } from "./cameraSettings.ts";
 
 /** The farthest the camera tilts from nadir, degrees: a side elevation. */
 export const POINT_PIVOT_MAX_TILT_DEGREES = 90;
+/** What a plain left drag (one finger) does. */
+export const POINT_PIVOT_LEFT_DRAGS = { PAN: "pan", ORBIT: "orbit" } as const;
+export type TPivotLeftDrag =
+  (typeof POINT_PIVOT_LEFT_DRAGS)[keyof typeof POINT_PIVOT_LEFT_DRAGS];
 /** The tilts the view buttons animate to, degrees from nadir. */
 export const POINT_PIVOT_TILTS = { TOP: 0, PROFILE: 90 } as const;
 /** Seconds a view button's tilt animation takes. */
@@ -215,6 +222,38 @@ export function createPointPivot(controls: OrbitControls) {
   let saved: TSavedControls | undefined;
   // the pivot's height above the sphere, scene units
   let height = 0;
+  let leftDrag: TPivotLeftDrag = POINT_PIVOT_LEFT_DRAGS.PAN;
+
+  /** The left button as OrbitControls should read it under `shift`. */
+  function leftButton(shift: boolean) {
+    return leftDrag === POINT_PIVOT_LEFT_DRAGS.ORBIT && !shift
+      ? THREE.MOUSE.ROTATE
+      : THREE.MOUSE.PAN;
+  }
+
+  function applyLeftDrag(shift = false) {
+    orbit.mouseButtons.LEFT = leftButton(shift);
+    orbit.touches.ONE =
+      leftDrag === POINT_PIVOT_LEFT_DRAGS.ORBIT
+        ? THREE.TOUCH.ROTATE
+        : THREE.TOUCH.PAN;
+  }
+
+  // before OrbitControls' own listener: the button it is about to read
+  const onPointerDown = (event: PointerEvent) => {
+    if (active && event.button === 0) {
+      applyLeftDrag(event.shiftKey);
+    }
+  };
+  orbit.domElement.addEventListener("pointerdown", onPointerDown, true);
+
+  /** Set what a plain left drag does; shift + left and the right button orbit either way. */
+  function setLeftDrag(mode: TPivotLeftDrag) {
+    leftDrag = mode;
+    if (active) {
+      applyLeftDrag();
+    }
+  }
 
   function vertical() {
     return orbit.target.clone().normalize();
@@ -415,6 +454,7 @@ export function createPointPivot(controls: OrbitControls) {
       RIGHT: THREE.MOUSE.ROTATE,
     };
     orbit.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_ROTATE };
+    applyLeftDrag();
     active = true;
     orbit.update();
   }
@@ -469,6 +509,7 @@ export function createPointPivot(controls: OrbitControls) {
     tilt,
     tiltTo,
     setHeight,
+    setLeftDrag,
     get active() {
       return active;
     },

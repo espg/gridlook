@@ -10,6 +10,7 @@ import {
   dollyTowardGround,
   groundPointOnRay,
   pivotNearPlane,
+  POINT_PIVOT_LEFT_DRAGS,
   POINT_PIVOT_MAX_TILT_DEGREES,
   POINT_PIVOT_MIN_ALTITUDE_METERS,
   POINT_PIVOT_MIN_DISTANCE_METERS,
@@ -60,6 +61,8 @@ function domElement(clientHeight = 900) {
     getRootNode() {
       return this.ownerDocument;
     },
+    setPointerCapture() {},
+    releasePointerCapture() {},
     clientHeight,
     clientWidth: 1500,
     getBoundingClientRect: () => ({
@@ -470,6 +473,47 @@ describe("createPointPivot", () => {
       // frames
     }
     expect(pivot.pivotDistance()).toBeCloseTo(distance, 12);
+  });
+
+  it("lets the left button orbit instead, with shift + left orbiting either way", () => {
+    const { camera, controls, pivot } = pivotControls(2000);
+    const element = controls.domElement;
+    pivot.enter(surfacePointNearRay(camera.position, forwardOf(camera)));
+    const press = (shiftKey: boolean) => {
+      const pointer = {
+        button: 0,
+        pointerId: 1,
+        pointerType: "mouse",
+        shiftKey,
+      };
+      element.dispatchEvent(Object.assign(new Event("pointerdown"), pointer));
+      element.dispatchEvent(Object.assign(new Event("pointerup"), pointer));
+    };
+    pivot.setLeftDrag(POINT_PIVOT_LEFT_DRAGS.ORBIT);
+    expect(controls.mouseButtons.LEFT).toBe(THREE.MOUSE.ROTATE);
+    expect(controls.touches.ONE).toBe(THREE.TOUCH.ROTATE);
+    expect(controls.mouseButtons.RIGHT).toBe(THREE.MOUSE.ROTATE);
+    // OrbitControls turns a pan button into an orbit under shift: a shift
+    // press in orbit mode is shown a pan button so that it orbits too
+    press(true);
+    expect(controls.mouseButtons.LEFT).toBe(THREE.MOUSE.PAN);
+    press(false);
+    expect(controls.mouseButtons.LEFT).toBe(THREE.MOUSE.ROTATE);
+    pivot.setLeftDrag(POINT_PIVOT_LEFT_DRAGS.PAN);
+    expect(controls.mouseButtons.LEFT).toBe(THREE.MOUSE.PAN);
+    expect(controls.touches.ONE).toBe(THREE.TOUCH.PAN);
+    press(true);
+    expect(controls.mouseButtons.LEFT).toBe(THREE.MOUSE.PAN);
+    // the mode is kept across the tier, and leaves the globe's buttons alone
+    pivot.setLeftDrag(POINT_PIVOT_LEFT_DRAGS.ORBIT);
+    pivot.leave();
+    expect(controls.mouseButtons.LEFT).toBe(THREE.MOUSE.ROTATE);
+    expect(controls.touches.ONE).toBe(THREE.TOUCH.ROTATE);
+    controls.mouseButtons.LEFT = THREE.MOUSE.DOLLY;
+    press(false);
+    expect(controls.mouseButtons.LEFT).toBe(THREE.MOUSE.DOLLY);
+    pivot.enter(surfacePointNearRay(camera.position, forwardOf(camera)));
+    expect(controls.mouseButtons.LEFT).toBe(THREE.MOUSE.ROTATE);
   });
 
   it("keeps the horizon up when tilted, whichever way it looks", () => {

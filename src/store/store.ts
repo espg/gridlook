@@ -2,6 +2,10 @@ import { defineStore } from "pinia";
 import { markRaw } from "vue";
 
 import {
+  POINT_PIVOT_LEFT_DRAGS,
+  type TPivotLeftDrag,
+} from "@/lib/camera/pointPivot.ts";
+import {
   levelAxesAreIdentical,
   type TStreamlineLevelInfo,
   type TVectorVariablePair,
@@ -279,6 +283,8 @@ export const useGlobeControlStore = defineStore("globeControl", {
       // the colour range of the drawn points, in place of the level's data
       // range while the tier is on (a custom range still wins)
       pointTierBounds: undefined as TBounds | undefined,
+      // what a plain left drag does on the tier's camera (pointPivot.ts)
+      pointTierLeftDrag: POINT_PIVOT_LEFT_DRAGS.PAN as TPivotLeftDrag,
       // the tilt the tier's camera is asked to animate to, degrees from
       // nadir (pointPivot.ts); the serial makes every request its own
       pointTierTilt: undefined as
@@ -398,6 +404,9 @@ export const useGlobeControlStore = defineStore("globeControl", {
     },
     setPointTierBounds(bounds: TBounds | undefined) {
       this.pointTierBounds = bounds;
+    },
+    setPointTierLeftDrag(mode: TPivotLeftDrag) {
+      this.pointTierLeftDrag = mode;
     },
     requestPointTierTilt(degrees: number) {
       this.pointTierTilt = {

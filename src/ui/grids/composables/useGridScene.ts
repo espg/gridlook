@@ -43,6 +43,7 @@ import {
   pivotNearPlane,
   surfacePointNearRay,
   wheelDollyScale,
+  type TPivotLeftDrag,
   type TPointPivot,
 } from "@/lib/camera/pointPivot.ts";
 import { getRegionalCameraPosition } from "@/lib/camera/regionalCamera.ts";
@@ -362,6 +363,10 @@ export function useGridScene(options: UseGridSceneOptions) {
     /** Lift the pivot off the sphere by `above` scene units. */
     setHeight(above: number) {
       pivotControls?.setHeight(above);
+    },
+    /** What a plain left drag does on the pivot. */
+    setLeftDrag(mode: TPivotLeftDrag) {
+      pivotControls?.setLeftDrag(mode);
     },
     /** The pivot's place while the camera is on it, a few times a second. */
     ground: pivotGround,

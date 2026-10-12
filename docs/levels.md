@@ -240,6 +240,10 @@ It exists on the globe only; a flat projection stops at the finest level.
   above the surface, except tilted to the profile, where it is at ground
   level and the wheel stops 200 m short of the pivot instead. Leaving puts
   the camera back on the globe orbit above the pivot at its altitude.
+- **Mode buttons.** **Pan** (the default) and **Orbit** under the legend
+  set what a plain left drag (one finger) does; shift + left and the right
+  button (two fingers) orbit whichever is on, and the arrow keys pan. The
+  legend says which is on. The globe's buttons are untouched.
 - **Pivot height.** The pivot is lifted off the sphere to the middle of
   the drawn heights' colour band (the 2nd to 98th percentile, above the
   datum), so an orbit turns about the cloud and a profile centres it; the

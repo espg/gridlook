@@ -2,7 +2,7 @@
 import { computed } from "vue";
 
 import PointTierControls from "./PointTierControls.vue";
-import { POINT_TIER_LEGEND } from "./pointTierLegend.ts";
+import { pointTierLegend } from "./pointTierLegend.ts";
 
 import { exceedsCellCap, finestLevel, POINT_TIER } from "@/lib/data/levels.ts";
 import { pointTierSource } from "@/lib/points/pointSource.ts";
@@ -57,11 +57,12 @@ const selected = computed(() =>
 const countFormat = new Intl.NumberFormat();
 const pointTierTitle = computed(() => {
   const stats = store.pointTier ? store.pointTierStats : undefined;
+  const legend = pointTierLegend(store.pointTierLeftDrag);
   if (!stats) {
-    return `The observations themselves, drawn at their height in place of the finest level. ${POINT_TIER_LEGEND}`;
+    return `The observations themselves, drawn at their height in place of the finest level. ${legend}`;
   }
   const thinned = stats.stride > 1 ? ` (every ${stats.stride}th)` : "";
-  return `${countFormat.format(stats.photons)} observations in ${stats.loaded} of ${stats.chunks} chunks, ${countFormat.format(stats.drawn)} drawn${thinned}. ${POINT_TIER_LEGEND}`;
+  return `${countFormat.format(stats.photons)} observations in ${stats.loaded} of ${stats.chunks} chunks, ${countFormat.format(stats.drawn)} drawn${thinned}. ${legend}`;
 });
 
 function onLevelChange(event: Event) {

@@ -1,26 +1,65 @@
 <script lang="ts" setup>
-import {
-  POINT_TIER_LEGEND,
-  POINT_TIER_LEGEND_TITLE,
-} from "./pointTierLegend.ts";
+import { computed } from "vue";
 
-import { POINT_PIVOT_TILTS } from "@/lib/camera/pointPivot.ts";
+import { pointTierLegend, pointTierLegendTitle } from "./pointTierLegend.ts";
+
+import {
+  POINT_PIVOT_LEFT_DRAGS,
+  POINT_PIVOT_TILTS,
+  type TPivotLeftDrag,
+} from "@/lib/camera/pointPivot.ts";
 import { useGlobeControlStore } from "@/store/store.ts";
 
 /**
  * The point tier's controls, under the level picker while the tier is on:
- * the legend of its mouse controls and the view buttons, which animate the
- * camera's tilt (pointPivot.ts) to the top (nadir) or to a profile (the
- * cloud seen edge-on along the ground), keeping the azimuth and the pivot.
+ * the legend of its mouse controls, the mode buttons for what a plain left
+ * drag does (shift + left and the right button orbit either way), and the
+ * view buttons, which animate the camera's tilt (pointPivot.ts) to the top
+ * (nadir) or to a profile (the cloud seen edge-on along the ground),
+ * keeping the azimuth and the pivot.
  */
 const store = useGlobeControlStore();
+
+const legend = computed(() => pointTierLegend(store.pointTierLeftDrag));
+const legendTitle = computed(() =>
+  pointTierLegendTitle(store.pointTierLeftDrag)
+);
+
+const DRAG_MODES: { mode: TPivotLeftDrag; label: string; title: string }[] = [
+  {
+    mode: POINT_PIVOT_LEFT_DRAGS.PAN,
+    label: "Pan",
+    title: "A left drag slides the ground under the pointer",
+  },
+  {
+    mode: POINT_PIVOT_LEFT_DRAGS.ORBIT,
+    label: "Orbit",
+    title: "A left drag turns about the point under the view and tilts",
+  },
+];
 </script>
 
 <template>
   <div class="point-tier">
-    <p class="is-size-7 has-text-grey" :title="POINT_TIER_LEGEND_TITLE">
-      {{ POINT_TIER_LEGEND }}
+    <p class="is-size-7 has-text-grey" :title="legendTitle">
+      {{ legend }}
     </p>
+    <div class="point-tier-row">
+      <span class="is-size-7 has-text-grey point-tier-label">Drag</span>
+      <div class="buttons has-addons are-small mb-0">
+        <button
+          v-for="{ mode, label, title } in DRAG_MODES"
+          :key="mode"
+          type="button"
+          class="button"
+          :class="{ 'is-selected is-link': store.pointTierLeftDrag === mode }"
+          :title="title"
+          @click="store.setPointTierLeftDrag(mode)"
+        >
+          {{ label }}
+        </button>
+      </div>
+    </div>
     <div class="point-tier-row">
       <span class="is-size-7 has-text-grey point-tier-label">View</span>
       <div class="buttons has-addons are-small mb-0">

@@ -8,7 +8,10 @@ import {
   type ShallowRef,
 } from "vue";
 
-import { POINT_PIVOT_TILTS } from "@/lib/camera/pointPivot.ts";
+import {
+  POINT_PIVOT_TILTS,
+  type TPivotLeftDrag,
+} from "@/lib/camera/pointPivot.ts";
 import { currentLevel } from "@/lib/data/levels.ts";
 import { storeReaders, type TLeafReaders } from "@/lib/digest/digestField.ts";
 import { createByteLru } from "@/lib/digest/digestReader.ts";
@@ -68,6 +71,7 @@ type TPointLayerOptions = {
     leave: () => void;
     tiltTo: (degrees: number, fitHeight?: number) => void;
     setHeight: (above: number) => void;
+    setLeftDrag: (mode: TPivotLeftDrag) => void;
     ground: Readonly<ShallowRef<{ lat: number; lon: number } | null>>;
     distance: () => number | undefined;
   };
@@ -486,6 +490,12 @@ export function usePointLayer(options: TPointLayerOptions) {
       reload();
     }
   });
+  // the mode buttons: what a plain left drag does
+  watch(
+    () => store.pointTierLeftDrag,
+    (mode) => options.pointPivot.setLeftDrag(mode),
+    { immediate: true }
+  );
   // the view buttons: the camera tilts to a profile, framing the drawn
   // heights' band, or back to the top
   watch(
