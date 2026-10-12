@@ -2,7 +2,7 @@ import "@/utils/disposablePolyfill.ts";
 import { Grid, type GridOptions } from "healpix-geo";
 import * as THREE from "three";
 import { expect, it, vi } from "vitest";
-import { effectScope, reactive, watch } from "vue";
+import { effectScope, onBeforeUnmount, reactive, watch } from "vue";
 
 import { ZARR_FORMAT, type TSources } from "@/lib/types/GlobeTypes.ts";
 
@@ -18,6 +18,8 @@ type TStoredLevel = {
   derivedChunk?: number;
   // a stored level's cells per chunk (65536 unless given)
   chunk?: number;
+  // the variable is derived from a t-digest
+  digest?: boolean;
   // reads land when the test releases them
   manual?: boolean;
   // added to a cell's value (its id plus one), to tell the level apart
@@ -70,7 +72,9 @@ function describeArray({ dataset }: TSource, variable: string) {
   return {
     shape: [3, cellCount(level)],
     chunks: [1, level.derivedChunk ?? level.chunk ?? 65536],
-    attrs: {},
+    attrs: level.digest
+      ? { digest: { array: "h_tdigest_signal", product: "percentile" } }
+      : {},
   };
 }
 
@@ -506,6 +510,24 @@ it("draws a window as its blocks land, the block under the camera first", async 
   expect(hover.lookup!(11, 31)!.value).toBe(under + 1);
 });
 
+it("reads the ranges under the camera again once a digest window has landed", async () => {
+  // the digests stream through a small working set nearest first: the
+  // chunks under the camera are read last as well, to be there for the cursor
+  stored.fine = { level: 9, chunk: 256, digest: true };
+  stored.coarse = { level: 3 };
+  await mount(11, 31, ["fine", "coarse"], 3);
+  const starts = () =>
+    fetches
+      .filter(({ dataset, variable }) => dataset === "fine" && variable === "t")
+      .map(({ start }) => start);
+  const window = new Set(starts()).size;
+  const again = Math.min(window, 8);
+  await until(() => starts().length === window + again);
+  expect(window).toBeGreaterThan(8);
+  expect(starts().slice(window)).toEqual(starts().slice(0, again));
+  expect(starts()[0]).toBeLessThanOrEqual(cellAt(9, 11, 31));
+});
+
 it("stops reading a window the view has left and draws nothing of it", async () => {
   stored.fine = { level: 9, chunk: 256, manual: true };
   stored.coarse = { level: 3 };
@@ -611,13 +633,13 @@ it("keeps the coarser level beneath where the budget cut the level's window", as
   stored.parent = { level: 10, offset: 0.5 };
   stored.grand = { level: 9, offset: 0.25 };
   stored.coarse = { level: 3 };
-  // a view too wide for order 11 within the cell cap, and for order 10
-  // with its margin: order 9 is the level that fits beneath
+  // a view too wide for order 11 within the cell cap, and for order 10 in
+  // view itself (not only its margin): order 9 is the level that fits beneath
   const { store } = await mount(
     11,
     31,
     ["fine", "parent", "grand", "coarse"],
-    30
+    50
   );
   expect(store.viewWindowClipped).toBe(true);
   expect(fetchedCells("t")).toBeLessThanOrEqual(DEFAULT_MAX_VIEW_CELLS);
@@ -671,4 +693,36 @@ it("draws nothing beneath with the fill off", async () => {
   expect(drawnFaces(-0.5)).toHaveLength(0);
   expect(hover.lookup!(11, 31)!.value).toBe(cellAt(10, 11, 31) + 1);
   expect(hover.lookup!(-40, 170)).toBeNull();
+});
+
+it("clears the cut-window notice when the grid goes", async () => {
+  stored.fine = { level: 10 };
+  stored.coarse = { level: 3 };
+  const { store, scope } = await mount(11, 31);
+  store.setViewWindowClipped(true);
+  // the grid's own unmount hook, registered last in its setup
+  vi.mocked(onBeforeUnmount).mock.calls.at(-1)![0]();
+  expect(store.viewWindowClipped).toBe(false);
+  scope.stop();
+});
+
+it("draws the coarsest level beneath a sparse level loaded whole", async () => {
+  // a regional level: the first 256 cells of face 2 at order 6, loaded whole
+  stored.fine = {
+    level: 6,
+    cells: Array.from({ length: 256 }, (_, index) => 2 * 4 ** 6 + index),
+  };
+  stored.coarse = { level: 3 };
+  using parents = new Grid({ scheme: "nested", level: 2 });
+  const [lon, lat] = parents.healpixToLonLat(BigUint64Array.of(2n * 16n));
+  const { store, scope } = await mount(lat, lon);
+  // every cell read, no window
+  expect(fetchedCells("t")).toBe(256);
+  expect(drawnFaces(-0.5).length).toBeGreaterThan(0);
+  expect(hover.lookup!(-40, 170)!.level).toBe("coarse");
+  // with the fill off, nothing beneath
+  store.setLevelParentBeneath(false);
+  await until(() => drawnFaces(-0.5).length === 0 && hover.lookup !== null);
+  expect(hover.lookup!(-40, 170)).toBeNull();
+  scope.stop();
 });

@@ -34,11 +34,10 @@ import {
   coarsestLevel,
   currentLevel,
   DEFAULT_MAX_LEVEL_CELLS,
-  DEFAULT_MAX_VIEW_CELLS,
   DEFAULT_VIEW_BUDGET_BYTES,
   DEFAULT_VIEW_LOAD_CELLS,
-  digestWindowBlocks,
   STREAMLINES_NEED_WHOLE_LEVEL,
+  windowBlocks,
 } from "@/lib/data/levels.ts";
 import { loadVectorComponents } from "@/lib/data/streamlineData.ts";
 import {
@@ -63,11 +62,11 @@ import {
   terminateGridDataWorker,
 } from "@/lib/grids/gridDataWorkerClient.ts";
 import {
-  createFaceAssembly,
   createWindowRead,
   fetchInOrder,
   orderedBlockRanges,
   readFaceProgressively,
+  readRanges,
   type TFaceParts,
   type TRangeCells,
   type TWindowRead,
@@ -80,10 +79,9 @@ import {
   getHealpixFaceRange,
 } from "@/lib/grids/healpixCalculations.ts";
 import {
-  blockDistances,
+  cutWindowStale,
   healpixBlockDepth,
   healpixBlockLevel,
-  healpixBlockSide,
   healpixViewWindow,
   viewWindowMargin,
 } from "@/lib/grids/healpixWindow.ts";
@@ -207,8 +205,10 @@ let levelChunkCells = Infinity;
 // whether the variable is derived from a t-digest: its window is priced in
 // bytes, not cells
 let levelDigest = false;
-// whether the budget left blocks out of the loaded window
+// whether the budget left blocks out of the loaded window, and the point
+// below the camera when it was loaded
 let windowCut = false;
+let windowCentre = { centreLon: 0, centreLat: 0 };
 let sortedCells: ReturnType<typeof createSortedCells> | undefined;
 // The coordinate reader of a sparse level, kept while the level stays the
 // same so that its chunks are read once.
@@ -217,6 +217,12 @@ let cellsReader:
 // The blocks loaded of a level too large to load whole; undefined when the
 // whole level is loaded.
 let loadedBlocks: number[] | undefined;
+
+/**
+ * The ranges of a digest window nearest the camera read again once it has
+ * landed, for the cursor's distribution there: one round of reads in flight.
+ */
+const CENTRE_RANGES = 8;
 
 let mainMeshes: Array<THREE.Mesh | undefined> = new Array(HEALPIX_NUMCHUNKS);
 
@@ -615,15 +621,14 @@ function levelWindow(
   );
   const nodes =
     source && hiveNodes(parseStorePath(source.store).url, grid.level);
-  const maxBlocks = level.digest
-    ? digestWindowBlocks(
-        currentLevel(sources),
-        grid.level,
-        cellsPerBlock,
-        DEFAULT_VIEW_BUDGET_BYTES,
-        strataBytesFactor(store.digestStratum)
-      )
-    : Math.floor(DEFAULT_MAX_VIEW_CELLS / cellsPerBlock);
+  const maxBlocks = windowBlocks(
+    currentLevel(sources),
+    grid.level,
+    cellsPerBlock,
+    level.digest,
+    DEFAULT_VIEW_BUDGET_BYTES,
+    strataBytesFactor(store.digestStratum)
+  );
   return store.viewFootprint
     ? healpixViewWindow(
         grid,
@@ -631,7 +636,7 @@ function levelWindow(
         margin,
         maxBlocks,
         depth,
-        nodes && coveredBlocks(nodes, blockLevel)
+        nodes && ((order) => coveredBlocks(nodes, order))
       )
     : { blocks: [], cut: false, clipped: false };
 }
@@ -674,34 +679,16 @@ function viewWindowStale() {
   if (missing.length === 0) {
     return false;
   }
-  return windowCut ? cutWindowStale(missing) : true;
-}
-
-/**
- * A window cut by its budget misses blocks by design, and the blocks in view
- * are sampled a little differently from the window's, so a missing block
- * alone does not make it stale (that reloaded the same window over and
- * over). It is stale once the camera has moved a block's width: a block in
- * view is then missing that lies nearer the camera than a loaded block does.
- */
-function cutWindowStale(missing: number[]) {
-  const grid = unpackGrid();
-  const blockLevel = healpixBlockLevel(grid.level, blockDepth);
-  using blockGrid = grid.replace({ level: blockLevel, scheme: "nested" });
-  const { centreLon, centreLat } = store.viewFootprint!;
-  const nearestMissing = Math.min(
-    ...blockDistances(blockGrid, missing, centreLon, centreLat)
-  );
-  let farthestLoaded = 0;
-  for (const d of blockDistances(
-    blockGrid,
-    loadedBlocks!,
-    centreLon,
-    centreLat
-  )) {
-    farthestLoaded = Math.max(farthestLoaded, d);
-  }
-  return nearestMissing < farthestLoaded - healpixBlockSide(blockLevel);
+  return windowCut
+    ? cutWindowStale(
+        unpackGrid(),
+        loadedBlocks,
+        missing,
+        store.viewFootprint!,
+        windowCentre,
+        blockDepth
+      )
+    : true;
 }
 
 /**
@@ -804,6 +791,8 @@ function prepareWindow(
     : undefined;
   loadedBlocks = window?.blocks;
   windowCut = window?.cut ?? false;
+  const { centreLon = 0, centreLat = 0 } = store.viewFootprint ?? {};
+  windowCentre = { centreLon, centreLat };
   store.setViewWindowClipped(window?.clipped ?? false);
 }
 
@@ -834,25 +823,6 @@ async function fetchCellRange(
     throw new Error("The cell coordinate is not in ascending order.");
   }
   return { data: castDataVarToFloat32(values), cells };
-}
-
-/** The cells of some ranges of a level's window, in ascending order. */
-async function readRanges(
-  level: TReadLevel,
-  ranges: { start: number; end: number }[],
-  indices: (number | zarr.Slice | null)[],
-  percentile?: number
-) {
-  const assembly = createFaceAssembly();
-  await Promise.all(
-    ranges.map(async (range) =>
-      assembly.add(
-        range,
-        await fetchCellRange(level, range, indices, percentile)
-      )
-    )
-  );
-  return assembly.face();
 }
 
 /** The cell ranges of a level's blocks, those under the camera first. */
@@ -1415,7 +1385,13 @@ async function processHealpixChunks(
     }
     const shown = await shownFace(faceIndex, face, async (percentile) =>
       face.ranges
-        ? (await readRanges(level, face.ranges, indices, percentile)).data
+        ? (
+            await readRanges(
+              face.ranges,
+              (range) => fetchCellRange(level, range, indices, percentile),
+              isCurrent
+            )
+          ).data
         : (await readWhole(percentile)).data
     );
     if (disposed || !isCurrent()) {
@@ -1450,6 +1426,15 @@ async function processHealpixChunks(
     } else {
       updateHealpixBatch(batch, target);
     }
+  }
+  if (ranges && level.digest) {
+    // the stream went through the working set nearest first, so the chunks
+    // under the camera left it first: read them once more, last
+    void readRanges(
+      ranges.slice(0, CENTRE_RANGES),
+      (range) => fetchCellRange(level, range, indices),
+      isCurrent
+    ).catch(() => undefined);
   }
   const parts: TFaceParts = new Map(
     [...(read?.assemblies ?? [])].map(([face, assembly]) => [
@@ -1621,25 +1606,29 @@ async function fetchAndRenderData(
     indices,
     digestFields.key(),
   ]);
+  // a sparse level loaded whole leaves the rest of the globe to the coarsest
   const beneath = loadedBlocks
     ? await fill.loadBeneath(indices, key, isCurrent, coarsest)
-    : undefined;
+    : levelCellCount < 12 * grid.nside ** 2
+      ? fill.coarsestBeneath(coarsest)
+      : undefined;
   if (!isCurrent()) {
     return;
   }
   const own = loadedBlocks && fill.take(selected, key, loadedBlocks);
+  // at most the level's field and its parent's, from before the level's read
+  fill.retain([selected, beneath?.index]);
   const result = await processHealpixChunks(level, indices, isCurrent, {
     cells: cellCoord,
     deferDisplay,
     window: own ? { blocks: own.missing, seed: own.seed } : undefined,
   });
-  if (!result) {
+  if (!result || !isCurrent()) {
     return;
   }
   if (loadedBlocks) {
     fill.keep(selected, key, level, result.parts, result.drawn);
   }
-  fill.retain([selected, beneath?.index]);
   const { dataMin, dataMax, histogramSummaries, textures, batches } = result;
 
   lastStreamlineContext = { indices, grid, cellCoord };
@@ -1722,6 +1711,8 @@ onBeforeMount(async () => {
 
 onBeforeUnmount(() => {
   disposed = true;
+  // the notice is this grid's: the next dataset starts without it
+  store.setViewWindowClipped(false);
   streamlineRequestRevision++;
   terminateHealpixWorker();
   terminateGridDataWorker();

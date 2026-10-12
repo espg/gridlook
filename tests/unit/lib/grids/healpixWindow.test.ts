@@ -2,9 +2,11 @@ import { Grid } from "healpix-geo";
 import { expect, it } from "vitest";
 
 import "@/utils/disposablePolyfill.ts";
+import { coveredBlocks } from "@/lib/data/hiveStore.ts";
 import {
   blockDistances,
   blocksByDistance,
+  cutWindowStale,
   DIGEST_WINDOW_MARGIN,
   VIEW_WINDOW_MARGIN,
   healpixBlockDepth,
@@ -113,19 +115,14 @@ it("leaves out the blocks a store holds nothing for, uncut", () => {
   const below = Number(
     blockGrid.lonLatToHealpix(Float64Array.of(-99.5, 40.5))[0]
   );
-  const only = healpixViewWindow(
-    grid,
-    box,
-    0.5,
-    1,
-    undefined,
-    (b) => b === below
+  const only = healpixViewWindow(grid, box, 0.5, 1, undefined, (order) =>
+    coveredBlocks({ nodeOrder: 6, ranks: new Set([below]) }, order)
   );
   expect(only.blocks).toEqual([below]);
   expect(only.cut).toBe(false);
   expect(only.clipped).toBe(false);
   expect(
-    healpixViewWindow(grid, box, 0.5, 1, undefined, () => false).blocks
+    healpixViewWindow(grid, box, 0.5, 1, undefined, () => () => false).blocks
   ).toEqual([]);
 });
 
@@ -225,4 +222,117 @@ it("never merges blocks across a chunk boundary", () => {
     { start: 4 * 4096, end: 6 * 4096 },
     { start: 6 * 4096, end: 8 * 4096 },
   ]);
+});
+
+it("keeps every covered block that fits the budget, however far off-centre", () => {
+  using grid = new Grid({ scheme: "nested", level: 12 });
+  using blockGrid = new Grid({ scheme: "nested", level: 6 });
+  // a store with nodes only in one corner of a wide view
+  const ranks = new Set<number>();
+  for (let lat = 35; lat <= 40; lat += 0.1) {
+    for (let lon = -95; lon <= -85; lon += 0.1) {
+      ranks.add(
+        Number(blockGrid.lonLatToHealpix(Float64Array.of(lon, lat))[0])
+      );
+    }
+  }
+  const covers = (order: number) =>
+    coveredBlocks({ nodeOrder: 6, ranks }, order);
+  const wide = {
+    latMin: 20,
+    latMax: 60,
+    lonStart: -160,
+    lonSpan: 80,
+    centreLat: 40,
+    centreLon: -120,
+  };
+  const all = healpixViewWindow(grid, wide, 0.5, Infinity, undefined, covers);
+  expect(all.blocks).toHaveLength(ranks.size);
+  expect(ranks.size).toBeLessThan(80);
+  const window = healpixViewWindow(grid, wide, 0.5, 80, undefined, covers);
+  expect(window).toEqual({ blocks: all.blocks, cut: false, clipped: false });
+  // over the budget, the covered blocks nearest the camera are kept
+  const cut = healpixViewWindow(grid, wide, 0.5, 20, undefined, covers);
+  expect(cut.blocks).toHaveLength(20);
+  expect(cut.cut).toBe(true);
+  expect(cut.clipped).toBe(true);
+  expect(cut.blocks.every((block) => ranks.has(block))).toBe(true);
+});
+
+/** A footprint moved `dLon`, `dLat` degrees. */
+function shifted(
+  footprint: typeof box,
+  dLon: number,
+  dLat: number
+): typeof box {
+  return {
+    latMin: footprint.latMin + dLat,
+    latMax: footprint.latMax + dLat,
+    lonStart: footprint.lonStart + dLon,
+    lonSpan: footprint.lonSpan,
+    centreLat: footprint.centreLat + dLat,
+    centreLon: footprint.centreLon + dLon,
+  };
+}
+
+it("calls a cut window stale once the camera has moved a block", () => {
+  using grid = new Grid({ scheme: "nested", level: 12 });
+  const side = 58.63 / 2 ** 6;
+  const wide = {
+    latMin: 30,
+    latMax: 50,
+    lonStart: -125,
+    lonSpan: 50,
+    centreLat: 40,
+    centreLon: -100,
+  };
+  const loaded = healpixViewWindow(grid, wide, 0.5, 100);
+  expect(loaded.cut).toBe(true);
+  const stale = (view: typeof box) =>
+    cutWindowStale(
+      grid,
+      loaded.blocks,
+      healpixViewWindow(grid, view, 0, 100).blocks.filter(
+        (block) => !loaded.blocks.includes(block)
+      ),
+      view,
+      wide
+    );
+  expect(stale(wide)).toBe(false);
+  expect(stale(shifted(wide, 0.1 * side, 0))).toBe(false);
+  expect(stale(shifted(wide, 0, -0.1 * side))).toBe(false);
+  expect(stale(shifted(wide, 3 * side, 0))).toBe(true);
+  expect(stale(shifted(wide, 0, 3 * side))).toBe(true);
+});
+
+it("calls a cut window that loaded nothing stale once blocks are in view", () => {
+  using grid = new Grid({ scheme: "nested", level: 12 });
+  const inView = healpixViewWindow(grid, box, 0).blocks;
+  expect(inView.length).toBeGreaterThan(0);
+  expect(cutWindowStale(grid, [], inView, box, box)).toBe(true);
+  expect(cutWindowStale(grid, [], [], box, box)).toBe(false);
+});
+
+it("does not call a cut window at a pole stale at the camera it loaded at", () => {
+  using grid = new Grid({ scheme: "nested", level: 12 });
+  const side = 58.63 / 2 ** 6;
+  const polar = {
+    latMin: 70,
+    latMax: 90,
+    lonStart: -180,
+    lonSpan: 360,
+    centreLat: 84,
+    centreLon: 30,
+  };
+  const loaded = healpixViewWindow(grid, polar, 0.5, 100).blocks;
+  // the window at the view is another shape: blocks in view are missing
+  const missing = healpixViewWindow(grid, polar, 0, 100).blocks.filter(
+    (block) => !loaded.includes(block)
+  );
+  expect(missing.length).toBeGreaterThan(0);
+  expect(cutWindowStale(grid, loaded, missing, polar, polar)).toBe(false);
+  const nudged = { ...polar, centreLat: polar.centreLat - 0.1 * side };
+  expect(cutWindowStale(grid, loaded, missing, nudged, polar)).toBe(false);
+  const moved = { ...polar, centreLat: polar.centreLat - 3 * side };
+  expect(cutWindowStale(grid, loaded, missing, moved, polar)).toBe(true);
 });

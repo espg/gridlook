@@ -8,6 +8,7 @@ import {
   fetchInOrder,
   orderedBlockRanges,
   readFaceProgressively,
+  readRanges,
 } from "@/lib/grids/healpixBlockFetch.ts";
 import { buildHealpixTexture } from "@/lib/grids/healpixCalculations.ts";
 
@@ -183,4 +184,25 @@ it("reads a window's faces as their ranges land, the seeded parts first", async 
   expect(read.assemblies.get(0)!.face().cells).toEqual([4, 5, 6, 7]);
   // nothing drawn within the redraw interval
   expect(drawn).toEqual([]);
+});
+
+it("reads every range of a face a few at a time, in ascending order", async () => {
+  const ranges = Array.from({ length: 50 }, (_, index) => ({
+    start: (49 - index) * 4,
+    end: (50 - index) * 4,
+  }));
+  let [pending, most] = [0, 0];
+  const face = await readRanges(ranges, async ({ start, end }) => {
+    pending++;
+    most = Math.max(most, pending);
+    await tick();
+    pending--;
+    return {
+      data: Float32Array.from({ length: end - start }, (_, i) => start + i),
+      cells: Array.from({ length: end - start }, (_, i) => start + i),
+    };
+  });
+  expect(most).toBe(8);
+  expect(face.cells).toEqual(Array.from({ length: 200 }, (_, i) => i));
+  expect(Array.from(face.data)).toEqual(face.cells);
 });

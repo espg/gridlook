@@ -16,7 +16,6 @@ import {
   DEFAULT_VIEW_BUDGET_BYTES,
   DIGEST_CHUNK_BYTES,
   digestCellBytes,
-  digestWindowBlocks,
   exceedsCellCap,
   finestLevel,
   groundMetersPerPixel,
@@ -26,6 +25,7 @@ import {
   selectPointTier,
   selectViewLevel,
   type TLevelSelectionCamera,
+  windowBlocks,
   windowCost,
 } from "@/lib/data/levels.ts";
 import { ZARR_FORMAT, type TSources } from "@/lib/types/GlobeTypes.ts";
@@ -262,6 +262,19 @@ describe("selectViewLevel", () => {
     expect(selectViewLevel(fits, VIEWPORT_PIXELS, HIVE, at(13), options)).toBe(
       at(15)
     );
+    // a count is priced the same, per leaf chunk: at derived 15's floor the
+    // half-view window is 337 000 chunks, so the finest stored level shows
+    const floor15 = scaleFor(15, DEFAULT_PIXELS_PER_CELL);
+    const count15 = cellsInView(resolution(15), floor15, VIEWPORT_PIXELS);
+    expect(windowCost(derived(15), count15, false)).toBeCloseTo(
+      (((count15 * 2 ** 2) / 4 ** 2) * DIGEST_CHUNK_BYTES) /
+        DEFAULT_VIEW_BUDGET_BYTES,
+      6
+    );
+    expect(windowCost(derived(15), count15, false)).toBeGreaterThan(1);
+    expect(selectViewLevel(floor15, VIEWPORT_PIXELS, HIVE, at(13))).toBe(
+      at(13)
+    );
     // very close in, derived 17; never the leaves (not in the ladder)
     for (const order of [17, 18, 19, 22]) {
       const scale = scaleFor(order, DEFAULT_PIXELS_PER_CELL);
@@ -368,39 +381,52 @@ describe("a level derived from the leaves", () => {
   });
 });
 
-describe("digestWindowBlocks", () => {
+describe("windowBlocks", () => {
   it("prices a stored level per cell and a derived level per leaf chunk", () => {
     // order 13 in 256-cell chunks: the budget over the chunks' bytes
-    expect(digestWindowBlocks({}, 13, 256)).toBe(
+    expect(windowBlocks({}, 13, 256, true)).toBe(
       Math.floor(DEFAULT_VIEW_BUDGET_BYTES / (digestCellBytes(13) * 256))
     );
     // an order-12 cell costs a little more than an order-13 one
-    expect(digestWindowBlocks({}, 12, 64)).toBeLessThan(
-      digestWindowBlocks({}, 13, 64)
+    expect(windowBlocks({}, 12, 64, true)).toBeLessThan(
+      windowBlocks({}, 13, 64, true)
     );
     // both strata: 2.2 cells' worth per cell, 2.2 chunks' worth per chunk
     expect(
-      digestWindowBlocks({}, 13, 256, DEFAULT_VIEW_BUDGET_BYTES, BOTH)
+      windowBlocks({}, 13, 256, true, DEFAULT_VIEW_BUDGET_BYTES, BOTH)
     ).toBe(Math.floor(DEFAULT_VIEW_BUDGET_BYTES / (1700 * 2.2 * 256)));
     expect(
-      digestWindowBlocks(
+      windowBlocks(
         { derived: { dataset: "19", refinement: 4 } },
         15,
         256,
+        true,
         DEFAULT_VIEW_BUDGET_BYTES,
         BOTH
       )
     ).toBe(Math.floor(DEFAULT_VIEW_BUDGET_BYTES / (DIGEST_CHUNK_BYTES * 4)));
     // a derived level costs a leaf chunk per block whatever its order
     const derived = { derived: { dataset: "leaf", refinement: 2 } };
-    expect(digestWindowBlocks(derived, 15, 256)).toBe(
+    expect(windowBlocks(derived, 15, 256, true)).toBe(
       Math.floor(DEFAULT_VIEW_BUDGET_BYTES / DIGEST_CHUNK_BYTES)
     );
-    expect(digestWindowBlocks(derived, 17, 16)).toBe(
-      digestWindowBlocks(derived, 15, 256)
+    expect(windowBlocks(derived, 17, 16, true)).toBe(
+      windowBlocks(derived, 15, 256, true)
+    );
+    // a derived level is priced per leaf chunk for every variable, a stored
+    // one's count per cell against the view cap
+    expect(windowBlocks(derived, 15, 16, false)).toBe(
+      windowBlocks(derived, 15, 16, true)
+    );
+    // the stratum choice prices only a digest variable's chunks
+    expect(
+      windowBlocks(derived, 15, 16, false, DEFAULT_VIEW_BUDGET_BYTES, BOTH)
+    ).toBe(windowBlocks(derived, 15, 16, false));
+    expect(windowBlocks({}, 13, 256, false)).toBe(
+      Math.floor(DEFAULT_MAX_VIEW_CELLS / 256)
     );
     // a budget below one block still loads one
-    expect(digestWindowBlocks({}, 13, 256, 1)).toBe(1);
+    expect(windowBlocks({}, 13, 256, true, 1)).toBe(1);
   });
 });
 

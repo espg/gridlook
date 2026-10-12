@@ -130,11 +130,14 @@ export function useAncestorFill(options: {
   describe: (
     sources: TSources
   ) => Promise<Pick<TReadLevel, "datavar" | "grid"> | undefined>;
-  /** The blocks of a level's window at the view, and whether the budget cut it. */
+  /**
+   * The blocks of a level's window at the view, and whether the budget cut
+   * into the view itself.
+   */
   window: (
     level: TReadLevel,
     margin: number
-  ) => { blocks: number[]; cut: boolean };
+  ) => { blocks: number[]; clipped: boolean };
   /**
    * Read `blocks` of a level and draw its faces beneath as they land, with
    * the parts of `seed` already in; the faces read and built.
@@ -298,6 +301,36 @@ export function useAncestorFill(options: {
     return shown;
   }
 
+  type TCoarsest = Pick<TBeneath, "index" | "key" | "grid" | "batches">;
+
+  function showCoarsest(sources: TSources, coarsest: TCoarsest) {
+    shown = beneathOf(
+      coarsest.index,
+      coarsest.key,
+      {
+        grid: coarsest.grid,
+        sources: { ...sources, selectedLevel: coarsest.index },
+      },
+      coarsest.batches
+    );
+    options.show(shown);
+    return shown;
+  }
+
+  /**
+   * Draw the coarsest level beneath a sparse level loaded whole, which
+   * leaves the rest of the globe empty; undefined with the fill off.
+   */
+  function coarsestBeneath(coarsest: TCoarsest | undefined) {
+    const sources = options.getDatasources();
+    shown = undefined;
+    if (!sources || !store.levelParentBeneath || !coarsest) {
+      options.show(undefined);
+      return undefined;
+    }
+    return showCoarsest(sources, coarsest);
+  }
+
   /**
    * Draw the parent of the selected level beneath it: the next coarser
    * stored level whose window fits its budget at this view, read now or
@@ -308,7 +341,7 @@ export function useAncestorFill(options: {
     indices: TIndices,
     key: string,
     isCurrent: () => boolean,
-    coarsest?: Pick<TBeneath, "index" | "key" | "grid" | "batches">
+    coarsest?: TCoarsest
   ) {
     const sources = options.getDatasources();
     shown = undefined;
@@ -322,16 +355,7 @@ export function useAncestorFill(options: {
     )) {
       const selected = { ...sources, selectedLevel: index };
       if (index === coarsest?.index) {
-        shown = {
-          ...beneathOf(
-            index,
-            coarsest.key,
-            { grid: coarsest.grid, sources: selected },
-            coarsest.batches
-          ),
-        };
-        options.show(shown);
-        return shown;
+        return showCoarsest(sources, coarsest);
       }
       const level = await describeWindowed(selected);
       if (!isCurrent()) {
@@ -344,10 +368,13 @@ export function useAncestorFill(options: {
         level,
         viewWindowMargin(level.datavar.attrs)
       );
-      if (window.cut) {
-        // over budget here: the next coarser level is the parent instead
+      if (window.clipped) {
+        // over budget in view here (a trimmed margin is not): the next
+        // coarser level is the parent instead
         continue;
       }
+      // the fields of the level and of this parent only, before the read
+      retain([sources.selectedLevel ?? 0, index]);
       return await fill(index, level, window.blocks, key, indices, isCurrent);
     }
     return undefined;
@@ -369,6 +396,7 @@ export function useAncestorFill(options: {
     keep,
     retain,
     loadBeneath,
+    coarsestBeneath,
     lookup,
     /** The level drawn beneath now, if any. */
     beneath: () => shown,
