@@ -2,6 +2,7 @@ import { Grid } from "healpix-geo";
 import { expect, it } from "vitest";
 
 import "@/utils/disposablePolyfill.ts";
+import { coveredBlocks } from "@/lib/data/hiveStore.ts";
 import {
   blockDistances,
   blocksByDistance,
@@ -114,19 +115,14 @@ it("leaves out the blocks a store holds nothing for, uncut", () => {
   const below = Number(
     blockGrid.lonLatToHealpix(Float64Array.of(-99.5, 40.5))[0]
   );
-  const only = healpixViewWindow(
-    grid,
-    box,
-    0.5,
-    1,
-    undefined,
-    (b) => b === below
+  const only = healpixViewWindow(grid, box, 0.5, 1, undefined, (order) =>
+    coveredBlocks({ nodeOrder: 6, ranks: new Set([below]) }, order)
   );
   expect(only.blocks).toEqual([below]);
   expect(only.cut).toBe(false);
   expect(only.clipped).toBe(false);
   expect(
-    healpixViewWindow(grid, box, 0.5, 1, undefined, () => false).blocks
+    healpixViewWindow(grid, box, 0.5, 1, undefined, () => () => false).blocks
   ).toEqual([]);
 });
 
@@ -226,6 +222,41 @@ it("never merges blocks across a chunk boundary", () => {
     { start: 4 * 4096, end: 6 * 4096 },
     { start: 6 * 4096, end: 8 * 4096 },
   ]);
+});
+
+it("keeps every covered block that fits the budget, however far off-centre", () => {
+  using grid = new Grid({ scheme: "nested", level: 12 });
+  using blockGrid = new Grid({ scheme: "nested", level: 6 });
+  // a store with nodes only in one corner of a wide view
+  const ranks = new Set<number>();
+  for (let lat = 35; lat <= 40; lat += 0.1) {
+    for (let lon = -95; lon <= -85; lon += 0.1) {
+      ranks.add(
+        Number(blockGrid.lonLatToHealpix(Float64Array.of(lon, lat))[0])
+      );
+    }
+  }
+  const covers = (order: number) =>
+    coveredBlocks({ nodeOrder: 6, ranks }, order);
+  const wide = {
+    latMin: 20,
+    latMax: 60,
+    lonStart: -160,
+    lonSpan: 80,
+    centreLat: 40,
+    centreLon: -120,
+  };
+  const all = healpixViewWindow(grid, wide, 0.5, Infinity, undefined, covers);
+  expect(all.blocks).toHaveLength(ranks.size);
+  expect(ranks.size).toBeLessThan(80);
+  const window = healpixViewWindow(grid, wide, 0.5, 80, undefined, covers);
+  expect(window).toEqual({ blocks: all.blocks, cut: false, clipped: false });
+  // over the budget, the covered blocks nearest the camera are kept
+  const cut = healpixViewWindow(grid, wide, 0.5, 20, undefined, covers);
+  expect(cut.blocks).toHaveLength(20);
+  expect(cut.cut).toBe(true);
+  expect(cut.clipped).toBe(true);
+  expect(cut.blocks.every((block) => ranks.has(block))).toBe(true);
 });
 
 /** A footprint moved `dLon`, `dLat` degrees. */

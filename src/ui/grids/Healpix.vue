@@ -585,7 +585,7 @@ function levelWindow(
         margin,
         maxBlocks,
         depth,
-        nodes && coveredBlocks(nodes, blockLevel)
+        nodes && ((order) => coveredBlocks(nodes, order))
       )
     : { blocks: [], cut: false, clipped: false };
 }

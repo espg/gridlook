@@ -113,6 +113,15 @@ function nearestBlocks(
 /** A lat/lon box: `[south, north]`, and `span` degrees east of `west`. */
 type TBox = { south: number; north: number; west: number; span: number };
 
+/** Blocks of side `side` a box holds, by area. */
+function boxBlocks({ south, north, span }: TBox, side: number) {
+  return (
+    (span * (Math.sin(north * RADIANS) - Math.sin(south * RADIANS))) /
+    RADIANS /
+    side ** 2
+  );
+}
+
 /**
  * The box a window samples: the footprint grown by `margin` on every side,
  * then, over the budget, shrunk around the point below the camera. A band
@@ -131,11 +140,7 @@ function windowBox(
   let span = Math.min(footprint.lonSpan * (1 + 2 * margin), 360);
   let west = footprint.lonStart - (span - footprint.lonSpan) / 2;
   for (let pass = 0; pass < 3; pass++) {
-    // blocks the box holds, by area
-    const estimate =
-      (span * (Math.sin(north * RADIANS) - Math.sin(south * RADIANS))) /
-      RADIANS /
-      side ** 2;
+    const estimate = boxBlocks({ south, north, west, span }, side);
     if (estimate <= maxBlocks) {
       break;
     }
@@ -161,6 +166,21 @@ function inView(footprint: TViewFootprint, lon: number, lat: number) {
   );
 }
 
+/** Points `spacing` apart over a box, as lon/lat pairs. */
+function sampleBox({ south, north, west, span }: TBox, spacing: number) {
+  const rows = Math.ceil((north - south) / spacing) + 1;
+  const coordinates: number[] = [];
+  for (let row = 0; row < rows; row++) {
+    const lat = rows > 1 ? south + ((north - south) * row) / (rows - 1) : south;
+    const columns = Math.ceil((span * Math.cos(lat * RADIANS)) / spacing) + 1;
+    for (let column = 0; column < columns; column++) {
+      const offset = columns > 1 ? (span * column) / (columns - 1) : span / 2;
+      coordinates.push(normalizeLon(west + offset), lat);
+    }
+  }
+  return coordinates;
+}
+
 /**
  * With a store that says where it has nodes, the box is sampled this many
  * times over the budget before it is shrunk by area: the blocks it holds
@@ -169,13 +189,90 @@ function inView(footprint: TViewFootprint, lon: number, lat: number) {
 const COVERAGE_OVERSAMPLE = 4;
 
 /**
+ * The covered blocks under the cells a box touches, when there are at most
+ * `limit`: the box is sampled at the coarsest order that keeps it within
+ * `limit` cells, and the covered cells are refined an order at a time.
+ * Undefined when the box is small enough to sample block by block, or when
+ * it holds more covered blocks than `limit`.
+ */
+function coveredInBox(
+  grid: Grid,
+  blockLevel: number,
+  box: TBox,
+  side: number,
+  limit: number,
+  covers: (order: number) => (cell: number) => boolean
+) {
+  const area = boxBlocks(box, side);
+  if (area <= limit) {
+    return undefined;
+  }
+  const orders = Math.min(
+    Math.ceil(Math.log(area / limit) / Math.log(4)),
+    blockLevel
+  );
+  let order = blockLevel - orders;
+  using coarseGrid = grid.replace({ level: order, scheme: "nested" });
+  const sampled = coarseGrid.lonLatToHealpix(
+    Float64Array.from(sampleBox(box, (side * 2 ** orders) / 4))
+  );
+  let cells = [...new Set(Array.from(sampled, Number))].filter(covers(order));
+  while (order < blockLevel && cells.length <= limit) {
+    order++;
+    const covered = covers(order);
+    cells = cells
+      .flatMap((cell) => [4 * cell, 4 * cell + 1, 4 * cell + 2, 4 * cell + 3])
+      .filter(covered);
+  }
+  return cells.length <= limit ? cells : undefined;
+}
+
+/**
+ * The `maxBlocks` covered blocks nearest the centre of the view; clipped
+ * when a block left out has its centre in view.
+ */
+function nearestCovered(
+  blockGrid: Grid,
+  covered: number[],
+  footprint: TViewFootprint,
+  maxBlocks: number
+) {
+  if (covered.length <= maxBlocks) {
+    return {
+      blocks: covered.sort((a, b) => a - b),
+      cut: false,
+      clipped: false,
+    };
+  }
+  const ranked = blocksByDistance(
+    blockGrid,
+    covered,
+    footprint.centreLon,
+    footprint.centreLat
+  );
+  const dropped = ranked.slice(maxBlocks);
+  const centres = blockGrid.healpixToLonLat(
+    BigUint64Array.from(dropped, (block) => BigInt(block))
+  );
+  return {
+    blocks: ranked.slice(0, maxBlocks).sort((a, b) => a - b),
+    cut: true,
+    clipped: dropped.some((_, index) =>
+      inView(footprint, centres[2 * index], centres[2 * index + 1])
+    ),
+  };
+}
+
+/**
  * Ids of the blocks of a nested level that a view footprint touches, grown
  * by `margin` (a fraction of the footprint's size) on every side, ascending.
  * At most `maxBlocks` are returned, those nearest the centre of the view;
  * `cut` says whether the budget left any block out, `clipped` whether one of
- * them was in view itself rather than in the margin. A block `exists` says
- * the store holds nothing for is left out before the budget, and never
- * counts as cut.
+ * them was in view itself rather than in the margin. With `covers`, which
+ * says for a cell of an order whether the store holds anything under it, a
+ * block the store holds nothing for is left out before the budget, and
+ * never counts as cut; the covered blocks are counted before the box is
+ * shrunk, so covered blocks within the budget are never dropped.
  */
 // eslint-disable-next-line max-lines-per-function
 export function healpixViewWindow(
@@ -184,37 +281,42 @@ export function healpixViewWindow(
   margin = 0,
   maxBlocks = Infinity,
   depth?: number,
-  exists?: (block: number) => boolean
+  covers?: (order: number) => (cell: number) => boolean
 ) {
   const blockLevel = healpixBlockLevel(grid.level, depth);
   const side = healpixBlockSide(blockLevel);
-  const { south, north, west, span } = windowBox(
+  using blockGrid = grid.replace({ level: blockLevel, scheme: "nested" });
+  const covered =
+    covers &&
+    coveredInBox(
+      grid,
+      blockLevel,
+      windowBox(footprint, margin, side, Infinity),
+      side,
+      maxBlocks * COVERAGE_OVERSAMPLE,
+      covers
+    );
+  if (covered) {
+    return nearestCovered(blockGrid, covered, footprint, maxBlocks);
+  }
+  const box = windowBox(
     footprint,
     margin,
     side,
-    exists ? maxBlocks * COVERAGE_OVERSAMPLE : maxBlocks
+    covers ? maxBlocks * COVERAGE_OVERSAMPLE : maxBlocks
   );
+  const { south, north, span } = box;
   // Four samples per block side: a block is only missed where less than a
   // quarter of its side reaches into the box, and the margin covers that.
-  const spacing = side / 4;
-  const rows = Math.ceil((north - south) / spacing) + 1;
-  const coordinates: number[] = [];
-  const visible: boolean[] = [];
-  for (let row = 0; row < rows; row++) {
-    const lat = rows > 1 ? south + ((north - south) * row) / (rows - 1) : south;
-    const columns = Math.ceil((span * Math.cos(lat * RADIANS)) / spacing) + 1;
-    for (let column = 0; column < columns; column++) {
-      const offset = columns > 1 ? (span * column) / (columns - 1) : span / 2;
-      const lon = normalizeLon(west + offset);
-      coordinates.push(lon, lat);
-      visible.push(inView(footprint, lon, lat));
-    }
-  }
-  using blockGrid = grid.replace({ level: blockLevel, scheme: "nested" });
+  const coordinates = sampleBox(box, side / 4);
+  const visible = Array.from({ length: coordinates.length / 2 }, (_, index) =>
+    inView(footprint, coordinates[2 * index], coordinates[2 * index + 1])
+  );
   const sampled = Array.from(
     blockGrid.lonLatToHealpix(Float64Array.from(coordinates)),
     Number
   );
+  const exists = covers?.(blockLevel);
   const present = exists ? sampled.map(exists) : undefined;
   let blocks = [
     ...new Set(
