@@ -77,6 +77,16 @@ const POINT_PIVOT_ROTATE_SPEED = 0.5;
  */
 const ROLL_VERTICAL_FROM_DEGREES = 5;
 const ROLL_VERTICAL_TO_DEGREES = 20;
+/**
+ * At nadir the azimuth is meaningless, yet it is the way a drag tilts the
+ * camera: within this many degrees of nadir it is put behind the bottom of
+ * the screen, so a tilt from nadir leans the view the way it faces, the
+ * horizon comes up where the carried screen-up is, and the roll blend has
+ * nothing to turn.
+ */
+const NADIR_DEGREES = 0.1;
+/** The tilt a camera at nadir is given to carry an azimuth, radians. */
+const NADIR_LEAN = 1e-6;
 /** A pivot this far from the sphere was moved by something else: give up. */
 const PIVOT_OFF_SPHERE = 0.5;
 
@@ -351,17 +361,37 @@ export function createPointPivot(controls: OrbitControls) {
     return along.normalize();
   }
 
+  /** The camera `distance` from the pivot, `radians` from nadir toward `along`. */
+  function place(radians: number, distance: number, along: THREE.Vector3) {
+    camera.position
+      .copy(orbit.target)
+      .addScaledVector(vertical(), distance * Math.cos(radians))
+      .addScaledVector(along, distance * Math.sin(radians));
+  }
+
   /** Put the camera `distance` from the pivot at `degrees` from nadir, keeping the azimuth. */
   function setTilt(degrees: number, distance: number) {
     const radians = THREE.MathUtils.degToRad(
       THREE.MathUtils.clamp(degrees, 0, POINT_PIVOT_MAX_TILT_DEGREES)
     );
-    const along = azimuthDirection();
-    camera.position
-      .copy(orbit.target)
-      .addScaledVector(vertical(), distance * Math.cos(radians))
-      .addScaledVector(along, distance * Math.sin(radians));
+    place(radians, distance, azimuthDirection());
     orbit.update();
+  }
+
+  /** At nadir, the azimuth behind the bottom of the screen (`screenUp`). */
+  function faceNadir(screenUp: THREE.Vector3) {
+    const offset = camera.position.clone().sub(orbit.target);
+    const up = vertical();
+    const radians = offset.angleTo(up);
+    const along = screenUp.clone().negate();
+    along.addScaledVector(up, -along.dot(up));
+    if (
+      radians >= THREE.MathUtils.degToRad(NADIR_DEGREES) ||
+      along.lengthSq() < 1e-18
+    ) {
+      return;
+    }
+    place(Math.max(radians, NADIR_LEAN), offset.length(), along.normalize());
   }
 
   /**
@@ -418,6 +448,9 @@ export function createPointPivot(controls: OrbitControls) {
     const screenUp = new THREE.Vector3(0, 1, 0).applyQuaternion(
       camera.quaternion
     );
+    if (active) {
+      faceNadir(screenUp);
+    }
     const changed = update(deltaTime);
     if (active) {
       // a pan is tangent to the surface: put the pivot back on it

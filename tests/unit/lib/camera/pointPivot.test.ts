@@ -300,9 +300,14 @@ describe("createPointPivot", () => {
       expect(camera.position.length() - 1).toBeCloseTo(altitude, 8);
     }
     const moved = controls.target.distanceTo(start) * R;
-    // the view spans 2 · 2000 m · tan(3.75°) ≈ 262 m: 6 views panned
-    expect(moved).toBeGreaterThan(1000);
-    expect(moved).toBeLessThan(2000);
+    // the view spans 2 · 2000 m · tan(3.75°) ≈ 262 m over 900 px: a frame's
+    // drag is ≈ 51 m, applied by the damping at 1 − 0.92^frame of it
+    let frames = 0;
+    for (let frame = 1; frame <= 60; frame++) {
+      frames += 1 - 0.92 ** frame;
+    }
+    const step = (viewHeightAt(2000, 7.5) * Math.hypot(150, 90)) / 900;
+    expect(moved / (step * frames)).toBeCloseTo(1, 1);
     // and the camera still looks at the pivot
     expect(
       surfacePointNearRay(camera.position, forwardOf(camera)).distanceTo(
@@ -540,6 +545,33 @@ describe("createPointPivot", () => {
       const horizon = vertical.addScaledVector(forward, -vertical.dot(forward));
       expect(screenUp.angleTo(horizon)).toBeLessThan(1e-6);
     }
+  });
+
+  it.each([
+    [37, -119.5],
+    [70, 45],
+    [0, 0],
+    [-75, 0],
+  ])("tilts from nadir without rolling the view (%f, %f)", (lat, lon) => {
+    const { camera, controls, pivot } = pivotControls(2000);
+    camera.position.copy(onSphere(lat, lon, 1 + 2000 / R));
+    camera.lookAt(0, 0, 0);
+    pivot.enter(surfacePointNearRay(camera.position, forwardOf(camera)));
+    controls.enableDamping = false;
+    // a tilt pitches the camera about its own right: that stays put
+    const right = () =>
+      new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+    const start = right();
+    let previous = start;
+    for (let degree = 0; degree < 30; degree++) {
+      controls._rotateUp(-THREE.MathUtils.degToRad(1));
+      controls.update();
+      const now = right();
+      expect(THREE.MathUtils.radToDeg(now.angleTo(previous))).toBeLessThan(0.5);
+      previous = now;
+    }
+    expect(pivot.tilt()).toBeCloseTo(30, 3);
+    expect(THREE.MathUtils.radToDeg(previous.angleTo(start))).toBeLessThan(1);
   });
 
   it("leaves onto the globe orbit above the pivot at its altitude", () => {
