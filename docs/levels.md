@@ -206,9 +206,11 @@ It exists on the globe only; a flat projection stops at the finest level.
   mean, at the centre of its ancestor cell. Noise is not read.
 - **Height.** A point sits at `r = 1 + (h − h_ref) · exaggeration / R` globe
   radii, with `R` the store's semi-major axis. The reference height `h_ref`
-  is the lowest height drawn within the view's height of the pivot
-  (`neighbourhoodRange` in `src/lib/points/pointRange.ts`), refreshed as
-  chunks land: the datum floats on the view's lowest height, so the cloud
+  is the 2nd percentile of the heights drawn within the view's height of
+  the pivot (`neighbourhoodRange` in `src/lib/points/pointRange.ts`, a
+  percentile so that a stray return far below the ground does not pull it
+  down), refreshed as chunks land: the datum floats on the view's lowest
+  heights, so the cloud
   always rises from the sphere at the pivot, over a 3 000 m plateau as
   over a beach, and a tilted view, whose window reaches farther, keeps it
   there. The exaggeration is 1 for now (both are shader uniforms). Positions are kept relative to each chunk's centre so that
@@ -255,8 +257,8 @@ It exists on the globe only; a flat projection stops at the finest level.
   button (two fingers) orbit whichever is on, and the arrow keys pan. The
   legend says which is on. The globe's buttons are untouched.
 - **Pivot height.** The pivot is lifted off the sphere to the middle of
-  the relief around it (the datum to the highest point within the view's
-  height of it), so an orbit turns about the cloud and an oblique view
+  the relief around it (the datum to the 98th percentile of the heights
+  within the view's height of it, so a cloud return does not lift it), so an orbit turns about the cloud and an oblique view
   centres it; the pivot stays on the sphere's vertical and the camera
   rises and falls with it, so the view keeps its tilt, azimuth and
   distance (a tilted view does not turn) as the lift changes. The lift follows the relief as chunks land.

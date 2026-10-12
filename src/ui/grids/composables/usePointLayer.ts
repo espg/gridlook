@@ -239,9 +239,10 @@ export function usePointLayer(options: TPointLayerOptions) {
   }
 
   /**
-   * The datum and the relief around the pivot: the lowest and highest
-   * drawn height within the view's height of it, so a tilted view, which sees
-   * farther, keeps the datum under the cloud. The points are lifted from
+   * The datum and the relief around the pivot: the 2nd and 98th percentile
+   * of the drawn heights within the view's height of it, so a tilted view,
+   * which sees farther, keeps the datum under the cloud, and a stray return
+   * moves neither. The points are lifted from
    * the datum; the pivot sits at the middle of the relief.
    */
   function publishDatum() {
@@ -258,8 +259,8 @@ export function usePointLayer(options: TPointLayerOptions) {
     if (!around) {
       return;
     }
-    material.uniforms.heightReference.value = around.min;
-    options.pointPivot.setHeight(lift((around.max - around.min) / 2));
+    material.uniforms.heightReference.value = around.low;
+    options.pointPivot.setHeight(lift((around.high - around.low) / 2));
   }
 
   /** The drawn heights' range and histogram, as the store's data range. */

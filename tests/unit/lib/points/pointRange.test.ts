@@ -51,7 +51,7 @@ describe("pointRange", () => {
 });
 
 describe("neighbourhoodRange", () => {
-  it("is the lowest and highest finite height within reach of the centre", () => {
+  it("is the range of the finite heights within reach of the centre", () => {
     // three points a metre apart along x from the origin, two chunks
     const origin: [number, number, number] = [1, 0, 0];
     const metre = 1 / 6378137;
@@ -66,19 +66,36 @@ describe("neighbourhoodRange", () => {
       heights: new Float32Array([100]),
     };
     expect(neighbourhoodRange([near, far], origin, 2.5 * metre)).toEqual({
-      min: 318.75,
-      max: 320.5,
+      low: 318.75,
+      high: 320.5,
     });
     // the far point pulls the datum down only once it is within reach
     expect(neighbourhoodRange([near, far], origin, 11 * metre)).toEqual({
-      min: 100,
-      max: 320.5,
+      low: 100,
+      high: 320.5,
     });
     expect(neighbourhoodRange([near, far], origin, 0.5 * metre)).toEqual({
-      min: 320.5,
-      max: 320.5,
+      low: 320.5,
+      high: 320.5,
     });
     expect(neighbourhoodRange([far], origin, metre)).toBeUndefined();
     expect(neighbourhoodRange([], origin, metre)).toBeUndefined();
+  });
+
+  it("is not moved by a stray return below the ground or in the air", () => {
+    const origin: [number, number, number] = [1, 0, 0];
+    const heights = Float32Array.from({ length: 1002 }, (_, i) =>
+      i < 1000 ? 300 + (200 * i) / 999 : i === 1000 ? -300 : 2000
+    );
+    const chunk = {
+      origin,
+      offsets: new Float32Array(3 * heights.length),
+      heights,
+    };
+    const around = neighbourhoodRange([chunk], origin, 1e-6)!;
+    expect(around.low).toBeGreaterThan(300);
+    expect(around.low).toBeLessThan(305);
+    expect(around.high).toBeGreaterThan(495);
+    expect(around.high).toBeLessThan(500);
   });
 });
