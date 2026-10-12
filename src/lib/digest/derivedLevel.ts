@@ -21,7 +21,9 @@ import type { TDigestChunk } from "./tdigest.ts";
  * is the sum of theirs.
  */
 
-const DEFAULT_POOLED_CACHE_BYTES = 128 * 2 ** 20;
+// a working set, as the leaf chunks' (see digestReader): pooled digests
+// are a stream too
+const DEFAULT_POOLED_CACHE_BYTES = 32 * 2 ** 20;
 
 /** Leaf cells below one cell `refinement` orders up. */
 export function derivedGroup(refinement: number) {

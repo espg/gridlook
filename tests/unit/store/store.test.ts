@@ -204,6 +204,15 @@ it("turns automatic level selection off on a manual pick", () => {
   expect(store.levelAuto).toBe(true);
 });
 
+it("draws the next coarser level beneath by default, until turned off", () => {
+  const store = useGlobeControlStore();
+  expect(store.levelParentBeneath).toBe(true);
+  store.setLevelParentBeneath(false);
+  expect(store.levelParentBeneath).toBe(false);
+  store.setLevelParentBeneath(true);
+  expect(store.levelParentBeneath).toBe(true);
+});
+
 it("keeps the percentiles of a digest variable in 0..100 and in order", () => {
   const store = useGlobeControlStore();
   expect(store.digestPercentile).toBe(50);

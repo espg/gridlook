@@ -48,14 +48,28 @@ than two usable levels is opened as a single-level dataset.
 
 In every projection, also while the camera is moving, Gridlook measures the
 ground distance one screen pixel covers at the point below the camera and
-picks the level whose cells come nearest to **16 pixels** on screen (nearest
-in log2 of the cell size). The active level is kept unless another level fits
-better by more than **0.35 orders**, so panning along a boundary does not flip
-back and forth. Where a projection stretches the map more one way than the
-other, the coarser of the two directions counts, so cells are never smaller
-than the target. A flat projection also stretches the map unevenly from place
-to place, so away from the point below the camera the cells can be larger or
-smaller on screen than the target.
+picks the **finest level that passes two tests**:
+
+- its cells span at least **2 pixels** on screen, stored or derived;
+- its window fits: the cells the viewport holds at that scale, priced in
+  bytes for a variable derived from a t-digest (per cell on a stored level,
+  per leaf chunk on a derived one) against the 1 GB window budget, or in
+  cells against the view cap for any other variable.
+
+A level loaded whole must also be under the whole-level cell cap. The active
+level keeps **1.5×** slack on both tests, so a slow zoom across a boundary
+does not flip back and forth; with nothing eligible the coarsest level is
+shown. Where a projection stretches the map more one way than the other, the
+coarser of the two directions counts, so cells are never smaller than the
+floor. A flat projection also stretches the map unevenly from place to place,
+so away from the point below the camera the cells can be larger or smaller
+on screen than at the centre.
+
+Over California, the ATL03 store's order-12 level is 370 MB of signal digest
+and order 13 is 1.29 GB: from far enough out to see the whole state a height
+view picks order 11, and order 13 comes on at its 2 pixel floor, where a
+1500 × 900 window of it is about 700 MB. A `count` costs bytes per cell and is
+picked at the pixel floor alone.
 
 A level switch keeps the view: the level on screen stays until the next one
 has loaded and then replaces it in one frame. Triangular grids rebuild their
@@ -66,18 +80,32 @@ mesh first and are blank while the next level loads.
 Regular lat/lon grids (one-dimensional `lat` and `lon` axes, not rotated or
 projected) and nested HEALPix grids do not fetch a large level whole. A level
 with more than **12 · 4^8 ≈ 786 000 cells** is loaded as the part the camera
-sees plus a margin of half the view on every side:
+sees plus a margin of half the view on every side (2.25 times the visible
+area). A variable derived from a t-digest, whose cells cost kilobytes, takes
+a quarter of the view instead (1.56 times the visible area, about 30% fewer
+bytes); `count` and the other stored variables keep the half:
 
 - **Regular lat/lon:** an index window on both axes, requested as a slice.
   Zarr fetches only the chunks the slice touches. A window across the seam of
   a global longitude axis is fetched as two slices and stitched; around a
   pole the window takes every longitude and reads every n-th column.
-- **HEALPix:** blocks of 4^6 cells, six orders above the level, which are
-  contiguous in nested order and a square on their face. A dense level reads
-  them by index. A level with a `cell` coordinate must store it in ascending
-  nested order; the coordinate is then searched chunk by chunk and never read
-  whole. Every chunk is checked as it is read, and a coordinate found out of
-  order makes the level load whole.
+- **HEALPix:** blocks of at most 4^6 cells, six orders above the level,
+  which are contiguous in nested order and a square on their face. A block
+  is never larger than a chunk that is itself a square of cells (a zagg
+  level's 256-cell chunks give 256-cell blocks, four orders up), so a window
+  reads only the chunks it touches. A dense level reads them by index. A
+  level with a `cell` coordinate must store it in ascending nested order; the
+  coordinate is then searched chunk by chunk and never read whole. Every
+  chunk is checked as it is read, and a coordinate found out of order makes
+  the level load whole.
+
+  The blocks of a window are read nearest the point below the camera first,
+  a few at a time, and each face is drawn again with the blocks landed so
+  far every 150 ms, so the cells under the camera show while the margin is
+  still loading. A cell not yet landed shows the level beneath (below), as a
+  cell outside the window does; the colour range, the histogram and the
+  hover readout follow once the window is in. A level or window change
+  while a window loads stops its reads and draws nothing more of it.
 
 The window is reloaded in place once the view leaves it; moving inside it
 fetches nothing. While the camera keeps moving, a window that is already
@@ -85,12 +113,44 @@ loading is shown before the next one is requested. With a level picked by
 hand that is too fine for the view, the window is cut down to the budget
 around the point below the camera.
 
-The coarsest level is the exception: it is always loaded whole. It is drawn
-under a finer level wherever that level has no cells on screen (outside its
-window, or outside the region it covers), and the colour range and histogram
-are taken from it, so colours do not shift as the view moves or the level
-changes. A pyramid whose levels do not state their resolution has no known
-coarsest level, and loads every level whole.
+The coarsest level is the exception: it is always loaded whole, and the
+colour range and histogram are taken from it, so colours do not shift as the
+view moves or the level changes. A pyramid whose levels do not state their
+resolution has no known coarsest level, and loads every level whole.
+
+### The next coarser level beneath
+
+Where a window stops, the screen would be black: beyond the margin, where
+the budget cut the window, and under the camera while the blocks are still
+landing. Instead, a level loaded by view is drawn over its **parent**, the
+next coarser stored level, over the same ground. Before the level's own
+blocks are read, the window of the parent at the same view (its own block
+size, the same margin, the same budget rule) is read and drawn beneath; the
+level's blocks then land over it face by face, and the parent stays visible
+wherever the level has no cell: not yet landed, outside its window, or left
+out by its budget. A parent whose window is itself over its budget at this
+view is skipped for the next coarser level that fits, down to the coarsest,
+which is loaded whole and always fits. A level derived from the leaves is
+never the parent: its window would read the same leaf chunks as the level's
+own, and show nothing sooner. The parent is drawn with the colour range of
+the level above it.
+
+The fields read are kept in memory, at most two: the level on screen and
+the one beneath it, each as the values of one window (one float per cell:
+the digests themselves stream through their working set and are not kept).
+Zooming in by one level, the level on screen becomes the one beneath with
+no read; zooming out, the level beneath comes on screen and reads only the
+blocks its wider window gains. The coarsest level, loaded whole, is kept
+beside these for the colour range.
+
+The hover readout gives the finest value drawn at a place: where only the
+parent is drawn, its cell, marked with the parent's name ("order 12"). The
+**Height distribution** panel follows the cursor the same way, from the
+digests in memory: the cell of the level beneath when nothing of the level
+on screen is in memory at the place. The "Draw the next coarser level
+beneath" checkbox in the **Variable** card turns
+the fill off (it is on by default); the colour range is taken from the
+coarsest level either way.
 
 A level that is loaded by view can be of any size, so automatic selection has
 no cap for it. Streamlines and the volume layer read the whole level: while
@@ -130,9 +190,18 @@ gives. The percentiles are part of the shareable URL (`percentile`,
 
 Such a variable is loaded like any other, by level and by view, but a cell's
 digest is a few kilobytes where a stored value is a few bytes: a view reads
-tens of megabytes. Decoded digests are kept in memory (up to 256 MB, least
-recently used first out), so moving a percentile slider recomputes the field
-without reading anything.
+megabytes, so its window takes a quarter-view margin where a stored variable
+takes half, and it is priced in bytes rather than cells. One window reads at
+most **1 GB**: about 1.7 KB per cell at order 13 and 2 KB at order 12 (as
+listed on the ATL03 store), or one 34 KB leaf chunk per block of a derived
+level. Over the budget, the window keeps the blocks nearest the point below
+the camera; when that leaves cells in view unloaded (a fine level picked by
+hand from far out) the level panel says so: _Max cells at this level reached:
+zoom in, or pick a coarser level._ The digests are a stream: each chunk is decoded into one value per cell and
+let go, so a window may read far more than the browser could hold decoded,
+and a percentile change reads the window again. A small working set of
+decoded chunks (32 MB) serves the cells under the cursor and a clicked cell's
+distribution.
 
 Clicking a cell pins it in the **Height distribution** panel: the photons per
 metre of height of the signal and, muted, of the noise, with the selected
@@ -165,16 +234,20 @@ and a level index kept from a longer list falls back to the finest level.
   the leaves are lossless (one photon per centroid, all but about one cell in
   100 000) the pooled digest is the exact sample. Only the variable shown is
   read: `count` reads `count`, a signal height reads `h_tdigest_signal`.
-- A derived level is always loaded by view, one leaf chunk per block, and at
-  most 2048 chunks per window (a level picked by hand from far out is cut
-  down around the point below the camera). It is never the backdrop, and
-  with streamlines or a volume on it is left out of automatic selection.
-- A leaf chunk is read once. Its decoded digests stay in memory, and so do
-  the pooled ones (128 MB), so changing the percentile, or going from one
-  derived order to another over the same ground, reads nothing.
-- A chunk costs the same bytes whatever the order derived from it, so a
-  derived level is picked at 32 pixels per cell for every variable, `count`
-  included (a stored level keeps 16 for `count`).
+- A derived level is always loaded by view, one leaf chunk per block, within
+  the 1 GB window budget (about 30 000 chunks; a level picked by hand from far
+  out is cut down around the point below the camera and the level panel says
+  so). It is never drawn beneath another level, and with streamlines or a
+  volume on it is left out of automatic selection.
+- Leaf chunks are a stream like the stored digests: a small working set
+  (32 MB) of decoded and pooled chunks serves the cursor and a clicked cell;
+  changing the percentile or the derived order reads the window again.
+- A chunk costs the same bytes whatever the order derived from it, so the
+  derived levels share one budget: once the leaf chunks under the view fit
+  it, the finest derived level whose cells are 2 pixels wide is shown, for
+  every variable, `count` included. On a 1500 × 900 screen that is order 15
+  from about 75 m per pixel, 16 from 50 and 17 from 25; order 14 is only
+  ever picked by hand.
 
 The distribution panel shows the pooled digest of a derived cell: the
 derived level names the leaf group it is computed from (`derived.dataset`),
@@ -190,8 +263,9 @@ cloud is drawn on black (the level is still read: a click pins its cells).
 It exists on the globe only; a flat projection stops at the finest level.
 
 - **Hand-off.** The tier comes on when a cell of the finest level would span
-  **64 pixels** on screen (`POINT_TIER_PIXELS_PER_CELL`, twice the digest
-  target), and stays on until the cells shrink by the usual 0.35 orders
+  **64 pixels** on screen (`POINT_TIER_PIXELS_PER_CELL`: the picker holds
+  the finest level from its 2 px floor, and at 64 px a level one order finer
+  would be wanted), and stays on until the cells shrink by 0.35 orders
   (about 50 px), so a view at the boundary does not flap. It needs a
   variable derived from a t-digest; under `count` the ladder ends at the
   finest level. A manual pick of a level turns it off, and "points" can be
@@ -297,7 +371,8 @@ derived level (it stays in the URL either way).
   cells (0.33 to 5).
 - It runs on the (x, y) grid of each HEALPix face over the cells loaded. A
   cell is not filled from across a face boundary, nor from cells outside the
-  loaded window.
+  loaded window. While a window loads, a face is drawn as read; it is filled
+  once the window is in. The level drawn beneath is never filled.
 - The colour range and the histogram stay those of the values observed. The
   hover readout marks a filled value as interpolated, and the distribution
   panel says so and shows the filled heights instead of a curve.

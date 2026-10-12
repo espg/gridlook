@@ -118,6 +118,9 @@ function formatCoordinate(value: number) {
     <span v-if="hoveredGridPoint.interpolated" class="grid-hover-label"
       >interpolated</span
     >
+    <span v-if="hoveredGridPoint.level" class="grid-hover-label"
+      >({{ hoveredGridPoint.level }})</span
+    >
     <span class="grid-hover-arrow" />
   </div>
   <div v-else />

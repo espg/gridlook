@@ -33,6 +33,7 @@ import {
   currentLevel,
   DEFAULT_MAX_LEVEL_CELLS,
   DEFAULT_MAX_VIEW_CELLS,
+  DEFAULT_VIEW_LOAD_CELLS,
   STREAMLINES_NEED_WHOLE_LEVEL,
 } from "@/lib/data/levels.ts";
 import { loadVectorComponents } from "@/lib/data/streamlineData.ts";
@@ -266,7 +267,7 @@ function loadsByView() {
     canLoadByView() &&
     (sources.selectedLevel ?? 0) !== coarsestLevel(sources.levels) &&
     levelLatitudes.length * levelLongitudes.length >
-      (wholeLevelLayers ? DEFAULT_MAX_LEVEL_CELLS : DEFAULT_MAX_VIEW_CELLS)
+      (wholeLevelLayers ? DEFAULT_MAX_LEVEL_CELLS : DEFAULT_VIEW_LOAD_CELLS)
   );
 }
 
@@ -1078,7 +1079,7 @@ function removeBackdrop() {
 /** Draw the coarsest level under a level that leaves part of the view empty. */
 function showBackdrop(frame: TBackdropFrame | undefined) {
   const wanted =
-    store.levelBackdrop &&
+    store.levelParentBeneath &&
     frame &&
     (gridWindow !== undefined || !isLongitudeGlobal(levelLongitudes))
       ? frame
