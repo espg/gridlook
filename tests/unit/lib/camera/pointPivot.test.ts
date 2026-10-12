@@ -278,7 +278,7 @@ describe("createPointPivot", () => {
     expect(1 - Math.abs(camera.quaternion.dot(quaternion))).toBeLessThan(1e-9);
     expect(pivot.pivotDistance() * R).toBeCloseTo(2000, 3);
     expect(controls.enablePan).toBe(true);
-    expect(controls.enableZoom).toBe(false);
+    expect(controls.enableZoom).toBe(true);
     expect(controls.screenSpacePanning).toBe(false);
     expect(controls.maxPolarAngle).toBeCloseTo(
       THREE.MathUtils.degToRad(POINT_PIVOT_MAX_TILT_DEGREES),
@@ -401,6 +401,77 @@ describe("createPointPivot", () => {
       POINT_PIVOT_MIN_DISTANCE_METERS,
       3
     );
+  });
+
+  it("dollies toward the cursor on a middle-button drag, the wheel left to zoom", () => {
+    const { camera, controls, pivot } = pivotControls(2000);
+    const element = controls.domElement;
+    pivot.enter(surfacePointNearRay(camera.position, forwardOf(camera)));
+    controls.enableDamping = false;
+    const pointer = (type: string, init: object, target: EventTarget) =>
+      target.dispatchEvent(
+        Object.assign(new Event(type), { pointerType: "mouse", ...init })
+      );
+    // a middle-button drag up from (1200, 300): in, the ground there kept
+    const at = { clientX: 1200, clientY: 300 };
+    const ndc = new THREE.Vector2(1200 / 750 - 1, 1 - 300 / 450);
+    const ground = groundUnder(camera, ndc.x, ndc.y)!;
+    const distance = pivot.pivotDistance();
+    pointer("pointerdown", { button: 1, pointerId: 1, ...at }, element);
+    pointer(
+      "pointermove",
+      { pointerId: 1, clientX: 1200, clientY: 200 },
+      element.ownerDocument
+    );
+    pointer(
+      "pointerup",
+      { pointerId: 1, clientX: 1200, clientY: 200 },
+      element.ownerDocument
+    );
+    controls.update();
+    expect(pivot.pivotDistance() / distance).toBeCloseTo(0.95, 6);
+    expect(
+      groundUnder(camera, ndc.x, ndc.y)!.distanceTo(ground) * R
+    ).toBeLessThan(1e-2);
+    // a wheel turn is not OrbitControls' to take: the scene zooms
+    const wheeled = pivot.pivotDistance();
+    element.dispatchEvent(
+      Object.assign(new Event("wheel"), {
+        deltaY: -100,
+        deltaMode: 0,
+        clientX: 750,
+        clientY: 450,
+      })
+    );
+    controls.update();
+    expect(pivot.pivotDistance()).toBeCloseTo(wheeled, 12);
+  });
+
+  it("dollies toward the fingers on a pinch", () => {
+    const { camera, controls, pivot } = pivotControls(2000);
+    const element = controls.domElement;
+    pivot.enter(surfacePointNearRay(camera.position, forwardOf(camera)));
+    controls.enableDamping = false;
+    // two fingers moving apart from 200 to 400 px: in, by half
+    const touch = (type: string, id: number, x: number, target: EventTarget) =>
+      target.dispatchEvent(
+        Object.assign(new Event(type), {
+          pointerType: "touch",
+          pointerId: id,
+          pageX: x,
+          pageY: 450,
+          clientX: x,
+          clientY: 450,
+        })
+      );
+    const pinched = pivot.pivotDistance();
+    touch("pointerdown", 2, 650, element);
+    touch("pointerdown", 3, 850, element);
+    touch("pointermove", 3, 1050, element.ownerDocument);
+    controls.update();
+    expect(pivot.pivotDistance() / pinched).toBeCloseTo(0.5, 6);
+    touch("pointerup", 3, 1050, element.ownerDocument);
+    touch("pointerup", 2, 650, element.ownerDocument);
   });
 
   it("animates to the oblique view and back to the top, keeping azimuth, pivot and distance", () => {
@@ -672,7 +743,7 @@ describe("createPointPivot", () => {
     controls.target.set(0, 0, 0);
     controls.update();
     expect(pivot.active).toBe(false);
-    expect(controls.enableZoom).toBe(true);
+    expect(controls.enablePan).toBe(false);
     expect(camera.up.toArray()).toEqual([0, 0, 1]);
   });
 });

@@ -28,10 +28,12 @@ import { EARTH_RADIUS_METERS } from "./cameraSettings.ts";
  *   the left button (one finger) orbit instead; shift + left and the right
  *   button orbit either way (OrbitControls reads shift on a pan button as
  *   an orbit, so a shift press in orbit mode is shown a pan button);
- * - the wheel is handled here, not by OrbitControls: the camera dollies
- *   toward the ground point under the cursor, which therefore stays under
- *   the cursor, and the pivot becomes the ground point under the view
- *   centre again (`dollyTowardGround`);
+ * - the wheel (by `zoom`, from the scene's wheel listener), a middle-button
+ *   drag and a pinch are handled here, not by OrbitControls: the camera
+ *   dollies toward the ground point under the cursor (where the drag began,
+ *   between the fingers), which therefore stays there, and the pivot
+ *   becomes the ground point under the view centre again
+ *   (`dollyTowardGround`); +/- dolly plainly toward the pivot;
  * - a dolly is a plain scaling of the distance to the pivot, so the surface
  *   zoom of the globe orbit (`useSurfaceZoom`) has to stand aside.
  *
@@ -427,6 +429,66 @@ export function createPointPivot(controls: OrbitControls) {
     );
   }
 
+  /** `zoom` toward the ground under a client position on the canvas. */
+  function zoomAt(scale: number, clientX: number, clientY: number) {
+    const rect = orbit.domElement.getBoundingClientRect();
+    zoom(
+      scale,
+      new THREE.Vector2(
+        ((clientX - rect.left) / rect.width) * 2 - 1,
+        -((clientY - rect.top) / rect.height) * 2 + 1
+      )
+    );
+  }
+
+  // the dolly gestures, while the pivot is on: toward the cursor (the wheel
+  // comes through `zoom` instead), with OrbitControls' own scales
+  let dollyFrom: { clientX: number; clientY: number } | undefined;
+  let dollyY = 0;
+  const mouseDownDolly = orbit._handleMouseDownDolly.bind(orbit);
+  orbit._handleMouseDownDolly = (event) => {
+    dollyFrom = { clientX: event.clientX, clientY: event.clientY };
+    dollyY = event.clientY;
+    mouseDownDolly(event);
+  };
+  const mouseMoveDolly = orbit._handleMouseMoveDolly.bind(orbit);
+  orbit._handleMouseMoveDolly = (event) => {
+    if (!active || !dollyFrom) {
+      mouseMoveDolly(event);
+      return;
+    }
+    const deltaY = event.clientY - dollyY;
+    dollyY = event.clientY;
+    if (deltaY !== 0) {
+      zoomAt(
+        wheelDollyScale(
+          { deltaY, deltaMode: 0, ctrlKey: false },
+          orbit.zoomSpeed
+        ),
+        dollyFrom.clientX,
+        dollyFrom.clientY
+      );
+    }
+  };
+  const mouseWheel = orbit._handleMouseWheel.bind(orbit);
+  orbit._handleMouseWheel = (event) => {
+    if (!active) {
+      mouseWheel(event);
+    }
+  };
+  const touchMoveDolly = orbit._handleTouchMoveDolly.bind(orbit);
+  orbit._handleTouchMoveDolly = (event) => {
+    touchMoveDolly(event);
+    if (!active) {
+      return;
+    }
+    // the pinch's scale, as OrbitControls read it, toward the fingers' middle
+    const scale = orbit._scale;
+    orbit._scale = 1;
+    const other = orbit._getSecondPointerPosition(event);
+    zoomAt(scale, (event.pageX + other.x) / 2, (event.pageY + other.y) / 2);
+  };
+
   orbit.update = (deltaTime) => {
     if (!active) {
       return update(deltaTime);
@@ -501,7 +563,8 @@ export function createPointPivot(controls: OrbitControls) {
     orbit.maxDistance = Infinity;
     orbit.enablePan = true;
     orbit.screenSpacePanning = false;
-    orbit.enableZoom = false;
+    // the dolly gestures are wrapped above; the wheel comes through `zoom`
+    orbit.enableZoom = true;
     orbit.rotateSpeed = POINT_PIVOT_ROTATE_SPEED;
     orbit.mouseButtons = {
       LEFT: THREE.MOUSE.PAN,
