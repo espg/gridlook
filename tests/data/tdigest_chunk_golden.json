@@ -1,0 +1,84 @@
+{
+  "source": "3/1/3/3/3/3/2/1/4/all.zarr/12/h_tdigest_signal/c/0 of atl03_tdigest_o9_v3.zarr, cells [0, 232, 'prefix1', 'prefix2', 'prefix7', 122] re-framed as one vlen-bytes chunk",
+  "generator": "zagg quantile_from_tdigest / cdf_from_tdigest",
+  "qs": [0.0, 0.02, 0.25, 0.5, 0.75, 0.98, 1.0],
+  "chunk": "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",
+  "cells": [
+    {
+      "cell": 0,
+      "centroids": 0,
+      "weight": 0.0,
+      "quantiles": [null, null, null, null, null, null, null],
+      "cdfX": [],
+      "cdf": []
+    },
+    {
+      "cell": 232,
+      "centroids": 516,
+      "weight": 64996.0,
+      "quantiles": [
+        1988.162841796875, 2392.975613014915, 2443.7801818847656,
+        2486.7021989918717, 2525.6368351094206, 3055.5459049931274,
+        3373.889404296875
+      ],
+      "cdfX": [
+        1987.162841796875, 1988.162841796875, 2681.026123046875,
+        3373.889404296875, 3374.889404296875
+      ],
+      "cdf": [0.0, 0.5, 61719.99981449854, 64995.5, 64996.0]
+    },
+    {
+      "cell": "prefix1",
+      "centroids": 1,
+      "weight": 1.0,
+      "quantiles": [
+        1988.162841796875, 1988.162841796875, 1988.162841796875,
+        1988.162841796875, 1988.162841796875, 1988.162841796875,
+        1988.162841796875
+      ],
+      "cdfX": [
+        1987.162841796875, 1988.162841796875, 1988.162841796875,
+        1988.162841796875, 1989.162841796875
+      ],
+      "cdf": [0.0, 1.0, 1.0, 1.0, 1.0]
+    },
+    {
+      "cell": "prefix2",
+      "centroids": 2,
+      "weight": 3.0,
+      "quantiles": [
+        1988.162841796875, 1988.1746069335939, 1988.3099060058594,
+        1988.4569702148438, 1988.6040344238281, 1988.7393334960936,
+        1988.7510986328125
+      ],
+      "cdfX": [
+        1987.162841796875, 1988.162841796875, 1988.45703125, 1988.7510986328125,
+        1989.7510986328125
+      ],
+      "cdf": [0.0, 0.5, 1.250155633948952, 2.0, 3.0]
+    },
+    {
+      "cell": "prefix7",
+      "centroids": 7,
+      "weight": 28.0,
+      "quantiles": [
+        1988.162841796875, 1987.9142578125, 1993.9171295166016,
+        2001.8973846435547, 2006.7248153686523, 2009.4475653076172,
+        2009.684326171875
+      ],
+      "cdfX": [
+        1987.162841796875, 1988.162841796875, 1998.923583984375,
+        2009.684326171875, 2010.684326171875
+      ],
+      "cdf": [0.0, 0.5, 11.213565662115897, 24.5, 28.0]
+    },
+    {
+      "cell": 122,
+      "centroids": 0,
+      "weight": 0.0,
+      "quantiles": [null, null, null, null, null, null, null],
+      "cdfX": [],
+      "cdf": []
+    }
+  ]
+}

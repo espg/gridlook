@@ -59,6 +59,9 @@ const GLOBE_URL_SYNC_MAP: TUrlSyncEntry[] = [
     transform: String,
   },
   { key: "projectionMode", param: URL_PARAMETERS.PROJECTION },
+  { key: "digestPercentile", param: URL_PARAMETERS.PERCENTILE },
+  { key: "digestPercentileLow", param: URL_PARAMETERS.PERCENTILE_LOW },
+  { key: "digestPercentileHigh", param: URL_PARAMETERS.PERCENTILE_HIGH },
   {
     key: "streamlineMagnitudeRequested",
     param: URL_PARAMETERS.STREAMLINE_MAGNITUDE,

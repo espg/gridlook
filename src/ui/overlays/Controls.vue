@@ -9,14 +9,17 @@ import ActionControls from "./controls/ActionControls.vue";
 import BoundsControls from "./controls/BoundsControls.vue";
 import ColormapControls from "./controls/ColormapControls.vue";
 import DataInput from "./controls/DataInput.vue";
+import DigestControls from "./controls/DigestControls.vue";
 import DimensionControl from "./controls/DimensionControl.vue";
 import LayerPanel from "./controls/LayerPanel.vue";
+import LevelSelector from "./controls/LevelSelector.vue";
 import PopupDialog from "./controls/PopupDialog.vue";
 import ProjectionControls from "./controls/ProjectionControls.vue";
 import VariableSelector from "./controls/VariableSelector.vue";
 
 // Import control components
 import type { T_GRID_TYPES } from "@/lib/data/gridTypeDetector.ts";
+import { digestVariableOf } from "@/lib/digest/digestVariables.ts";
 import {
   clamp,
   PROJECTION_TYPES,
@@ -91,7 +94,15 @@ const {
   paramLon,
   paramBoundLow,
   paramBoundHigh,
+  paramPercentile,
+  paramPercentileLow,
+  paramPercentileHigh,
 } = storeToRefs(urlParameterStore);
+
+// the digest the selected variable is derived from, if it is
+const selectedDigest = computed(() =>
+  digestVariableOf(props.modelInfo?.vars[varnameSelector.value]?.attrs)
+);
 
 const menuCollapsed: Ref<boolean> = ref(false);
 const mobileMenuCollapsed: Ref<boolean> = ref(true);
@@ -318,6 +329,15 @@ function initFromParams() {
       lon: clamp(lon, -180, 180),
     };
   }
+  if (paramPercentile.value) {
+    store.setDigestPercentile(Number(paramPercentile.value));
+  }
+  if (paramPercentileLow.value || paramPercentileHigh.value) {
+    store.setDigestPercentileBounds(
+      Number(paramPercentileLow.value ?? store.digestPercentileLow),
+      Number(paramPercentileHigh.value ?? store.digestPercentileHigh)
+    );
+  }
   if (paramBoundHigh.value && paramBoundLow.value) {
     const low = parseFloat(paramBoundLow.value);
     const high = parseFloat(paramBoundHigh.value);
@@ -397,6 +417,11 @@ defineExpose({
             v-if="modelInfo"
             v-model="varnameSelector"
             :model-info="modelInfo"
+          />
+          <DigestControls v-if="selectedDigest" :digest="selectedDigest" />
+          <LevelSelector
+            v-if="modelInfo?.levels && modelInfo.levels.length > 1"
+            :levels="modelInfo.levels"
           />
           <DimensionControl />
         </CollapsibleCard>

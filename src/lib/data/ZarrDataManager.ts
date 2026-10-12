@@ -8,6 +8,7 @@ import {
   isIcechunkStorePath,
   parseStorePath,
 } from "./icechunkStore.ts";
+import { currentLevel } from "./levels.ts";
 import { getLocalZarrStore, isLocalZarrSource } from "./localZarr.ts";
 import type { NetCDFArray, NetCDFGroup, TNetCDFBackend } from "./netCDF.ts";
 
@@ -327,7 +328,7 @@ export class ZarrDataManager {
     datasources: TSources,
     varname: string
   ): TDatasetSource {
-    return datasources.levels[0].datasources[varname];
+    return currentLevel(datasources).datasources[varname];
   }
 
   static async getDimensionNames(datasources: TSources, varname: string) {

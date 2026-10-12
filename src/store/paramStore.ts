@@ -44,6 +44,9 @@ export const useUrlParameterStore = defineStore("urlParams", {
       paramGridType: undefined as string | undefined,
       paramCatalog: undefined as string | undefined,
       paramLive: undefined as string | undefined,
+      paramPercentile: undefined as string | undefined,
+      paramPercentileLow: undefined as string | undefined,
+      paramPercentileHigh: undefined as string | undefined,
     };
   },
   actions: {
@@ -103,4 +106,7 @@ export const STORE_PARAM_MAPPING = {
   gridtype: "paramGridType",
   catalog: "paramCatalog",
   live: "paramLive",
+  percentile: "paramPercentile",
+  percentilelow: "paramPercentileLow",
+  percentilehigh: "paramPercentileHigh",
 } as const;

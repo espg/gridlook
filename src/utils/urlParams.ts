@@ -29,6 +29,9 @@ const URL_PARAMETERS = {
   DIM_MIN_BOUNDS: "dimMinBounds",
   DIM_MAX_BOUNDS: "dimMaxBounds",
   LIVE: "live",
+  PERCENTILE: "percentile",
+  PERCENTILE_LOW: "percentilelow",
+  PERCENTILE_HIGH: "percentilehigh",
 } as const;
 
 type TURLParameterValues = (typeof URL_PARAMETERS)[keyof typeof URL_PARAMETERS];
