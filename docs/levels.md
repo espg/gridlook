@@ -206,11 +206,12 @@ It exists on the globe only; a flat projection stops at the finest level.
   mean, at the centre of its ancestor cell. Noise is not read.
 - **Height.** A point sits at `r = 1 + (h − h_ref) · exaggeration / R` globe
   radii, with `R` the store's semi-major axis. The reference height `h_ref`
-  is the lowest height drawn, refreshed as chunks land: the datum floats on
-  the view's lowest height, so the cloud always rises from the sphere at
-  the pivot, over a 3 000 m plateau as over a beach (and the profile view
-  below frames it). The exaggeration is 1 for now (both are shader
-  uniforms). Positions are kept relative to each chunk's centre so that
+  is the lowest height drawn within the view's height of the pivot
+  (`neighbourhoodRange` in `src/lib/points/pointRange.ts`), refreshed as
+  chunks land: the datum floats on the view's lowest height, so the cloud
+  always rises from the sphere at the pivot, over a 3 000 m plateau as
+  over a beach, and a profile, whose window reaches the horizon, keeps it
+  there. The exaggeration is 1 for now (both are shader uniforms). Positions are kept relative to each chunk's centre so that
   float32 resolves millimetres.
 - **Colour.** The colour is the height on the current colormap, over the
   drawn points' own range: their 2nd to 98th percentile
@@ -245,10 +246,10 @@ It exists on the globe only; a flat projection stops at the finest level.
   button (two fingers) orbit whichever is on, and the arrow keys pan. The
   legend says which is on. The globe's buttons are untouched.
 - **Pivot height.** The pivot is lifted off the sphere to the middle of
-  the drawn heights' colour band (the 2nd to 98th percentile, above the
-  datum), so an orbit turns about the cloud and a profile centres it; the
-  pivot stays on the sphere's vertical, so a nadir view does not notice.
-  The lift follows the band as chunks land.
+  the relief around it (the datum to the highest point within the view's
+  height of it), so an orbit turns about the cloud and a profile centres
+  it; the pivot stays on the sphere's vertical, so a nadir view does not
+  notice. The lift follows the relief as chunks land.
 - **Axes.** A gizmo at the datum under the pivot: east, north and up bars
   ticked at half and full length in metres (km from 1 km), the up bar
   scaled like the points. The bars are the largest nice length (1, 2, 5 ×
@@ -261,8 +262,8 @@ It exists on the globe only; a flat projection stops at the finest level.
   tilt (0.6 s, eased) to nadir and to 90°, a side elevation of the cloud
   with the up axis in view, keeping the azimuth and the pivot; from nadir
   a profile backs away behind the bottom of the screen, so it looks the
-  way the view faced, and backs off (never in) until the colour band
-  spans 80 % of the view's height. Orbit drags work from either view. A
+  way the view faced, and backs off (never in) until the relief around
+  the pivot spans 80 % of the view's height. Orbit drags work from either view. A
   profile sees to the horizon, so its window grows to the fetch cap.
 - **Panel.** A click pins the order-17 cell's digest, as on level 17.
 

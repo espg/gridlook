@@ -8,6 +8,7 @@ import {
   type ShallowRef,
 } from "vue";
 
+import { CAMERA_VERTICAL_FOV_DEGREES } from "@/lib/camera/cameraSettings.ts";
 import {
   POINT_PIVOT_TILTS,
   type TPivotLeftDrag,
@@ -17,6 +18,7 @@ import { storeReaders, type TLeafReaders } from "@/lib/digest/digestField.ts";
 import { createByteLru } from "@/lib/digest/digestReader.ts";
 import { healpixViewBlocks } from "@/lib/grids/healpixWindow.ts";
 import { MORTON_STORE_ELLIPSOID } from "@/lib/morton/convention.ts";
+import { viewHeightAt } from "@/lib/points/pointAxes.ts";
 import {
   decimatedCount,
   decimationStride,
@@ -30,7 +32,7 @@ import {
   unitVector,
   type TPointChunk,
 } from "@/lib/points/pointChunk.ts";
-import { lowestValue, pointRange } from "@/lib/points/pointRange.ts";
+import { neighbourhoodRange, pointRange } from "@/lib/points/pointRange.ts";
 import {
   locationsArrayOf,
   pointArrayPath,
@@ -116,8 +118,7 @@ function nearestFirst(
     .map(({ chunk }) => chunk);
 }
 
-function pointGeometry(chunk: TPointChunk, stride: number) {
-  const drawn = decimatePointChunk(chunk, stride);
+function pointGeometry(drawn: TPointChunk) {
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute(
     "position",
@@ -149,10 +150,11 @@ export function usePointLayer(options: TPointLayerOptions) {
   const gridAt = createGrids();
   const cache = createByteLru<TPointChunk>(POINT_CACHE_BYTES, pointChunkBytes);
   const axes = usePointAxes({ getScene: options.getScene });
-  // the window on screen: its chunks, decoded, and their objects
+  // the window on screen: its chunks, decoded, what is drawn of each
+  // (every stride-th point) and their objects
   const window = new Map<
     number,
-    { chunk: TPointChunk; points: THREE.Points }
+    { chunk: TPointChunk; drawn: TPointChunk; points: THREE.Points }
   >();
   let loaded: { chunks: number[]; chunkOrder: number } | undefined;
   let stride = 1;
@@ -162,8 +164,8 @@ export function usePointLayer(options: TPointLayerOptions) {
   let decodeMs = 0;
   let material: THREE.ShaderMaterial | undefined;
   let revision = 0;
-  // the drawn heights' band, metres above the datum: the pivot sits at its
-  // middle, a profile fits it
+  // the relief around the pivot, metres above the datum: the pivot sits at
+  // its middle, a profile fits it
   let band: { low: number; high: number } | undefined;
 
   const source = computed(() => {
@@ -250,27 +252,43 @@ export function usePointLayer(options: TPointLayerOptions) {
   }
 
   /**
-   * The drawn heights' range and histogram, as the store's data range, and
-   * the lowest of them as the datum the points are lifted from.
+   * The datum and the relief around the pivot: the lowest and highest
+   * drawn height within the view's height of it, so a profile, which sees
+   * to the horizon, keeps the datum under the cloud. The points are lifted
+   * from the datum; the pivot sits at the middle of the relief.
    */
-  function publishRange() {
-    const heights = drawn().map(
-      ({ geometry }) =>
-        geometry.getAttribute("data_value").array as Float32Array
-    );
-    const datum = lowestValue(heights);
-    if (material && datum !== undefined) {
-      material.uniforms.heightReference.value = datum;
+  function publishDatum() {
+    const pivot = options.pointPivot.direction();
+    const distance = options.pointPivot.distance();
+    if (!material || !pivot || distance === undefined) {
+      return;
     }
-    const range = pointRange(heights);
+    const around = neighbourhoodRange(
+      [...window.values()].map(({ drawn }) => drawn),
+      pivot.toArray(),
+      viewHeightAt(distance, CAMERA_VERTICAL_FOV_DEGREES)
+    );
+    if (!around) {
+      return;
+    }
+    material.uniforms.heightReference.value = around.min;
+    band = { low: 0, high: around.max - around.min };
+    options.pointPivot.setHeight(lift(band.high / 2));
+  }
+
+  /** The drawn heights' range and histogram, as the store's data range. */
+  function publishRange() {
+    publishDatum();
+    const range = pointRange(
+      drawn().map(
+        ({ geometry }) =>
+          geometry.getAttribute("data_value").array as Float32Array
+      )
+    );
     if (!range) {
       return;
     }
     store.setPointTierBounds({ low: range.low, high: range.high });
-    if (datum !== undefined) {
-      band = { low: range.low - datum, high: range.high - datum };
-      options.pointPivot.setHeight(lift((band.low + band.high) / 2));
-    }
     options.updateHistogram(
       range.sample,
       range.sample[0],
@@ -302,12 +320,14 @@ export function usePointLayer(options: TPointLayerOptions) {
     if (!scene) {
       return;
     }
-    const geometry = pointGeometry(chunk, stride);
+    const drawn = decimatePointChunk(chunk, stride);
+    const geometry = pointGeometry(drawn);
     const entry = window.get(index);
     if (entry) {
       entry.points.geometry.dispose();
       entry.points.geometry = geometry;
       entry.chunk = chunk;
+      entry.drawn = drawn;
       return;
     }
     const points = new THREE.Points(geometry, pointMaterial());
@@ -315,7 +335,7 @@ export function usePointLayer(options: TPointLayerOptions) {
     points.renderOrder = POINT_RENDER_ORDER;
     points.position.set(...chunk.origin);
     scene.add(points);
-    window.set(index, { chunk, points });
+    window.set(index, { chunk, drawn, points });
     options.updateColormap([points]);
   }
 

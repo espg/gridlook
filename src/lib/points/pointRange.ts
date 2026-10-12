@@ -62,19 +62,43 @@ export function pointRange(
 }
 
 /**
- * The lowest finite value over every array, the cloud's datum: the drawn
- * heights are lifted from it, so the lowest point sits on the sphere
- * whatever the terrain's elevation. Undefined without a finite value.
+ * The lowest and highest finite height within `radius` (scene units, a
+ * chord) of `centre` on the unit sphere, over chunks of points kept
+ * relative to their origins: the datum and the relief around the pivot.
+ * The radius is the view's own size, so the datum floats on the view's
+ * lowest height whichever way the camera looks: a profile sees to the
+ * horizon, and the far ground must not pull the datum from under the
+ * cloud. Undefined without a finite height within reach.
  */
-export function lowestValue(values: ArrayLike<number>[]): number | undefined {
+export function neighbourhoodRange(
+  chunks: {
+    origin: [number, number, number];
+    offsets: Float32Array;
+    heights: ArrayLike<number>;
+  }[],
+  centre: [number, number, number],
+  radius: number
+): { min: number; max: number } | undefined {
   let min = Infinity;
-  for (const chunk of values) {
-    for (let i = 0; i < chunk.length; i++) {
-      const value = chunk[i];
-      if (value < min && Number.isFinite(value)) {
-        min = value;
+  let max = -Infinity;
+  const reach = radius * radius;
+  for (const { origin, offsets, heights } of chunks) {
+    const dx = origin[0] - centre[0];
+    const dy = origin[1] - centre[1];
+    const dz = origin[2] - centre[2];
+    for (let i = 0; i < heights.length; i++) {
+      const x = offsets[3 * i] + dx;
+      const y = offsets[3 * i + 1] + dy;
+      const z = offsets[3 * i + 2] + dz;
+      if (x * x + y * y + z * z > reach) {
+        continue;
+      }
+      const value = heights[i];
+      if (Number.isFinite(value)) {
+        min = value < min ? value : min;
+        max = value > max ? value : max;
       }
     }
   }
-  return min === Infinity ? undefined : min;
+  return min === Infinity ? undefined : { min, max };
 }

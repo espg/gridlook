@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  lowestValue,
+  neighbourhoodRange,
   POINT_RANGE_PERCENTILES,
   POINT_RANGE_SAMPLE,
   pointRange,
@@ -50,15 +50,35 @@ describe("pointRange", () => {
   });
 });
 
-describe("lowestValue", () => {
-  it("is the lowest finite value over every chunk, the datum", () => {
-    expect(
-      lowestValue([
-        new Float32Array([NaN, 320.5, 400]),
-        new Float32Array([318.75, -Infinity, 500]),
-      ])
-    ).toBe(318.75);
-    expect(lowestValue([])).toBeUndefined();
-    expect(lowestValue([new Float32Array([NaN])])).toBeUndefined();
+describe("neighbourhoodRange", () => {
+  it("is the lowest and highest finite height within reach of the centre", () => {
+    // three points a metre apart along x from the origin, two chunks
+    const origin: [number, number, number] = [1, 0, 0];
+    const metre = 1 / 6378137;
+    const near = {
+      origin,
+      offsets: new Float32Array([0, 0, 0, metre, 0, 0, 2 * metre, 0, 0]),
+      heights: new Float32Array([320.5, NaN, 318.75]),
+    };
+    const far = {
+      origin: [1, 10 * metre, 0] as [number, number, number],
+      offsets: new Float32Array([0, 0, 0]),
+      heights: new Float32Array([100]),
+    };
+    expect(neighbourhoodRange([near, far], origin, 2.5 * metre)).toEqual({
+      min: 318.75,
+      max: 320.5,
+    });
+    // the far point pulls the datum down only once it is within reach
+    expect(neighbourhoodRange([near, far], origin, 11 * metre)).toEqual({
+      min: 100,
+      max: 320.5,
+    });
+    expect(neighbourhoodRange([near, far], origin, 0.5 * metre)).toEqual({
+      min: 320.5,
+      max: 320.5,
+    });
+    expect(neighbourhoodRange([far], origin, metre)).toBeUndefined();
+    expect(neighbourhoodRange([], origin, metre)).toBeUndefined();
   });
 });
