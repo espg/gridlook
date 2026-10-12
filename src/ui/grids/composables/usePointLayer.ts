@@ -199,6 +199,8 @@ export function usePointLayer(options: TPointLayerOptions) {
 
   const entryKey = (source: TPointStratum, index: number) =>
     `${source.array}/${index}`;
+  const renderOrder = (source: TPointStratum) =>
+    source.muted ? MUTED_RENDER_ORDER : POINT_RENDER_ORDER;
 
   function updateOpacity(material: THREE.ShaderMaterial, muted: boolean) {
     material.uniforms.pointOpacity.value =
@@ -351,15 +353,17 @@ export function usePointLayer(options: TPointLayerOptions) {
     const key = entryKey(source, index);
     const entry = window.get(key);
     if (entry) {
+      // the same array may go from muted to full strength (noise, after both)
       entry.points.geometry.dispose();
       entry.points.geometry = geometry;
-      entry.chunk = chunk;
-      entry.drawn = drawn;
+      entry.points.material = pointMaterial(source.muted);
+      entry.points.renderOrder = renderOrder(source);
+      Object.assign(entry, { source, chunk, drawn });
       return;
     }
     const points = new THREE.Points(geometry, pointMaterial(source.muted));
     points.frustumCulled = false;
-    points.renderOrder = source.muted ? MUTED_RENDER_ORDER : POINT_RENDER_ORDER;
+    points.renderOrder = renderOrder(source);
     points.position.set(...chunk.origin);
     scene.add(points);
     window.set(key, { source, index, chunk, drawn, points });
