@@ -200,7 +200,6 @@ export function usePointLayer(options: TPointLayerOptions) {
         MORTON_STORE_ELLIPSOID.semi_major_axis
       );
       material.uniforms.pointOpacity.value = store.pointTierOpacity;
-      material.uniforms.heightExaggeration.value = store.pointTierExaggeration;
     }
     return material;
   }
@@ -567,18 +566,6 @@ export function usePointLayer(options: TPointLayerOptions) {
     () => {
       if (active.value) {
         reload();
-      }
-    }
-  );
-  // the exaggeration slider: the lift, the pivot's height and the axes follow
-  watch(
-    () => store.pointTierExaggeration,
-    (exaggeration) => {
-      if (material) {
-        material.uniforms.heightExaggeration.value = exaggeration;
-        publishDatum();
-        updatePointSize();
-        options.redraw();
       }
     }
   );

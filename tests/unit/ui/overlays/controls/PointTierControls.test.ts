@@ -74,20 +74,6 @@ it("carries the opacity slider, clamped to its range", async () => {
   expect(store.pointTierOpacity).toBe(1);
 });
 
-it("carries the exaggeration slider, 1 to 20", async () => {
-  const store = useGlobeControlStore();
-  expect(store.pointTierExaggeration).toBe(1);
-  expect(await render()).toMatch(
-    /<input id="point_exaggeration"[^>]*type="range"[^>]*min="1"[^>]*max="20"[^>]*step="1"[^>]*value="1"/
-  );
-  store.setPointTierExaggeration(5);
-  expect(await render()).toContain('value="5"');
-  store.setPointTierExaggeration(0);
-  expect(store.pointTierExaggeration).toBe(1);
-  store.setPointTierExaggeration(100);
-  expect(store.pointTierExaggeration).toBe(20);
-});
-
 it("asks the camera for a tilt once per press", () => {
   const store = useGlobeControlStore();
   expect(store.pointTierTilt).toBeUndefined();

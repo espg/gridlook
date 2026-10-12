@@ -23,10 +23,7 @@ import {
   LAND_SEA_MASK_MODES,
   type TLandSeaMaskMode,
 } from "@/lib/layers/landSeaMask.ts";
-import {
-  POINT_EXAGGERATION_RANGE,
-  POINT_OPACITY_RANGE,
-} from "@/lib/points/pointBudget.ts";
+import { POINT_OPACITY_RANGE } from "@/lib/points/pointBudget.ts";
 import { POINT_COLOURS, type TPointColour } from "@/lib/points/pointTimes.ts";
 import type { TDistanceScale } from "@/lib/projection/distanceScale.ts";
 import {
@@ -296,8 +293,6 @@ export const useGlobeControlStore = defineStore("globeControl", {
       pointTierTimed: false,
       // the points' opacity, 0.05 to 1
       pointTierOpacity: 1,
-      // the heights' vertical exaggeration about the datum, 1 to 20
-      pointTierExaggeration: 1,
       // the tilt the tier's camera is asked to animate to, degrees from
       // nadir (pointPivot.ts); the serial makes every request its own
       pointTierTilt: undefined as
@@ -426,14 +421,6 @@ export const useGlobeControlStore = defineStore("globeControl", {
     },
     setPointTierTimed(timed: boolean) {
       this.pointTierTimed = timed;
-    },
-    setPointTierExaggeration(exaggeration: number) {
-      this.pointTierExaggeration = Number.isFinite(exaggeration)
-        ? Math.min(
-            Math.max(exaggeration, POINT_EXAGGERATION_RANGE.min),
-            POINT_EXAGGERATION_RANGE.max
-          )
-        : 1;
     },
     setPointTierOpacity(opacity: number) {
       this.pointTierOpacity = Number.isFinite(opacity)
