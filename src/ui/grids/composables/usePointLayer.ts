@@ -236,6 +236,10 @@ export function usePointLayer(options: TPointLayerOptions) {
     }
     loaded = undefined;
     stride = 1;
+    if (material) {
+      // the next site's datum is its own
+      material.uniforms.heightReference.value = 0;
+    }
     store.setPointTierStats(undefined);
     if (store.pointTierBounds) {
       store.setPointTierBounds(undefined);
@@ -247,8 +251,10 @@ export function usePointLayer(options: TPointLayerOptions) {
    * The datum and the relief around the pivot: the 2nd and 98th percentile
    * of the drawn heights within the view's height of it, so a tilted view,
    * which sees farther, keeps the datum under the cloud, and a stray return
-   * moves neither. The points are lifted from
-   * the datum; the pivot sits at the middle of the relief.
+   * moves neither; with nothing drawn that near (a pivot between tracks),
+   * the whole window's. The points are lifted from the datum; the pivot
+   * sits at the middle of the relief. Refreshed as chunks land and as the
+   * pivot moves.
    */
   function publishDatum() {
     const pivot = options.pointPivot.direction();
@@ -256,11 +262,13 @@ export function usePointLayer(options: TPointLayerOptions) {
     if (!material || !pivot || distance === undefined) {
       return;
     }
-    const around = neighbourhoodRange(
-      [...window.values()].map(({ drawn }) => drawn),
-      pivot.toArray(),
-      viewHeightAt(distance, CAMERA_VERTICAL_FOV_DEGREES)
-    );
+    const chunks = [...window.values()].map(({ drawn }) => drawn);
+    const around =
+      neighbourhoodRange(
+        chunks,
+        pivot.toArray(),
+        viewHeightAt(distance, CAMERA_VERTICAL_FOV_DEGREES)
+      ) ?? neighbourhoodRange(chunks, pivot.toArray(), Infinity);
     if (!around) {
       return;
     }
@@ -556,6 +564,13 @@ export function usePointLayer(options: TPointLayerOptions) {
   watch([() => store.viewFootprint, options.pointPivot.ground], () => {
     if (active.value && windowStale()) {
       reload();
+    }
+  });
+  // a pan or a zoom to the cursor moves the pivot: the datum follows it
+  watch(options.pointPivot.ground, () => {
+    if (active.value && window.size) {
+      publishDatum();
+      options.redraw();
     }
   });
   // the colour choice: the window is drawn again, its times read if asked

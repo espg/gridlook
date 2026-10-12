@@ -303,3 +303,44 @@ it("takes everything down on leaving, and gives the level its histogram back", a
   expect([store.userBoundsLow, store.userBoundsHigh]).toEqual([310, 360]);
   scope.stop();
 });
+
+it("moves the datum with the pivot, with or without photons in reach", async () => {
+  // a valley track at 80 m and, 6 km east, a ridge at 1 000 m
+  const ridge: [number, number, number] = [
+    Math.cos(6000 / R),
+    Math.sin(6000 / R),
+    0,
+  ];
+  fake.window = [0, 1];
+  fake.chunks.set(
+    0,
+    chunkOf(50, (i) => 80 + i / 10)
+  );
+  fake.chunks.set(
+    1,
+    chunkOf(50, (i) => 1000 + i / 10, ridge)
+  );
+  const { store, scene, pivot, scope } = setup();
+  store.setPointTier(true);
+  await settle();
+  const datum = () =>
+    (pointsOf(scene)[0].material as THREE.ShaderMaterial).uniforms
+      .heightReference.value;
+  expect(datum()).toBeCloseTo(80, 0);
+  // panned to the ridge: no chunk lands, the datum follows
+  pivot.at.set(...ridge);
+  pivot.ground.value = { lat: 0, lon: 0.054 };
+  await nextTick();
+  expect(datum()).toBeCloseTo(1000, 0);
+  // between the two, nothing within reach: the window's, never 0
+  pivot.at.set(Math.cos(3000 / R), Math.sin(3000 / R), 0);
+  pivot.ground.value = { lat: 0, lon: 0.027 };
+  await nextTick();
+  expect(datum()).toBeCloseTo(80, 0);
+  // and leaving forgets it
+  const material = pointsOf(scene)[0].material as THREE.ShaderMaterial;
+  store.setPointTier(false);
+  await nextTick();
+  expect(material.uniforms.heightReference.value).toBe(0);
+  scope.stop();
+});

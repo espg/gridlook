@@ -209,7 +209,9 @@ It exists on the globe only; a flat projection stops at the finest level.
   is the 2nd percentile of the heights drawn within the view's height of
   the pivot (`neighbourhoodRange` in `src/lib/points/pointRange.ts`, a
   percentile so that a stray return far below the ground does not pull it
-  down), refreshed as chunks land: the datum floats on the view's lowest
+  down), refreshed as chunks land and as the pivot moves (with nothing
+  drawn within reach, a pivot between tracks, the whole window's 2nd
+  percentile): the datum floats on the view's lowest
   heights, so the cloud
   always rises from the sphere at the pivot, over a 3 000 m plateau as
   over a beach, and a tilted view, whose window reaches farther, keeps it
@@ -266,7 +268,8 @@ It exists on the globe only; a flat projection stops at the finest level.
   within the view's height of it, so a cloud return does not lift it), so an orbit turns about the cloud and an oblique view
   centres it; the pivot stays on the sphere's vertical and the camera
   rises and falls with it, so the view keeps its tilt, azimuth and
-  distance (a tilted view does not turn) as the lift changes. The lift follows the relief as chunks land.
+  distance (a tilted view does not turn) as the lift changes. The lift follows the relief as chunks land and as the pivot
+  moves.
 - **Opacity.** The panel's slider (0.05 to 1, 1 by default) scales the
   points' alpha (`pointOpacity`, a uniform of the falloff fragment shader),
   so dense tracks show their depth; the splat's soft edge stays.
