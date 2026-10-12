@@ -147,7 +147,10 @@ beside these for the colour range.
 
 The hover readout gives the finest value drawn at a place: where only the
 parent is drawn, its cell, marked with the parent's name ("order 12"). The
-"Draw the next coarser level beneath" checkbox in the **Variable** card turns
+**Height distribution** panel follows the cursor the same way, from the
+digests in memory: the cell of the level beneath when nothing of the level
+on screen is in memory at the place. The "Draw the next coarser level
+beneath" checkbox in the **Variable** card turns
 the fill off (it is on by default); the colour range is taken from the
 coarsest level either way.
 

@@ -322,6 +322,7 @@ useDigestProbe({
   clickedGeoPoint,
   getInterpolated: gapFill.interpolated,
   filledRevision: gapFill.revision,
+  getBeneath: () => fill.beneath(),
 });
 const fill = useAncestorFill({
   getDatasources: () => props.datasources,
