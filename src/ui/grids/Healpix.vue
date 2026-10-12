@@ -59,11 +59,11 @@ import {
   terminateGridDataWorker,
 } from "@/lib/grids/gridDataWorkerClient.ts";
 import {
-  createFaceAssembly,
   createWindowRead,
   fetchInOrder,
   orderedBlockRanges,
   readFaceProgressively,
+  readRanges,
   type TFaceParts,
   type TRangeCells,
   type TWindowRead,
@@ -778,25 +778,6 @@ async function fetchCellRange(
   return { data: castDataVarToFloat32(values), cells };
 }
 
-/** The cells of some ranges of a level's window, in ascending order. */
-async function readRanges(
-  level: TReadLevel,
-  ranges: { start: number; end: number }[],
-  indices: (number | zarr.Slice | null)[],
-  percentile?: number
-) {
-  const assembly = createFaceAssembly();
-  await Promise.all(
-    ranges.map(async (range) =>
-      assembly.add(
-        range,
-        await fetchCellRange(level, range, indices, percentile)
-      )
-    )
-  );
-  return assembly.face();
-}
-
 /** The cell ranges of a level's blocks, those under the camera first. */
 function windowRanges(level: TReadLevel, blocks: number[]) {
   const { grid } = level;
@@ -1356,7 +1337,13 @@ async function processHealpixChunks(
     }
     const shown = await shownFace(faceIndex, face, async (percentile) =>
       face.ranges
-        ? (await readRanges(level, face.ranges, indices, percentile)).data
+        ? (
+            await readRanges(
+              face.ranges,
+              (range) => fetchCellRange(level, range, indices, percentile),
+              isCurrent
+            )
+          ).data
         : (await readWhole(percentile)).data
     );
     if (disposed || !isCurrent()) {

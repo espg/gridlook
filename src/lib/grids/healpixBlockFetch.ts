@@ -151,6 +151,25 @@ export function createFaceAssembly(seed: TFacePart[] = []) {
   return assembly;
 }
 
+/**
+ * Read every range of a face into one, ascending, a few at a time
+ * (`fetchInOrder`): a face of a derived level is thousands of leaf chunks.
+ * Once `isCurrent` is false nothing more is started.
+ */
+export async function readRanges(
+  ranges: TAxisRange[],
+  fetch: (range: TAxisRange) => Promise<TRangeCells>,
+  isCurrent?: () => boolean
+) {
+  const assembly = createFaceAssembly();
+  const landings = fetchInOrder(ranges, fetch, { isCurrent });
+  for (let landing = await landings.next(); landing;) {
+    assembly.add(landing.item, landing.result);
+    landing = await landings.next();
+  }
+  return assembly.face();
+}
+
 /** The parts of a window's faces, by face: the field as read. */
 export type TFaceParts = Map<number, TFacePart[]>;
 
