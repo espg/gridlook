@@ -50,9 +50,7 @@ In every projection, also while the camera is moving, Gridlook measures the
 ground distance one screen pixel covers at the point below the camera and
 picks the **finest level that passes two tests**:
 
-- its cells span at least **2 pixels** on screen (a level derived from leaf
-  chunks, **16 pixels**: its window costs a leaf chunk per cell of ground
-  whatever the order, so the budget alone would always pick the finest);
+- its cells span at least **2 pixels** on screen, stored or derived;
 - its window fits: the cells the viewport holds at that scale, priced in
   bytes for a variable derived from a t-digest (per cell on a stored level,
   per leaf chunk on a derived one) against the 1 GB window budget, or in
@@ -244,10 +242,12 @@ and a level index kept from a longer list falls back to the finest level.
 - Leaf chunks are a stream like the stored digests: a small working set
   (32 MB) of decoded and pooled chunks serves the cursor and a clicked cell;
   changing the percentile or the derived order reads the window again.
-- A chunk costs the same bytes whatever the order derived from it, so a
-  derived level comes on at 16 pixels per cell for every variable, `count`
-  included, once the chunks under the view fit the budget (a stored level
-  comes on at 2 pixels per cell).
+- A chunk costs the same bytes whatever the order derived from it, so the
+  derived levels share one budget: once the leaf chunks under the view fit
+  it, the finest derived level whose cells are 2 pixels wide is shown, for
+  every variable, `count` included. On a 1500 × 900 screen that is order 15
+  from about 75 m per pixel, 16 from 50 and 17 from 25; order 14 is only
+  ever picked by hand.
 
 The distribution panel shows the pooled digest of a derived cell: the
 derived level names the leaf group it is computed from (`derived.dataset`),

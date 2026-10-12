@@ -82,12 +82,12 @@ export const STREAMLINES_NEED_WHOLE_LEVEL =
 export const DEFAULT_PIXELS_PER_CELL = 2;
 
 /**
- * The floor for a level derived from leaf chunks. Its window costs a leaf
- * chunk per cell of ground whatever the order derived, so the budget alone
- * would always pick the finest derived level; this keeps a derived level
- * from coming on before its cells are worth their decode.
+ * The floor for a level derived from leaf chunks: the same as a stored
+ * level's, so every level switches on the one pattern. Its window costs a
+ * leaf chunk per cell of ground whatever the order derived, so among the
+ * derived levels the budget admits at a view the finest over the floor wins.
  */
-export const DIGEST_PIXELS_PER_CELL = 16;
+export const DIGEST_PIXELS_PER_CELL = DEFAULT_PIXELS_PER_CELL;
 
 /**
  * The active level keeps this much slack on both tests, so that a slow zoom

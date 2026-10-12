@@ -198,11 +198,11 @@ describe("selectViewLevel", () => {
     );
   });
 
-  it("brings a derived level on at its own pixel floor, once its chunks fit", () => {
+  it("brings the derived levels on at the one floor, once their chunks fit", () => {
     const options = { digest: true };
     // a derived level costs a leaf chunk per cell of ground whatever its
-    // order; at 16 px per order-14 cell the view holds about 5 300 of them,
-    // 1 300 chunks: under the budget, and over the floor only for order 14
+    // order: at 2 px per order-14 cell the view holds 337 000 of them, over
+    // 130 000 chunks with the margin, far over the budget
     const scale = scaleFor(14, DIGEST_PIXELS_PER_CELL);
     const cells = cellsInView(resolution(14), scale, VIEWPORT_PIXELS);
     expect(windowCost(derived(14), cells, true)).toBeCloseTo(
@@ -210,13 +210,23 @@ describe("selectViewLevel", () => {
         DEFAULT_VIEW_BUDGET_BYTES,
       6
     );
+    expect(windowCost(derived(14), cells, true)).toBeGreaterThan(1);
     expect(selectViewLevel(scale, VIEWPORT_PIXELS, HIVE, at(13), options)).toBe(
-      at(14)
+      at(13)
     );
-    // at 8 px per order-14 cell it stays stored 13 (32 px per cell)
+    // once the chunks fit, the finest derived level over the floor: at 2.6
+    // px per order-15 cell (5.2 per order-14 cell) that is 15, not 14
+    const fits = scaleFor(15, 2.6);
     expect(
-      selectViewLevel(scaleFor(14, 8), VIEWPORT_PIXELS, HIVE, at(13), options)
-    ).toBe(at(13));
+      windowCost(
+        derived(15),
+        cellsInView(resolution(15), fits, VIEWPORT_PIXELS),
+        true
+      )
+    ).toBeLessThan(1);
+    expect(selectViewLevel(fits, VIEWPORT_PIXELS, HIVE, at(13), options)).toBe(
+      at(15)
+    );
     // very close in, derived 17; never the leaves (not in the ladder)
     for (const order of [17, 18, 19, 22]) {
       const scale = scaleFor(order, DIGEST_PIXELS_PER_CELL);
