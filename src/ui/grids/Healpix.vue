@@ -33,10 +33,9 @@ import {
   coarsestLevel,
   currentLevel,
   DEFAULT_MAX_LEVEL_CELLS,
-  DEFAULT_MAX_VIEW_CELLS,
   DEFAULT_VIEW_LOAD_CELLS,
-  digestWindowBlocks,
   STREAMLINES_NEED_WHOLE_LEVEL,
+  windowBlocks,
 } from "@/lib/data/levels.ts";
 import { loadVectorComponents } from "@/lib/data/streamlineData.ts";
 import {
@@ -577,9 +576,12 @@ function levelWindow(
   );
   const nodes =
     source && hiveNodes(parseStorePath(source.store).url, grid.level);
-  const maxBlocks = level.digest
-    ? digestWindowBlocks(currentLevel(sources), grid.level, cellsPerBlock)
-    : Math.floor(DEFAULT_MAX_VIEW_CELLS / cellsPerBlock);
+  const maxBlocks = windowBlocks(
+    currentLevel(sources),
+    grid.level,
+    cellsPerBlock,
+    level.digest
+  );
   return store.viewFootprint
     ? healpixViewWindow(
         grid,

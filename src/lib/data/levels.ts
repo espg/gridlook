@@ -142,15 +142,22 @@ export function digestCellBytes(order: number) {
 }
 
 /**
- * Blocks a window of a digest variable may hold within a byte budget: cells
- * of `cellsPerBlock` on a stored level, leaf chunks on a derived one.
+ * Blocks a window may hold: on a derived level, leaf chunks within the byte
+ * budget whatever the variable (a chunk is one block, and costs about as
+ * much to fetch whatever is read of it); on a stored level, cells of
+ * `cellsPerBlock` within the byte budget for a digest variable, within the
+ * view cap for any other.
  */
-export function digestWindowBlocks(
+export function windowBlocks(
   level: Pick<TSourceLevel, "derived">,
   order: number,
   cellsPerBlock: number,
+  digest: boolean,
   budget = DEFAULT_VIEW_BUDGET_BYTES
 ) {
+  if (!level.derived && !digest) {
+    return Math.floor(DEFAULT_MAX_VIEW_CELLS / cellsPerBlock);
+  }
   const blockBytes = level.derived
     ? DIGEST_CHUNK_BYTES
     : digestCellBytes(order) * cellsPerBlock;
@@ -226,11 +233,12 @@ export function cellsInView(
 }
 
 /**
- * The cost of a level's window at a view as a fraction of its budget: for a
- * variable derived from a t-digest, bytes against the window budget (per
- * cell on a stored level, per leaf chunk on a derived one); for any other,
- * cells against the view cap. `cells` are the cells in view; the window
- * reaches a margin past the view on every side, and is priced with it.
+ * The cost of a level's window at a view as a fraction of its budget: on a
+ * derived level, its leaf chunks' bytes against the window budget for every
+ * variable; on a stored one, bytes per cell against the window budget for a
+ * variable derived from a t-digest, and cells against the view cap for any
+ * other. `cells` are the cells in view; the window reaches a margin past the
+ * view on every side, and is priced with it.
  */
 export function windowCost(
   level: Pick<TSourceLevel, "resolution" | "derived">,
@@ -240,14 +248,15 @@ export function windowCost(
 ) {
   const margin = digest ? DIGEST_WINDOW_MARGIN : VIEW_WINDOW_MARGIN;
   cells *= (1 + 2 * margin) ** 2;
+  if (level.derived) {
+    const chunks =
+      cells / 4 ** (DIGEST_CHUNK_ORDERS - level.derived.refinement);
+    return (chunks * DIGEST_CHUNK_BYTES) / budget;
+  }
   if (!digest) {
     return cells / DEFAULT_MAX_VIEW_CELLS;
   }
-  const bytes = level.derived
-    ? (cells / 4 ** (DIGEST_CHUNK_ORDERS - level.derived.refinement)) *
-      DIGEST_CHUNK_BYTES
-    : cells * digestCellBytes(healpixOrderOf(level.resolution!));
-  return bytes / budget;
+  return (cells * digestCellBytes(healpixOrderOf(level.resolution!))) / budget;
 }
 
 /** The coarsest of some levels: the least harmful when nothing fits. */
