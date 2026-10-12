@@ -563,10 +563,11 @@ it("draws the parent level beneath before the level's own blocks, and keeps it t
   expect(fetches.indexOf(of("parent").at(-1)!)).toBeLessThan(
     fetches.indexOf(of("fine")[0])
   );
-  // and drawn beneath, with nothing of the level yet
+  // and drawn beneath, with nothing of the level yet, in the shared range
   const beneath = () => drawnFaces(-0.5).flatMap(texels).filter(hasFraction);
   expect(beneath().length).toBe(fetchedCells("t", "parent"));
   expect(drawnFaces()).toHaveLength(0);
+  expect(useGlobeControlStore().selection.high).toBeLessThan(0);
 
   // the first block lands: its face is drawn over the parent, which stays
   const first = of("fine")[0];

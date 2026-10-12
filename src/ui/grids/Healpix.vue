@@ -1561,6 +1561,15 @@ async function fetchAndRenderData(
   const coarsest = await loadCoarsest(indices, isCurrent).catch(
     () => undefined
   );
+  if (
+    coarsest &&
+    store.levelRangeShared &&
+    store.selection.low === store.selection.high
+  ) {
+    // the first load, with no range yet: the faces drawn as they land take
+    // the shared range now rather than one colour until the frame commits
+    store.updateBounds({ low: coarsest.min, high: coarsest.max });
+  }
   const key = JSON.stringify([
     varnameSelector.value,
     indices,
