@@ -1,7 +1,7 @@
 import type { Grid } from "healpix-geo";
 
 import { decimate, decimatedCount } from "./pointBudget.ts";
-import { wordsToDays } from "./pointTimes.ts";
+import { timeWordsToDays, type TTimeWords } from "./pointTimes.ts";
 import { wordsToNested } from "./pointWords.ts";
 
 import type { TWordChunk } from "@/lib/digest/digestReader.ts";
@@ -100,13 +100,17 @@ export function decodePointChunk(
 }
 
 /** The chunk with the times of the `times` sibling's chunk, one word per point. */
-export function withTimes(chunk: TPointChunk, timed: TWordChunk): TPointChunk {
+export function withTimes(
+  chunk: TPointChunk,
+  timed: TWordChunk,
+  kind: TTimeWords
+): TPointChunk {
   if (timed.words.length !== chunk.count) {
     throw new Error(
       `time words (${timed.words.length}) do not match the chunk's points (${chunk.count})`
     );
   }
-  return { ...chunk, times: wordsToDays(timed.words) };
+  return { ...chunk, times: timeWordsToDays(timed.words, kind) };
 }
 
 /** Every `stride`-th point of a chunk, from its first. */

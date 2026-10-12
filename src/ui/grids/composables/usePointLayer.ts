@@ -35,9 +35,14 @@ import {
   pointArrayPath,
   pointTierSource,
   timesArrayOf,
+  timeWordsOf,
   type TPointSource,
 } from "@/lib/points/pointSource.ts";
-import { POINT_COLOURS, type TPointColour } from "@/lib/points/pointTimes.ts";
+import {
+  POINT_COLOURS,
+  type TPointColour,
+  type TTimeWords,
+} from "@/lib/points/pointTimes.ts";
 import type { ProjectionHelper } from "@/lib/projection/projectionUtils.ts";
 import type { TViewFootprint } from "@/lib/projection/viewFootprint.ts";
 import {
@@ -402,7 +407,11 @@ export function usePointLayer(options: TPointLayerOptions) {
   async function pointChunk(
     readers: TLeafReaders,
     from: TPointSource,
-    arrays: { locations: string; times?: string; chunkOrder: number },
+    arrays: {
+      locations: string;
+      times?: { array: string; kind: TTimeWords };
+      chunkOrder: number;
+    },
     index: number
   ) {
     const chunk = await decodedChunk(
@@ -421,34 +430,42 @@ export function usePointLayer(options: TPointLayerOptions) {
       return chunk;
     }
     const timed = await readers.words.chunk(
-      pointArrayPath(from, arrays.times),
+      pointArrayPath(from, arrays.times.array),
       index
     );
     if (!timed) {
       return chunk;
     }
-    const withTime = withTimes(chunk, timed);
+    const withTime = withTimes(chunk, timed, arrays.times.kind);
     cache.set(`${from.store}/${from.dataset}/${from.array}/${index}`, withTime);
     return withTime;
   }
 
-  /** The leaf readers and what the source's arrays are. */
+  /** An array's `zarr.json`, parsed; empty when there is none. */
+  async function metadataOf(readers: TLeafReaders, path: string) {
+    const bytes = await readers.store.get(`/${path}/zarr.json`);
+    return bytes ? JSON.parse(new TextDecoder().decode(bytes)) : {};
+  }
+
+  /**
+   * The leaf readers and what the source's arrays are: the times sibling
+   * only with a `temporal` declaration of its own this reader implements.
+   */
   async function open(from: TPointSource) {
     const readers = await storeReaders(from.store);
     if (!readers) {
       throw new Error("the point tier reads a hive store");
     }
-    const metadata = await readers.store.get(
-      `/${pointArrayPath(from)}/zarr.json`
-    );
-    const attributes = metadata
-      ? JSON.parse(new TextDecoder().decode(metadata))
-      : {};
+    const attributes = await metadataOf(readers, pointArrayPath(from));
     const locations = locationsArrayOf(attributes);
     if (!locations) {
       throw new Error(`${from.array} has no located centroids`);
     }
-    const times = timesArrayOf(attributes);
+    const timesArray = timesArrayOf(attributes);
+    const kind = timesArray
+      ? timeWordsOf(await metadataOf(readers, pointArrayPath(from, timesArray)))
+      : undefined;
+    const times = timesArray && kind ? { array: timesArray, kind } : undefined;
     const { chunkCells } = await readers.digests.array(pointArrayPath(from));
     const chunkOrder = Number(from.dataset) - Math.log2(chunkCells) / 2;
     return { readers, arrays: { locations, times, chunkOrder } };

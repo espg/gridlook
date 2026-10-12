@@ -6,12 +6,20 @@
  * least significant. With the flag set the word is an exact nanosecond
  * timestamp, its bits 0..30 in `low` and 31.. in `start`; clear, it is a
  * range `[start · 2^31, low · 2^32)` ns rounded outward, read here at its
- * midpoint. The scale is continuous, leap-free and GPS-aligned, from
+ * start (as zagg's readers present a range, spec §8.1). The scale is continuous, leap-free and GPS-aligned, from
  * 1850-01-01. A time here is float32 **days since 2018-01-01** (ICESat-2's
  * ATLAS epoch, the notebook viewer's unit): 10 s of resolution over the
  * mission, enough for a colour. A label is the UTC date, within the leap
  * seconds (18) the scale is ahead of UTC by.
  */
+
+/**
+ * How a times sibling's words read, from the sibling's own `temporal` block
+ * (`timeWordsOf`): mortie toc words, or, with no block, the legacy signed
+ * int64 microseconds since 1970-01-01 UTC (spec §8).
+ */
+export const TIME_WORDS = { TOC: "mortie-toc/1", LEGACY: "int64-us" } as const;
+export type TTimeWords = (typeof TIME_WORDS)[keyof typeof TIME_WORDS];
 
 /** What the points are coloured by. */
 export const POINT_COLOURS = { HEIGHT: "height", TIME: "time" } as const;
@@ -25,8 +33,10 @@ const DAY_NS = 86_400e9;
 /** Days from the toc epoch to the point time epoch. */
 const EPOCH_DAYS = (POINT_TIME_EPOCH - TOC_EPOCH) / DAY_MS;
 const START_NS = 2 ** 31;
-const END_NS = 2 ** 32;
 const LOW_MASK = 0x7fffffff;
+/** Days from 1970-01-01 to the point time epoch. */
+const UNIX_EPOCH_DAYS = POINT_TIME_EPOCH / DAY_MS;
+const DAY_US = 86_400e6;
 
 /**
  * The time of every word of a chunk, days since the point time epoch. The
@@ -44,14 +54,29 @@ export function wordsToDays(words: BigUint64Array): Float32Array {
   for (let i = 0; i < words.length; i++) {
     const lo = halves[2 * i];
     const start = halves[2 * i + 1];
-    const low = lo & LOW_MASK;
-    const ns =
-      lo >>> 31
-        ? start * START_NS + low
-        : (start * START_NS + low * END_NS) / 2;
+    const ns = start * START_NS + (lo >>> 31 ? lo & LOW_MASK : 0);
     out[i] = ns / DAY_NS - EPOCH_DAYS;
   }
   return out;
+}
+
+/** The time of every word of a chunk read as `kind`, days since the point time epoch. */
+export function timeWordsToDays(
+  words: BigUint64Array,
+  kind: TTimeWords
+): Float32Array {
+  if (kind === TIME_WORDS.TOC) {
+    return wordsToDays(words);
+  }
+  const micros = new BigInt64Array(
+    words.buffer,
+    words.byteOffset,
+    words.length
+  );
+  return Float32Array.from(
+    micros,
+    (us) => Number(us) / DAY_US - UNIX_EPOCH_DAYS
+  );
 }
 
 /** A point time as a UTC date, `2019-03-14`; blank when it is not one. */

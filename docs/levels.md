@@ -226,7 +226,12 @@ It exists on the globe only; a flat projection stops at the finest level.
   sibling) colours each point by when it was observed instead: the
   sibling's toc words (zagg spec §8.3, one per centroid, read only then
   and cached with the chunk) decoded to days since 2018-01-01
-  (`src/lib/points/pointTimes.ts`), with the same 2nd to 98th percentile
+  (`src/lib/points/pointTimes.ts`; a range word at its start). The words
+  are read as the sibling's own `temporal` block declares them
+  (`timeWordsOf` in `src/lib/points/pointSource.ts`): `zagg-toc/1`,
+  `per-centroid`, `mortie-toc/1` as toc words, no block as the legacy
+  int64 microseconds since 1970; any other revision, shape or grammar is
+  refused and the time colour is not offered. With the same 2nd to 98th percentile
   range, labelled as UTC dates on the colour bar; a custom range is typed
   in those days.
 - **Budget.** At most `OBSERVATION_POINT_BUDGET` (300 000) points are drawn:
