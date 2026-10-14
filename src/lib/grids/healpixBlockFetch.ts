@@ -322,3 +322,151 @@ export async function readFaceProgressively(
   }
   return assembly.face();
 }
+
+/**
+ * Decoded bytes the block cache may hold, over every level: what a window
+ * left behind costs in memory, not what it cost to fetch. Separate from
+ * `DEFAULT_VIEW_BUDGET_BYTES`, which bounds one window's transfer: a digest
+ * cell costs kilobytes to fetch and 12 bytes once decoded (a value and an id).
+ */
+export const DEFAULT_BLOCK_CACHE_BYTES = 512 * 2 ** 20;
+
+/** Bytes a part holds in memory: its values, and its ids as numbers. */
+export function partBytes(part: TRangeCells) {
+  return part.data.byteLength + 8 * part.cells.length;
+}
+
+/** The first index of ascending `cells` at or past `cell`. */
+function lowerBound(cells: number[], cell: number) {
+  let [low, high] = [0, cells.length];
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    [low, high] = cells[middle] < cell ? [middle + 1, high] : [low, middle];
+  }
+  return low;
+}
+
+/**
+ * A part cut at its blocks' bounds, one part per block it covers (a range
+ * is a run of whole blocks): what the cache holds, so that a block is kept
+ * or let go on its own. A part of one block is handed back as it is.
+ */
+export function blockParts(part: TFacePart, cellsPerBlock: number) {
+  const { start, end } = part.range;
+  if (end - start === cellsPerBlock) {
+    return [{ block: start / cellsPerBlock, part }];
+  }
+  const cut: { block: number; part: TFacePart }[] = [];
+  for (let from = start; from < end; from += cellsPerBlock) {
+    const [first, last] = [from, from + cellsPerBlock].map((cell) =>
+      lowerBound(part.cells, cell)
+    );
+    cut.push({
+      block: from / cellsPerBlock,
+      part: {
+        range: { start: from, end: from + cellsPerBlock },
+        data: part.data.slice(first, last),
+        cells: part.cells.slice(first, last),
+      },
+    });
+  }
+  return cut;
+}
+
+/** A block held by the cache: its part, its face and its centre (degrees). */
+export type TCachedBlock = {
+  face: number;
+  part: TFacePart;
+  lon: number;
+  lat: number;
+};
+
+/** The blocks of a cache, by level: one field key per level. */
+type TCacheLevels = Map<
+  number,
+  { key: string; blocks: Map<number, TCachedBlock & { bytes: number }> }
+>;
+
+/** The blocks `kept` does not protect, the farthest from a point first. */
+function farthestFirst(
+  levels: TCacheLevels,
+  centre: { centreLon: number; centreLat: number },
+  kept: (index: number, block: number) => boolean
+) {
+  const candidates: { index: number; block: number; distance: number }[] = [];
+  for (const [index, level] of levels) {
+    for (const [block, held] of level.blocks) {
+      if (!kept(index, block)) {
+        const distance = degreesApart(
+          held.lon,
+          held.lat,
+          centre.centreLon,
+          centre.centreLat
+        );
+        candidates.push({ index, block, distance });
+      }
+    }
+  }
+  return candidates.sort((a, b) => b.distance - a.distance);
+}
+
+/**
+ * Decoded blocks kept across windows, by level and block, for one field key
+ * per level (the variable, the indices and the digest choice): a block read
+ * once is not read again while it is held. Bounded by decoded bytes; over
+ * the bound, the blocks farthest from the camera go first, never those
+ * `kept` protects (the windows on screen). A part handed out stays whole
+ * when its block is let go: the cache only drops its reference.
+ */
+export function createBlockCache(maxBytes = DEFAULT_BLOCK_CACHE_BYTES) {
+  const levels: TCacheLevels = new Map();
+  let bytes = 0;
+  const blocksOf = (index: number, key: string) => {
+    const level = levels.get(index);
+    return level?.key === key ? level.blocks : undefined;
+  };
+  function add(
+    index: number,
+    key: string,
+    block: number,
+    cached: TCachedBlock
+  ) {
+    let level = levels.get(index);
+    if (level?.key !== key) {
+      // another variable, slice or digest choice: what was held is stale
+      for (const held of level?.blocks.values() ?? []) {
+        bytes -= held.bytes;
+      }
+      level = { key, blocks: new Map() };
+      levels.set(index, level);
+    }
+    bytes -= level.blocks.get(block)?.bytes ?? 0;
+    const held = { ...cached, bytes: partBytes(cached.part) };
+    level.blocks.set(block, held);
+    bytes += held.bytes;
+  }
+  function evict(
+    centre: { centreLon: number; centreLat: number },
+    kept: (index: number, block: number) => boolean
+  ) {
+    if (bytes <= maxBytes) {
+      return;
+    }
+    for (const { index, block } of farthestFirst(levels, centre, kept)) {
+      if (bytes <= maxBytes) {
+        break;
+      }
+      const blocks = levels.get(index)!.blocks;
+      bytes -= blocks.get(block)!.bytes;
+      blocks.delete(block);
+    }
+  }
+  return {
+    get: (index: number, key: string, block: number) =>
+      blocksOf(index, key)?.get(block),
+    add,
+    evict,
+    /** Decoded bytes held now. */
+    bytes: () => bytes,
+  };
+}
