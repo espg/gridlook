@@ -408,7 +408,11 @@ async function indexLevels(
       group.attrs,
       entry,
       path
-    ).catch(() => null);
+    ).catch((error) => {
+      // Left out, not fatal -- but say why, or a vanished level is silent.
+      console.warn(`level ${path || "/"} left out of ${src}:`, error);
+      return null;
+    });
     if (level) {
       levels.push(level);
     }
