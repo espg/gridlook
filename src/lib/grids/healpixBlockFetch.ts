@@ -143,8 +143,7 @@ export function fetchInOrder<TItem, TResult>(
   const landed: { item: TItem; result: TResult }[] = [];
   let failure: { error: unknown } | undefined;
   const queue = rankedQueue(items, options.rank);
-  let inFlight = 0;
-  let wake: (() => void) | undefined;
+  let [inFlight, wake]: [number, (() => void) | undefined] = [0, undefined];
   async function run(item: TItem) {
     inFlight++;
     try {
