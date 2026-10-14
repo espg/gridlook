@@ -29,7 +29,6 @@ import {
   windowBlocks,
   windowCost,
 } from "@/lib/data/levels.ts";
-import { DIGEST_WINDOW_MARGIN } from "@/lib/grids/healpixWindow.ts";
 import { ZARR_FORMAT, type TSources } from "@/lib/types/GlobeTypes.ts";
 
 // both strata: 2.2 cells' worth per cell of a stored level, 4 chunks' worth
@@ -253,12 +252,11 @@ describe("selectViewLevel", () => {
     const options = { digest: true };
     // a derived level costs a leaf chunk per cell of ground whatever its
     // order: at 2 px per order-14 cell the view holds 337 000 of them, over
-    // 121 000 chunks with the margin, far over the budget
+    // 130 000 chunks with the margin, far over the budget
     const scale = scaleFor(14, DEFAULT_PIXELS_PER_CELL);
     const cells = cellsInView(resolution(14), scale, VIEWPORT_PIXELS);
     expect(windowCost(derived(14), cells, true)).toBeCloseTo(
-      (((cells * (1 + 2 * DIGEST_WINDOW_MARGIN) ** 2) / 4) *
-        DIGEST_CHUNK_BYTES) /
+      (((cells * 1.5 ** 2) / 4) * DIGEST_CHUNK_BYTES) /
         DEFAULT_VIEW_BUDGET_BYTES,
       6
     );

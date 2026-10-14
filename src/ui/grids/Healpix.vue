@@ -34,7 +34,7 @@ import {
   coarsestLevel,
   currentLevel,
   DEFAULT_MAX_LEVEL_CELLS,
-  viewBudgetBytes,
+  DEFAULT_VIEW_BUDGET_BYTES,
   DEFAULT_VIEW_LOAD_CELLS,
   STREAMLINES_NEED_WHOLE_LEVEL,
   windowBlocks,
@@ -651,7 +651,7 @@ function levelWindow(
     grid.level,
     cellsPerBlock,
     level.digest,
-    viewBudgetBytes(),
+    DEFAULT_VIEW_BUDGET_BYTES,
     strataBytesFactor(store.digestStratum)
   );
   return store.viewFootprint

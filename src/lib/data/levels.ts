@@ -2,8 +2,6 @@ import {
   CAMERA_VERTICAL_FOV_DEGREES,
   EARTH_RADIUS_METERS,
 } from "@/lib/camera/cameraSettings.ts";
-import { learnedCellBytes, transferRate } from "@/lib/data/transferMeter.ts";
-import { hashNumber, pageHash } from "@/lib/grids/healpixBlockFetch.ts";
 import {
   DIGEST_WINDOW_MARGIN,
   VIEW_WINDOW_MARGIN,
@@ -176,53 +174,22 @@ export const DEFAULT_MAX_VIEW_CELLS = 12 * 4 ** 9;
 export const DEFAULT_VIEW_BUDGET_BYTES = 1024 * 2 ** 20;
 
 /**
- * Seconds one window may take to read at the rate the store has delivered
- * (`::seconds=<n>` overrides): what sets the budget once the rate is known,
- * so that the picker moves to a finer level when its window loads in a few
- * seconds on this link, not when it fits a fixed gigabyte. On a ~8 MB/s link
- * a v4 order-14 window priced at a gigabyte took half a minute.
- */
-export const VIEW_LOAD_SECONDS = 5;
-
-/** The least a window may read, however slow the link. */
-export const MIN_VIEW_BUDGET_BYTES = 16 * 2 ** 20;
-
-/**
- * Bytes one window may read: `seconds` at `rate` (bytes a second), between
- * `MIN_VIEW_BUDGET_BYTES` and `DEFAULT_VIEW_BUDGET_BYTES`; the default
- * budget until the rate is known.
- */
-export function viewBudgetBytes(
-  rate = transferRate(),
-  seconds = hashNumber(pageHash(), "seconds") ?? VIEW_LOAD_SECONDS
-) {
-  if (rate === undefined) {
-    return DEFAULT_VIEW_BUDGET_BYTES;
-  }
-  return Math.min(
-    Math.max(rate * seconds, MIN_VIEW_BUDGET_BYTES),
-    DEFAULT_VIEW_BUDGET_BYTES
-  );
-}
-
-/**
  * Bytes of one leaf chunk's signal digest, what a level derived from leaf
  * chunks costs per chunk whatever the order derived (noise is 120 KB).
  */
 export const DIGEST_CHUNK_BYTES = 34 * 1024;
 
 /**
- * Bytes a cell of a stored digest level costs: as read so far from the
- * store (`learnedCellBytes`, measured on the chunks the viewer has read),
- * else as listed on the ATL03 v3 store, 1.7 KB at order 13 and 2.0 KB at 12
- * and above. The v4 store reads 780 B a cell at order 11 down to 185 B at
- * 16, so the listing overprices its fine levels by up to nine times.
- * `strata` is what the stratum choice reads relative to the signal digest
- * alone (`strataBytesFactor`): the signal and the noise together cost 2.2
- * cells' worth.
+ * Bytes a cell of a stored digest level costs, as listed on the ATL03 v3
+ * store: 1.7 KB at order 13 (1.29 GB over 759 000 cells), 2.0 KB at 12
+ * (370 MB over 190 000) and about as much above, where a cell holds more
+ * photons but its digest is capped. An estimate until the store's chunk
+ * index prices each chunk. `strata` is what the stratum choice reads
+ * relative to the signal digest alone (`strataBytesFactor`): the signal
+ * and the noise together cost 2.2 cells' worth.
  */
 export function digestCellBytes(order: number, strata = 1) {
-  return (learnedCellBytes(order) ?? (order >= 13 ? 1700 : 2000)) * strata;
+  return (order >= 13 ? 1700 : 2000) * strata;
 }
 
 /**

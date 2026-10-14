@@ -1,11 +1,6 @@
 import * as zarr from "zarrita";
 
 import {
-  meterTransfers,
-  recordCellBytes,
-  resetCellBytes,
-} from "@/lib/data/transferMeter.ts";
-import {
   digestVariableMetadata,
   digestVariablesOf,
 } from "@/lib/digest/digestVariables.ts";
@@ -476,25 +471,13 @@ function createHiveReader(
       return undefined;
     }
     const objectKey = `${dir}/${target.cellOrder}/${name}/c/0`;
-    const entry =
-      perNode === 1
-        ? undefined
-        : (await shardIndex(objectKey, perNode))[Number(index) % perNode];
-    if (perNode > 1 && !entry) {
-      return undefined;
+    if (perNode === 1) {
+      return await inner.get(`/${objectKey}`);
     }
-    const bytes = entry
-      ? await inner.getRange!(`/${objectKey}`, entry)
-      : await inner.get(`/${objectKey}`);
-    if (bytes) {
-      recordCellBytes(
-        target.cellOrder,
-        name,
-        bytes.byteLength,
-        view.innerChunk
-      );
-    }
-    return bytes;
+    const entry = (await shardIndex(objectKey, perNode))[
+      Number(index) % perNode
+    ];
+    return entry && (await inner.getRange!(`/${objectKey}`, entry));
   }
   function rootMetadata() {
     return encoder.encode(
@@ -696,14 +679,11 @@ export async function createHiveStore(
   const store =
     inner ??
     zarr.extendStore(
-      meterTransfers(
-        new zarr.FetchStore(rootUrl.replace(/\/+$/, ""), {
-          useSuffixRequest: true,
-        })
-      ),
+      new zarr.FetchStore(rootUrl.replace(/\/+$/, ""), {
+        useSuffixRequest: true,
+      }),
       (s) => zarr.withRangeCoalescing(s, { coalesceSize: COALESCE_SIZE })
     );
-  resetCellBytes();
   const { manifest, coverage } = await readRoot(store, rootUrl);
   const levels = manifestLevels(manifest);
   placeNodes(levels, rangesShardIds(coverage), manifest);
