@@ -241,7 +241,7 @@ export const useGlobeControlStore = defineStore("globeControl", {
     return {
       showCoastLines: true,
       showGraticules: false,
-      showDistanceScale: false,
+      showDistanceScale: true,
       coastlineResolution:
         COASTLINE_RESOLUTIONS.FIFTY_M as TCoastlineResolution,
       graticuleSpacing: GRATICULE_SPACINGS.THIRTY_DEGREES as TGraticuleSpacing,

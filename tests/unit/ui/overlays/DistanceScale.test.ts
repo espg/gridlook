@@ -13,10 +13,12 @@ beforeEach(() => setActivePinia(createPinia()));
 
 const render = () => renderToString(createSSRApp(DistanceScale));
 
-it("sits in the upper-left corner on the point tier, toggle or not", async () => {
+it("shows at every level by default, and on the point tier toggle or not", async () => {
   const store = useGlobeControlStore();
   store.distanceScale = { distanceMeters: 50, widthPx: 101.7 };
-  // off the tier the toggle rules
+  // off the tier the toggle rules, on by default
+  expect(store.showDistanceScale).toBe(true);
+  store.showDistanceScale = false;
   expect(await render()).not.toContain("distance-scale");
   store.showDistanceScale = true;
   const cursor = await render();
