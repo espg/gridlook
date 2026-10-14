@@ -38,7 +38,7 @@ const FETCH_CONCURRENCY_HTTP1 = 8;
 const FETCH_CONCURRENCY_MULTIPLEXED = 32;
 
 /** A positive integer `::<name>=<n>` of the page hash, if any. */
-function hashNumber(hash: string, name: string): number | undefined {
+export function hashNumber(hash: string, name: string): number | undefined {
   const match = new RegExp(`(?:^|::)${name}=(\\d+)(?:::|$)`).exec(
     hash.replace(/^#/, "")
   );
@@ -62,7 +62,8 @@ export function rangeChunks(hash: string): number {
   return hashNumber(hash, "chunks") ?? 1;
 }
 
-function pageHash() {
+/** The page hash, empty outside a browser. */
+export function pageHash() {
   return typeof location === "undefined" ? "" : location.hash;
 }
 

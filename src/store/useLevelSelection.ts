@@ -15,6 +15,7 @@ import {
   groundMetersPerPixel,
   selectPointTier,
   selectViewLevel,
+  viewBudgetBytes,
 } from "@/lib/data/levels.ts";
 import { digestVariableOf } from "@/lib/digest/digestVariables.ts";
 import { strataBytesFactor } from "@/lib/digest/strata.ts";
@@ -101,6 +102,7 @@ function viewLevel(
     {
       digest: isDigest(datasources, store.varnameSelector),
       strata: strataBytesFactor(store.digestStratum),
+      budget: viewBudgetBytes(),
     }
   );
 }
