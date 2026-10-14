@@ -218,6 +218,10 @@ let cellsReader:
 // The blocks loaded of a level too large to load whole; undefined when the
 // whole level is loaded.
 let loadedBlocks: number[] | undefined;
+// The slice and the field key last loaded: what the next finer level is
+// read ahead at, once the view rests (`useAncestorFill.prefetch`).
+let lastField:
+  { indices: (number | zarr.Slice | null)[]; key: string } | undefined;
 
 /**
  * The ranges of a digest window nearest the camera read again once it has
@@ -317,6 +321,13 @@ const { datasourceUpdate, getData } = useGridDataLoader({
   prepareDatasource: prepareLevel,
   canLoadByView: () => levelWindowable,
   viewWindowStale,
+  onIdle: (isCurrent) => {
+    if (lastField) {
+      void fill
+        .prefetch(lastField.indices, lastField.key, isCurrent)
+        .catch(() => undefined);
+    }
+  },
   updateLandSeaMask,
   updateColormap: updateLevelColormap,
   refreshStreamlines: async (reuseCached) => {
@@ -375,6 +386,9 @@ const fill = useAncestorFill({
   },
   show: showBackdrop,
   meshes: backdropMeshes,
+  ranges: windowRanges,
+  fetchRange: fetchCellRange,
+  byView: overWholeLevelCap,
 });
 // the point tier: the observations in place of the finest level (levels.ts)
 const pointLayer = usePointLayer({
@@ -593,13 +607,23 @@ function loadsByView() {
   if (currentLevel(sources).derived) {
     return true;
   }
-  const wholeLevelLayers =
-    store.isStreamlineLayerEnabled() || store.isVolumeLayerEnabled();
   return (
     levelWindowable &&
     (sources.selectedLevel ?? 0) !== coarsestLevel(sources.levels) &&
-    levelCellCount >
-      (wholeLevelLayers ? DEFAULT_MAX_LEVEL_CELLS : DEFAULT_VIEW_LOAD_CELLS)
+    overWholeLevelCap(levelCellCount)
+  );
+}
+
+/**
+ * Whether a level of `cellCount` cells is too large to load whole: past the
+ * whole-level cap with streamlines or a volume, past the view cap without.
+ */
+function overWholeLevelCap(cellCount: number) {
+  const wholeLevelLayers =
+    store.isStreamlineLayerEnabled() || store.isVolumeLayerEnabled();
+  return (
+    cellCount >
+    (wholeLevelLayers ? DEFAULT_MAX_LEVEL_CELLS : DEFAULT_VIEW_LOAD_CELLS)
   );
 }
 
@@ -1613,6 +1637,7 @@ async function fetchAndRenderData(
     indices,
     digestFields.key(),
   ]);
+  lastField = { indices, key };
   // a sparse level loaded whole leaves the rest of the globe to the coarsest
   const beneath = loadedBlocks
     ? await fill.loadBeneath(indices, key, isCurrent, coarsest)

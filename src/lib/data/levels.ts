@@ -70,6 +70,31 @@ export function coarserLevels(
     .map(({ at }) => at);
 }
 
+/**
+ * Index of the level next finer than `levels[index]`, stored or derived:
+ * the one a zoom in reaches next, what the viewer reads ahead at rest.
+ * Undefined when there is none, or when a resolution is unknown.
+ */
+export function finerLevel(
+  levels: readonly Pick<TSourceLevel, "resolution">[],
+  index: number
+) {
+  const own = levels[index]?.resolution;
+  if (!(own! > 0) || levels.some((level) => !(level.resolution! > 0))) {
+    return undefined;
+  }
+  let finer: number | undefined;
+  for (const [at, level] of levels.entries()) {
+    if (
+      level.resolution! < own! &&
+      (finer === undefined || level.resolution! > levels[finer].resolution!)
+    ) {
+      finer = at;
+    }
+  }
+  return finer;
+}
+
 /** Shown in place of streamlines on a level that cannot be loaded whole. */
 export const STREAMLINES_NEED_WHOLE_LEVEL =
   "Streamlines read a whole level, and this one is too large to load whole. Pick a coarser level.";
