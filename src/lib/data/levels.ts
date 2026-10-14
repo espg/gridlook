@@ -145,11 +145,11 @@ export const POINT_TIER = "points";
 
 /**
  * The point tier takes over once one cell of the finest level spans this
- * many pixels at the sub-camera point: where a level one order finer would
- * span `FINE_DIGEST_PIXELS_PER_CELL` and be picked, the points come on in
- * its place (espg, 2026-10-14: order 16 at 16 px, order 17 at 8).
+ * many pixels at the sub-camera point: twice the span at which a level one
+ * order finer would be picked (espg, 2026-10-14: order 16 at 32 px, where
+ * an order-17 cell would span 16; at 16 px the points came on too soon).
  */
-export const POINT_TIER_PIXELS_PER_CELL = 2 * FINE_DIGEST_PIXELS_PER_CELL;
+export const POINT_TIER_PIXELS_PER_CELL = 4 * FINE_DIGEST_PIXELS_PER_CELL;
 
 /**
  * Hysteresis of the point tier's hand-off, in orders (log2 of cell size, so
