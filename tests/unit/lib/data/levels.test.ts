@@ -16,6 +16,8 @@ import {
   DEFAULT_VIEW_BUDGET_BYTES,
   DIGEST_CHUNK_BYTES,
   digestCellBytes,
+  FINE_DIGEST_PIXELS_PER_CELL,
+  pixelFloorOf,
   exceedsCellCap,
   finerLevel,
   finestLevel,
@@ -266,9 +268,14 @@ describe("selectViewLevel", () => {
     expect(selectViewLevel(scale, VIEWPORT_PIXELS, HIVE, at(13), options)).toBe(
       at(13)
     );
-    // once the chunks fit, the finest derived level over the floor: at 2.6
-    // px per order-15 cell (5.2 per order-14 cell) that is 15, not 14
-    const fits = scaleFor(15, 2.6);
+    // past order 13 a digest level waits for 8 px a cell: at 5.2 px per
+    // order-14 cell, where 2 px would have taken 15, it is still 13
+    expect(
+      selectViewLevel(scaleFor(15, 2.6), VIEWPORT_PIXELS, HIVE, at(13), options)
+    ).toBe(at(13));
+    // once the chunks fit, the finest derived level over its floor: at 10
+    // px per order-15 cell (20 per order-14 cell) that is 15, not 14
+    const fits = scaleFor(15, 10);
     expect(
       windowCost(
         derived(15),
@@ -294,7 +301,7 @@ describe("selectViewLevel", () => {
     );
     // very close in, derived 17; never the leaves (not in the ladder)
     for (const order of [17, 18, 19, 22]) {
-      const scale = scaleFor(order, DEFAULT_PIXELS_PER_CELL);
+      const scale = scaleFor(order, FINE_DIGEST_PIXELS_PER_CELL);
       expect(
         selectViewLevel(scale, VIEWPORT_PIXELS, HIVE, at(4), options)
       ).toBe(0);
@@ -395,6 +402,17 @@ describe("a level derived from the leaves", () => {
       const scale = scaleFor(order, DEFAULT_PIXELS_PER_CELL);
       expect(selectViewLevel(scale, VIEWPORT_PIXELS, levels, 4)).toBe(4);
     }
+  });
+});
+
+describe("pixelFloorOf", () => {
+  it("is 8 px for a digest level past order 13, else the default", () => {
+    expect(pixelFloorOf(resolution(13), true)).toBe(DEFAULT_PIXELS_PER_CELL);
+    expect(pixelFloorOf(resolution(14), true)).toBe(
+      FINE_DIGEST_PIXELS_PER_CELL
+    );
+    expect(pixelFloorOf(resolution(16), true)).toBe(8);
+    expect(pixelFloorOf(resolution(14), false)).toBe(DEFAULT_PIXELS_PER_CELL);
   });
 });
 

@@ -109,6 +109,23 @@ export const STREAMLINES_NEED_WHOLE_LEVEL =
 export const DEFAULT_PIXELS_PER_CELL = 2;
 
 /**
+ * The floor of a digest level finer than `FINE_DIGEST_ORDER`: such a level
+ * is loaded as a window, read again for every new area, so its cells must
+ * span 8 pixels before it is picked, 16 times fewer cells in view than at 2
+ * (espg, 2026-10-14). The levels at and above the order load whole and keep
+ * the default floor.
+ */
+export const FINE_DIGEST_PIXELS_PER_CELL = 8;
+export const FINE_DIGEST_ORDER = 13;
+
+/** The pixel floor of a level of cells of `resolution` metres. */
+export function pixelFloorOf(resolution: number, digest: boolean) {
+  return digest && healpixOrderOf(resolution) > FINE_DIGEST_ORDER
+    ? FINE_DIGEST_PIXELS_PER_CELL
+    : DEFAULT_PIXELS_PER_CELL;
+}
+
+/**
  * The active level keeps this much slack on both tests, so that a slow zoom
  * across a boundary does not flip the level back and forth.
  */
@@ -404,7 +421,9 @@ export function selectViewLevel(
   const slack = options.slack ?? LEVEL_SLACK;
   const eligible = ({ level, index }: (typeof candidates)[number]) => {
     const give = index === active ? slack : 1;
-    const floor = options.pixelFloor ?? DEFAULT_PIXELS_PER_CELL;
+    const floor =
+      options.pixelFloor ??
+      pixelFloorOf(level.resolution!, options.digest ?? false);
     const cells = cellsInView(
       level.resolution!,
       metersPerPixel,
