@@ -5,6 +5,7 @@ import {
   POINT_PIVOT_LEFT_DRAGS,
   type TPivotLeftDrag,
 } from "@/lib/camera/pointPivot.ts";
+import { deploymentValue } from "@/lib/config/deployment.ts";
 import {
   levelAxesAreIdentical,
   type TStreamlineLevelInfo,
@@ -23,7 +24,7 @@ import {
   isStratumChoice,
   type TStratumChoice,
 } from "@/lib/digest/strata.ts";
-import { DEFAULT_GAP_FILL_SIZE, GAP_FILL_SIZES } from "@/lib/grids/gapFill.ts";
+import { GAP_FILL_SIZES } from "@/lib/grids/gapFill.ts";
 import {
   LAND_SEA_MASK_MODES,
   type TLandSeaMaskMode,
@@ -241,7 +242,7 @@ export const useGlobeControlStore = defineStore("globeControl", {
     return {
       showCoastLines: true,
       showGraticules: false,
-      showDistanceScale: true,
+      showDistanceScale: deploymentValue("showDistanceScale"),
       coastlineResolution:
         COASTLINE_RESOLUTIONS.FIFTY_M as TCoastlineResolution,
       graticuleSpacing: GRATICULE_SPACINGS.THIRTY_DEGREES as TGraticuleSpacing,
@@ -329,8 +330,8 @@ export const useGlobeControlStore = defineStore("globeControl", {
       digestStratum: DEFAULT_STRATUM as TStratumChoice,
       // whether the blank cells of a digest variable are filled from their
       // neighbours, and the size of the Gaussian kernel, in cells across
-      gapFill: false,
-      gapFillSize: DEFAULT_GAP_FILL_SIZE as number,
+      gapFill: deploymentValue("gapFill"),
+      gapFillSize: deploymentValue("gapFillSize"),
       // the place whose distribution the panel keeps showing (a click), and
       // the cell it shows now: the pinned place at the level on screen, or
       // the cell under the cursor

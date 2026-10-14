@@ -4,6 +4,7 @@ import {
   CAMERA_VERTICAL_FOV_DEGREES,
   EARTH_RADIUS_METERS,
 } from "@/lib/camera/cameraSettings.ts";
+import { DEPLOYMENT_DEFAULTS } from "@/lib/config/deployment.ts";
 import {
   cellsInView,
   coarserLevels,
@@ -16,7 +17,6 @@ import {
   DEFAULT_VIEW_BUDGET_BYTES,
   DIGEST_CHUNK_BYTES,
   digestCellBytes,
-  FINE_DIGEST_PIXELS_PER_CELL,
   pixelFloorOf,
   exceedsCellCap,
   finerLevel,
@@ -24,14 +24,12 @@ import {
   groundMetersPerPixel,
   healpixOrderOf,
   LEVEL_SLACK,
-  POINT_TIER_PIXELS_PER_CELL,
   selectPointTier,
   selectViewLevel,
   type TLevelSelectionCamera,
   windowBlocks,
   windowCost,
 } from "@/lib/data/levels.ts";
-import { DIGEST_WINDOW_MARGIN } from "@/lib/grids/healpixWindow.ts";
 import { ZARR_FORMAT, type TSources } from "@/lib/types/GlobeTypes.ts";
 
 // both strata: 2.2 cells' worth per cell of a stored level, 4 chunks' worth
@@ -259,7 +257,7 @@ describe("selectViewLevel", () => {
     const scale = scaleFor(14, DEFAULT_PIXELS_PER_CELL);
     const cells = cellsInView(resolution(14), scale, VIEWPORT_PIXELS);
     expect(windowCost(derived(14), cells, true)).toBeCloseTo(
-      (((cells * (1 + 2 * DIGEST_WINDOW_MARGIN) ** 2) / 4) *
+      (((cells * (1 + 2 * DEPLOYMENT_DEFAULTS.digestWindowMargin) ** 2) / 4) *
         DIGEST_CHUNK_BYTES) /
         DEFAULT_VIEW_BUDGET_BYTES,
       6
@@ -301,7 +299,10 @@ describe("selectViewLevel", () => {
     );
     // very close in, derived 17; never the leaves (not in the ladder)
     for (const order of [17, 18, 19, 22]) {
-      const scale = scaleFor(order, FINE_DIGEST_PIXELS_PER_CELL.at(-1)!);
+      const scale = scaleFor(
+        order,
+        DEPLOYMENT_DEFAULTS.fineDigestPixelsPerCell.at(-1)!
+      );
       expect(
         selectViewLevel(scale, VIEWPORT_PIXELS, HIVE, at(4), options)
       ).toBe(0);
@@ -482,14 +483,16 @@ describe("selectPointTier", () => {
   const scaleAt = (pixels: number) => order17 / pixels;
 
   it("comes on where a finest cell spans 32 pixels", () => {
-    expect(POINT_TIER_PIXELS_PER_CELL).toBe(32);
+    expect(DEPLOYMENT_DEFAULTS.pointTierPixelsPerCell).toBe(32);
     expect(selectPointTier(scaleAt(31.9), order17, false)).toBe(false);
     expect(selectPointTier(scaleAt(32), order17, false)).toBe(true);
     expect(selectPointTier(scaleAt(300), order17, false)).toBe(true);
   });
 
   it("stays on through the hysteresis band and goes off below it", () => {
-    const leave = POINT_TIER_PIXELS_PER_CELL / 2 ** DEFAULT_HYSTERESIS_ORDERS;
+    const leave =
+      DEPLOYMENT_DEFAULTS.pointTierPixelsPerCell /
+      2 ** DEFAULT_HYSTERESIS_ORDERS;
     expect(leave).toBeCloseTo(25.11, 2);
     for (const pixels of [31.9, 28, 25.6]) {
       expect(selectPointTier(scaleAt(pixels), order17, true)).toBe(true);

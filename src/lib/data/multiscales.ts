@@ -200,9 +200,9 @@ function geoZarrEntries(
  * the orders a viewer computes from the group `dataset`, the leaves',
  * finest first. That group is then their source and no level of its own:
  * finer than the finest level the viewer shows the points themselves
- * (`POINT_TIER_ORDERS` in `hiveStore.ts`), so the list starts at the derived
- * levels, or at the finest stored one when there are none; that finest
- * entry names the group as its `points`.
+ * (`pointTierOrders` of the deployment config, in `hiveStore.ts`), so the
+ * list starts at the derived levels, or at the finest stored one when there
+ * are none; that finest entry names the group as its `points`.
  */
 function zaggEntries(
   multiscale: Record<string, unknown>,

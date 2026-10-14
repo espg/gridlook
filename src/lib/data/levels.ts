@@ -2,8 +2,9 @@ import {
   CAMERA_VERTICAL_FOV_DEGREES,
   EARTH_RADIUS_METERS,
 } from "@/lib/camera/cameraSettings.ts";
+import { deploymentValue } from "@/lib/config/deployment.ts";
 import {
-  DIGEST_WINDOW_MARGIN,
+  digestWindowMargin,
   VIEW_WINDOW_MARGIN,
 } from "@/lib/grids/healpixWindow.ts";
 import type { TSourceLevel, TSources } from "@/lib/types/GlobeTypes.ts";
@@ -109,24 +110,23 @@ export const STREAMLINES_NEED_WHOLE_LEVEL =
 export const DEFAULT_PIXELS_PER_CELL = 2;
 
 /**
- * The floors of the digest levels finer than `FINE_DIGEST_ORDER`, one per
- * order from the next, the last for every order past: such a level is
- * loaded as a window, read again for every new area, so its cells must span
- * more pixels before it is picked than a level loaded whole. 4 px at order
- * 14, 8 at 15, 16 at 16 and finer (espg, 2026-10-14, after trying 4, 6 and
- * 8 flat): 4, 16 and 64 times fewer cells in view than at 2.
+ * The pixel floor of a level of cells of `resolution` metres. A digest level
+ * finer than `fineDigestOrder` takes its floor from
+ * `fineDigestPixelsPerCell`, one per order from the next, the last for every
+ * order past (both of the deployment config): such a level is loaded as a
+ * window, read again for every new area, so its cells must span more pixels
+ * before it is picked than a level loaded whole. 4 px at order 14, 8 at 15,
+ * 16 at 16 and finer (espg, 2026-10-14, after trying 4, 6 and 8 flat): 4, 16
+ * and 64 times fewer cells in view than at 2.
  */
-export const FINE_DIGEST_ORDER = 13;
-export const FINE_DIGEST_PIXELS_PER_CELL = [4, 8, 16];
-
-/** The pixel floor of a level of cells of `resolution` metres. */
 export function pixelFloorOf(resolution: number, digest: boolean) {
   const order = healpixOrderOf(resolution);
-  if (!digest || order <= FINE_DIGEST_ORDER) {
+  const fine = deploymentValue("fineDigestOrder");
+  if (!digest || order <= fine) {
     return DEFAULT_PIXELS_PER_CELL;
   }
-  const floors = FINE_DIGEST_PIXELS_PER_CELL;
-  return floors[Math.min(order - FINE_DIGEST_ORDER, floors.length) - 1];
+  const floors = deploymentValue("fineDigestPixelsPerCell");
+  return floors[Math.min(order - fine, floors.length) - 1];
 }
 
 /**
@@ -140,13 +140,6 @@ export const LEVEL_SLACK = 1.5;
  * finest level the viewer shows the observations themselves, not a level.
  */
 export const POINT_TIER = "points";
-
-/**
- * The point tier takes over once one cell of the finest level spans this
- * many pixels at the sub-camera point (espg, 2026-10-14: order 16 at 32 px;
- * at 16 px the points came on too soon).
- */
-export const POINT_TIER_PIXELS_PER_CELL = 32;
 
 /**
  * Hysteresis of the point tier's hand-off, in orders (log2 of cell size, so
@@ -348,7 +341,7 @@ export function windowCost(
   budget = DEFAULT_VIEW_BUDGET_BYTES,
   strata = SIGNAL_ALONE
 ) {
-  const margin = digest ? DIGEST_WINDOW_MARGIN : VIEW_WINDOW_MARGIN;
+  const margin = digest ? digestWindowMargin() : VIEW_WINDOW_MARGIN;
   cells *= (1 + 2 * margin) ** 2;
   if (level.derived) {
     const chunks =
@@ -457,7 +450,9 @@ export function selectViewLevel(
 
 /**
  * Whether the point tier is on: the finest level's cells, of `resolution`
- * metres, span `POINT_TIER_PIXELS_PER_CELL` on screen, from the camera or
+ * metres, span `pointTierPixelsPerCell` of the deployment config on screen
+ * (espg, 2026-10-14: order 16 at 32 px; at 16 px the points came on too
+ * soon), from the camera or
  * the ground metres per pixel measured below it. Once on it stays on until
  * the cells shrink by `hysteresisOrders` below that, so a view at the
  * boundary does not flap between the points and the level.
@@ -474,8 +469,7 @@ export function selectPointTier(
     return false;
   }
   const pixels = resolution / metersPerPixel;
-  const threshold = active
-    ? POINT_TIER_PIXELS_PER_CELL / 2 ** hysteresisOrders
-    : POINT_TIER_PIXELS_PER_CELL;
+  const onset = deploymentValue("pointTierPixelsPerCell");
+  const threshold = active ? onset / 2 ** hysteresisOrders : onset;
   return pixels >= threshold;
 }

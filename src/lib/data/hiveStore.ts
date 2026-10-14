@@ -1,5 +1,6 @@
 import * as zarr from "zarrita";
 
+import { deploymentValue } from "@/lib/config/deployment.ts";
 import {
   digestVariableMetadata,
   digestVariablesOf,
@@ -35,7 +36,7 @@ import { wordToNested } from "@/lib/morton/word.ts";
  * not hold are listed too, as levels without chunks (`derived_levels` in
  * the root attributes): a viewer computes them from the leaf chunks, chunk
  * `n` of a derived level being chunk `n` of the leaves (`derivedLevel.ts`).
- * The finest `POINT_TIER_ORDERS` orders are not derived: there the viewer
+ * The finest `pointTierOrders` orders are not derived: there the viewer
  * shows the points themselves, and the leaves are only their source.
  *
  * Nothing is listed: the manifest plus the root coverage name every node.
@@ -53,16 +54,6 @@ const COALESCE_SIZE = 32768;
 const INDEX_ENTRY_BYTES = 16;
 const INDEX_CHECKSUM_BYTES = 4;
 const ABSENT = 0xffffffffffffffffn;
-/**
- * Orders at the fine end that are no level of the viewer: the leaves and
- * the two orders above them (19, 18 and 17 in the stores so far; espg,
- * 2026-10-14, dropped derived 17). Past the finest level, three orders above
- * the leaves, the viewer shows the points themselves (gridlook#21); the
- * leaves stay the source of every derived level and of the digests, and are
- * not listed as a level (`multiscales.ts`).
- */
-const POINT_TIER_ORDERS = 3;
-
 const CHUNK_KEY = /^\/(\d+)\/([^/]+)\/c\/(\d+)\/(\d+)$/;
 const GROUP_KEY = /^\/(\d+)\/zarr\.json$/;
 const ARRAY_KEY = /^\/(\d+)\/([^/]+)\/zarr\.json$/;
@@ -590,8 +581,8 @@ async function arrayNames(
 
 /**
  * The levels computed from the leaves: every order the store does not hold
- * from the leaf chunk's (one chunk, one cell) up to `POINT_TIER_ORDERS`
- * below the leaves, and only under a stored level, which is what a viewer
+ * from the leaf chunk's (one chunk, one cell) up to `pointTierOrders` of the
+ * deployment config below the leaves, and only under a stored level, which is what a viewer
  * loads whole. Their arrays are the fields that sum exactly (`count`) and
  * the digest variables.
  */
@@ -614,7 +605,12 @@ async function pooledLevels(
   }
   const held = Math.max(...stored.map(({ cellOrder }) => cellOrder));
   const orders: number[] = [];
-  const finest = leaf.cellOrder - POINT_TIER_ORDERS;
+  // orders at the fine end that are no level of the viewer: the leaves and
+  // the two above them (19, 18 and 17 in the stores so far; espg,
+  // 2026-10-14, dropped derived 17). Past the finest level the viewer shows
+  // the points themselves (gridlook#21); the leaves stay the source of every
+  // derived level and of the digests, and are no level (`multiscales.ts`)
+  const finest = leaf.cellOrder - deploymentValue("pointTierOrders");
   for (let order = finest; order >= chunkOrder; order--) {
     if (order > held) {
       orders.push(order);

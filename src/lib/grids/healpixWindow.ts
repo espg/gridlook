@@ -1,5 +1,6 @@
 import type { Grid } from "healpix-geo";
 
+import { deploymentValue } from "@/lib/config/deployment.ts";
 import type { TAxisRange } from "@/lib/data/viewWindow.ts";
 import { digestVariableOf } from "@/lib/digest/digestVariables.ts";
 import type { TViewFootprint } from "@/lib/projection/viewFootprint.ts";
@@ -20,14 +21,16 @@ export const VIEW_WINDOW_MARGIN = 0.5;
  * The margin of a variable derived from a t-digest, whose cells cost
  * hundreds of bytes each: a tenth of the view, 1.44 times the visible area,
  * 36% fewer bytes than the half-view margin, so that a pan to a new area
- * reads little past the view.
+ * reads little past the view (`digestWindowMargin` of the deployment config).
  */
-export const DIGEST_WINDOW_MARGIN = 0.1;
+export function digestWindowMargin() {
+  return deploymentValue("digestWindowMargin");
+}
 
 /** The window margin of a variable, from its attributes. */
 export function viewWindowMargin(attributes: unknown) {
   return digestVariableOf(attributes)
-    ? DIGEST_WINDOW_MARGIN
+    ? digestWindowMargin()
     : VIEW_WINDOW_MARGIN;
 }
 

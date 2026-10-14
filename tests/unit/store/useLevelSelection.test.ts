@@ -6,8 +6,9 @@ vi.stubGlobal("localStorage", { getItem: () => null });
 const { createPinia, setActivePinia } = await import("pinia");
 const { EARTH_RADIUS_METERS, CAMERA_VERTICAL_FOV_DEGREES } =
   await import("@/lib/camera/cameraSettings.ts");
-const { DEFAULT_PIXELS_PER_CELL, POINT_TIER_PIXELS_PER_CELL } =
-  await import("@/lib/data/levels.ts");
+const { DEPLOYMENT_DEFAULTS } = await import("@/lib/config/deployment.ts");
+const { DEFAULT_PIXELS_PER_CELL } = await import("@/lib/data/levels.ts");
+const POINT_TIER_PIXELS_PER_CELL = DEPLOYMENT_DEFAULTS.pointTierPixelsPerCell;
 const { PROJECTION_TYPES } =
   await import("@/lib/projection/projectionUtils.ts");
 const { ZARR_FORMAT } = await import("@/lib/types/GlobeTypes.ts");

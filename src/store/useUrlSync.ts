@@ -14,6 +14,7 @@ import {
   type TGlobeControlStoreKeys,
 } from "./store.ts";
 
+import { DEPLOYMENT_DEFAULTS } from "@/lib/config/deployment.ts";
 import { encodeVolumeUrlState } from "@/lib/volume/volumeUrlState.ts";
 
 type TUrlSyncEntry = {
@@ -66,7 +67,9 @@ const GLOBE_URL_SYNC_MAP: TUrlSyncEntry[] = [
   {
     key: "gapFill",
     param: URL_PARAMETERS.SMOOTH,
-    transform: (enabled) => (enabled ? "true" : ""),
+    // written only off the deployment default, which a hash without it reads
+    transform: (enabled) =>
+      enabled === DEPLOYMENT_DEFAULTS.gapFill ? "" : String(enabled),
   },
   { key: "gapFillSize", param: URL_PARAMETERS.SMOOTH_KERNEL },
   {

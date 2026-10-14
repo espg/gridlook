@@ -284,3 +284,17 @@ it("keeps the gap-fill kernel to the sizes offered", () => {
   store.setGapFill(true);
   expect(store.gapFill).toBe(true);
 });
+
+it("starts the distance scale and gap smoothing as the page hash says", () => {
+  expect(useGlobeControlStore().showDistanceScale).toBe(true);
+  const page = globalThis.location;
+  vi.stubGlobal("location", {
+    hash: "#hive+https://x/y.zarr::distancescale=false::smooth=true::smoothkernel=31",
+  });
+  setActivePinia(createPinia());
+  const store = useGlobeControlStore();
+  expect(store.showDistanceScale).toBe(false);
+  expect(store.gapFill).toBe(true);
+  expect(store.gapFillSize).toBe(31);
+  vi.stubGlobal("location", page);
+});

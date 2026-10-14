@@ -10,6 +10,7 @@ import type {
 } from "../lib/types/GlobeTypes.ts";
 
 import { getCameraDistanceForVerticalSpan } from "@/lib/camera/cameraSettings.ts";
+import { deploymentValue } from "@/lib/config/deployment.ts";
 import {
   getGridType,
   GRID_TYPES,
@@ -68,9 +69,6 @@ import HoverReadout from "@/ui/overlays/HoverReadout.vue";
 import InfoPanel from "@/ui/overlays/InfoPanel.vue";
 
 const props = defineProps<{ src: string }>();
-
-// a zagg t-digest store opens on the signal heights' percentile
-const DIGEST_DEFAULT_VAR = "h_percentile_signal";
 
 useUrlSync();
 const { logError } = useLog();
@@ -288,8 +286,9 @@ function prepareDefaults(src: string, index: TSources) {
   varnameSelector.value =
     paramVarname.value ??
     modelInfo.value!.defaultVar ??
-    (validVars.includes(DIGEST_DEFAULT_VAR)
-      ? DIGEST_DEFAULT_VAR
+    // a zagg t-digest store opens on the signal heights' percentile
+    (validVars.includes(deploymentValue("digestDefaultVar"))
+      ? deploymentValue("digestDefaultVar")
       : validVars[0]);
 
   if (

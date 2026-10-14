@@ -18,6 +18,7 @@ import ProjectionControls from "./controls/ProjectionControls.vue";
 import VariableSelector from "./controls/VariableSelector.vue";
 
 // Import control components
+import { DEPLOYMENT_DEFAULTS } from "@/lib/config/deployment.ts";
 import type { T_GRID_TYPES } from "@/lib/data/gridTypeDetector.ts";
 import { digestStrata } from "@/lib/digest/digestProbe.ts";
 import { digestVariableOf } from "@/lib/digest/digestVariables.ts";
@@ -349,7 +350,11 @@ function initFromParams() {
   }
   // a URL naming a per-stratum variable reads that stratum
   store.setDigestStratum(paramStratum.value ?? selectedDigest.value?.stratum);
-  store.setGapFill(paramSmooth.value === "true");
+  store.setGapFill(
+    paramSmooth.value === undefined
+      ? DEPLOYMENT_DEFAULTS.gapFill
+      : paramSmooth.value === "true"
+  );
   if (paramSmoothKernel.value) {
     store.setGapFillSize(Number(paramSmoothKernel.value));
   }
