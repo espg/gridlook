@@ -301,7 +301,7 @@ describe("selectViewLevel", () => {
     );
     // very close in, derived 17; never the leaves (not in the ladder)
     for (const order of [17, 18, 19, 22]) {
-      const scale = scaleFor(order, FINE_DIGEST_PIXELS_PER_CELL);
+      const scale = scaleFor(order, FINE_DIGEST_PIXELS_PER_CELL.at(-1)!);
       expect(
         selectViewLevel(scale, VIEWPORT_PIXELS, HIVE, at(4), options)
       ).toBe(0);
@@ -406,11 +406,12 @@ describe("a level derived from the leaves", () => {
 });
 
 describe("pixelFloorOf", () => {
-  it("is 4 px at order 14 and 8 past it for a digest, else the default", () => {
+  it("is 4, 8 and 16 px at orders 14, 15 and 16 on for a digest, else the default", () => {
     expect(pixelFloorOf(resolution(13), true)).toBe(DEFAULT_PIXELS_PER_CELL);
     expect(pixelFloorOf(resolution(14), true)).toBe(4);
-    for (const order of [15, 16, 17]) {
-      expect(pixelFloorOf(resolution(order), true)).toBe(8);
+    expect(pixelFloorOf(resolution(15), true)).toBe(8);
+    for (const order of [16, 17]) {
+      expect(pixelFloorOf(resolution(order), true)).toBe(16);
     }
     expect(pixelFloorOf(resolution(14), false)).toBe(DEFAULT_PIXELS_PER_CELL);
   });

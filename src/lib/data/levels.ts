@@ -109,16 +109,15 @@ export const STREAMLINES_NEED_WHOLE_LEVEL =
 export const DEFAULT_PIXELS_PER_CELL = 2;
 
 /**
- * The floor of a digest level finer than `FINE_DIGEST_ORDER`: such a level
- * is loaded as a window, read again for every new area, so its cells must
- * span more pixels before it is picked than a level loaded whole: 4 at the
- * first windowed order, 8 past it (espg, 2026-10-14, after trying 4 and 8
- * everywhere, 6 and 8, then 4 and 6), 4 and 16 times fewer cells in view
- * than at 2.
+ * The floors of the digest levels finer than `FINE_DIGEST_ORDER`, one per
+ * order from the next, the last for every order past: such a level is
+ * loaded as a window, read again for every new area, so its cells must span
+ * more pixels before it is picked than a level loaded whole. 4 px at order
+ * 14, 8 at 15, 16 at 16 and finer (espg, 2026-10-14, after trying 4, 6 and
+ * 8 flat): 4, 16 and 64 times fewer cells in view than at 2.
  */
 export const FINE_DIGEST_ORDER = 13;
-export const FIRST_FINE_DIGEST_PIXELS_PER_CELL = 4;
-export const FINE_DIGEST_PIXELS_PER_CELL = 8;
+export const FINE_DIGEST_PIXELS_PER_CELL = [4, 8, 16];
 
 /** The pixel floor of a level of cells of `resolution` metres. */
 export function pixelFloorOf(resolution: number, digest: boolean) {
@@ -126,9 +125,8 @@ export function pixelFloorOf(resolution: number, digest: boolean) {
   if (!digest || order <= FINE_DIGEST_ORDER) {
     return DEFAULT_PIXELS_PER_CELL;
   }
-  return order === FINE_DIGEST_ORDER + 1
-    ? FIRST_FINE_DIGEST_PIXELS_PER_CELL
-    : FINE_DIGEST_PIXELS_PER_CELL;
+  const floors = FINE_DIGEST_PIXELS_PER_CELL;
+  return floors[Math.min(order - FINE_DIGEST_ORDER, floors.length) - 1];
 }
 
 /**
@@ -145,11 +143,10 @@ export const POINT_TIER = "points";
 
 /**
  * The point tier takes over once one cell of the finest level spans this
- * many pixels at the sub-camera point: twice the span at which a level one
- * order finer would be picked (espg, 2026-10-14: order 16 at 32 px, where
- * an order-17 cell would span 16; at 16 px the points came on too soon).
+ * many pixels at the sub-camera point (espg, 2026-10-14: order 16 at 32 px;
+ * at 16 px the points came on too soon).
  */
-export const POINT_TIER_PIXELS_PER_CELL = 4 * FINE_DIGEST_PIXELS_PER_CELL;
+export const POINT_TIER_PIXELS_PER_CELL = 32;
 
 /**
  * Hysteresis of the point tier's hand-off, in orders (log2 of cell size, so
