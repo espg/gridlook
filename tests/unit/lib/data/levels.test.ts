@@ -268,14 +268,14 @@ describe("selectViewLevel", () => {
     expect(selectViewLevel(scale, VIEWPORT_PIXELS, HIVE, at(13), options)).toBe(
       at(13)
     );
-    // order 14 waits for 6 px a cell: at 5.2 px, where 2 px would have
-    // taken 15, it is still 13
+    // order 14 waits for 4 px a cell: at 3.6 px, where 2 px would have
+    // taken 14, it is still 13
     expect(
-      selectViewLevel(scaleFor(15, 2.6), VIEWPORT_PIXELS, HIVE, at(13), options)
+      selectViewLevel(scaleFor(15, 1.8), VIEWPORT_PIXELS, HIVE, at(13), options)
     ).toBe(at(13));
-    // once the chunks fit, the finest derived level over its floor: at 10
-    // px per order-15 cell (5 per order-16 cell) that is 15, not 14 or 16
-    const fits = scaleFor(15, 10);
+    // once the chunks fit, the finest derived level over its floor: at 8 px
+    // per order-15 cell (4 per order-16 cell) that is 15, not 14 or 16
+    const fits = scaleFor(15, 8);
     expect(
       windowCost(
         derived(15),
@@ -406,11 +406,11 @@ describe("a level derived from the leaves", () => {
 });
 
 describe("pixelFloorOf", () => {
-  it("is 6 px at order 14 and 8 past it for a digest, else the default", () => {
+  it("is 4 px at order 14 and 6 past it for a digest, else the default", () => {
     expect(pixelFloorOf(resolution(13), true)).toBe(DEFAULT_PIXELS_PER_CELL);
-    expect(pixelFloorOf(resolution(14), true)).toBe(6);
+    expect(pixelFloorOf(resolution(14), true)).toBe(4);
     for (const order of [15, 16, 17]) {
-      expect(pixelFloorOf(resolution(order), true)).toBe(8);
+      expect(pixelFloorOf(resolution(order), true)).toBe(6);
     }
     expect(pixelFloorOf(resolution(14), false)).toBe(DEFAULT_PIXELS_PER_CELL);
   });
