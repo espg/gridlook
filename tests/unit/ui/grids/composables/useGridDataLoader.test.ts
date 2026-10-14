@@ -520,3 +520,47 @@ it("switches cached scalar backgrounds without reloading data or streamlines", a
     scope.stop();
   }
 });
+
+it("goes idle once every read has landed, and the next load ends the idle work", async () => {
+  const sources = {} as TSources;
+  const store = useGlobeControlStore();
+  let stale = false;
+  const idle: (() => boolean)[] = [];
+  const window = deferred();
+  const fetchAndRenderData = vi
+    .fn()
+    .mockResolvedValueOnce(undefined)
+    .mockImplementationOnce(() => window.promise)
+    .mockResolvedValue(undefined);
+  const scope = effectScope();
+  const loader = scope.run(() =>
+    useGridDataLoader({
+      getDatasources: () => sources,
+      getDataVar: vi.fn().mockResolvedValue({}),
+      fetchAndRenderData,
+      clearHoverLookup: vi.fn(),
+      prepareDatasource: vi.fn(),
+      viewWindowStale: () => stale,
+      onIdle: (isCurrent) => idle.push(isCurrent),
+      updateLandSeaMask: vi.fn(),
+      updateColormap: vi.fn(),
+    })
+  )!;
+  await loader.datasourceUpdate();
+  expect(idle).toHaveLength(1);
+  expect(idle[0]()).toBe(true);
+
+  // the camera leaves the window: the load that follows ends the idle work,
+  // and no idle work starts while it is in flight
+  stale = true;
+  const view = { latMin: 0, latMax: 1, lonSpan: 1, centreLat: 0, centreLon: 0 };
+  store.viewFootprint = { ...view, lonStart: 10 };
+  await vi.waitFor(() => expect(fetchAndRenderData).toHaveBeenCalledTimes(2));
+  expect(idle[0]()).toBe(false);
+  expect(idle).toHaveLength(1);
+  stale = false;
+  window.resolve();
+  await vi.waitFor(() => expect(idle).toHaveLength(2));
+  expect(idle[1]()).toBe(true);
+  scope.stop();
+});

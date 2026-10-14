@@ -17,6 +17,7 @@ import {
   DIGEST_CHUNK_BYTES,
   digestCellBytes,
   exceedsCellCap,
+  finerLevel,
   finestLevel,
   groundMetersPerPixel,
   healpixOrderOf,
@@ -148,6 +149,20 @@ it("lists the stored levels coarser than a level, the finest first", () => {
   expect(coarserLevels(levels, 1)).toEqual([]);
   // nothing to walk without a resolution on every level
   expect(coarserLevels([{ resolution: 100 }, {}], 0)).toEqual([]);
+});
+
+it("names the next finer level, derived or not, the one a zoom in reaches", () => {
+  const levels = [
+    { resolution: 100 },
+    { resolution: 400 },
+    { resolution: 200 },
+    { resolution: 50, derived: { dataset: "leaf", refinement: 1 } },
+  ];
+  expect(finerLevel(levels, 1)).toBe(2);
+  expect(finerLevel(levels, 2)).toBe(0);
+  expect(finerLevel(levels, 0)).toBe(3);
+  expect(finerLevel(levels, 3)).toBeUndefined();
+  expect(finerLevel([{ resolution: 100 }, {}], 0)).toBeUndefined();
 });
 
 it("names the coarsest level, when every level states its resolution", () => {

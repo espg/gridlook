@@ -16,6 +16,8 @@ const ORDERS = [9, 8, 7];
 
 // the level on screen
 let selected = 0;
+// whether the finest level is derived from leaf chunks
+let finestDerived = false;
 
 function sources(): TSources {
   const from = (dataset: string) => ({ store: "s.zarr", dataset });
@@ -28,6 +30,10 @@ function sources(): TSources {
       time: from(`${order}`),
       datasources: { t: from(`${order}`) },
       resolution: 6_500_000 / 2 ** order,
+      derived:
+        finestDerived && order === ORDERS[0]
+          ? { dataset: "leaf", refinement: 0 }
+          : undefined,
     })),
   } as unknown as TSources;
 }
@@ -50,14 +56,28 @@ const level = (index: number) => ({
   grid: new Grid({ scheme: "nested", level: ORDERS[index] }),
 });
 
+/** A range of one block of 4096 cells, on its face of order-3 blocks. */
+const blockRange = (block: number) => ({
+  start: 4096 * block,
+  end: 4096 * (block + 1),
+  face: Math.floor(block / 64),
+  lon: block,
+  lat: 0,
+});
+
 /** The fill over the three levels, each level's window as given. */
 function ancestorFill(
   windows: Record<number, { blocks: number[]; cut: boolean; clipped: boolean }>,
   onRead?: () => void,
-  cacheBytes?: number
+  cacheBytes?: number,
+  fetchRange: (range: { start: number; end: number }) => Promise<{
+    data: Float32Array;
+    cells: number[];
+  }> = async (range) => parts(range.start / 4096).get(0)![0]
 ) {
   setActivePinia(createPinia());
   selected = 0;
+  finestDerived = false;
   const reads: number[] = [];
   const blocksRead: number[][] = [];
   const fill = useAncestorFill({
@@ -87,6 +107,9 @@ function ancestorFill(
     show: vi.fn(),
     meshes: [],
     cacheBytes,
+    ranges: (_, blocks) => blocks.map(blockRange),
+    fetchRange: (_, range) => fetchRange(range),
+    byView: () => true,
   });
   return { fill, reads, blocksRead };
 }
@@ -177,4 +200,77 @@ it("lets the blocks farthest from the camera go past the bound, never the window
   expect(missing).toContain(63);
   expect(missing).not.toContain(0);
   expect(fill.take(1, "k", [0]).missing).toEqual([]);
+});
+
+it("reads the next finer level's blocks ahead into the cache only, for the next zoom to take", async () => {
+  const fetched: number[] = [];
+  const { fill, reads } = ancestorFill(
+    { 9: { blocks: [3, 1, 2], cut: false, clipped: false } },
+    undefined,
+    undefined,
+    async (range) => {
+      fetched.push(range.start / 4096);
+      return parts(range.start / 4096).get(0)![0];
+    }
+  );
+  // order 8 on screen: order 9 is next finer
+  selected = 1;
+  fill.keep(0, "k", level(0), parts(1), []);
+  expect(await fill.prefetch([0], "k", () => true)).toBe(2);
+  // block 1 was held: only 2 and 3 are read, and nothing is drawn
+  expect(fetched.sort()).toEqual([2, 3]);
+  expect(reads).toEqual([]);
+  expect(fill.take(0, "k", [1, 2, 3]).missing).toEqual([]);
+  expect(fill.take(0, "other", [2]).missing).toEqual([2]);
+});
+
+it("yields the moment a new load starts, and keeps nothing that lands after", async () => {
+  const landed: (() => void)[] = [];
+  const started: number[] = [];
+  let current = true;
+  const blocks = Array.from({ length: 20 }, (_, block) => block);
+  const { fill } = ancestorFill(
+    { 9: { blocks, cut: false, clipped: false } },
+    undefined,
+    undefined,
+    (range) =>
+      new Promise((resolve) => {
+        started.push(range.start / 4096);
+        landed.push(() => resolve(parts(range.start / 4096).get(0)![0]));
+      })
+  );
+  selected = 1;
+  const prefetch = fill.prefetch([0], "k", () => current);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const inFlight = started.length;
+  expect(inFlight).toBeLessThan(blocks.length);
+  // a camera move starts a load: what is in flight lands, unkept
+  current = false;
+  landed.forEach((land) => land());
+  expect(await prefetch).toBe(0);
+  expect(started).toHaveLength(inFlight);
+  expect(fill.take(0, "k", blocks).missing).toEqual(blocks);
+});
+
+it("reads nothing ahead when the next finer level is derived, or under manual picks", async () => {
+  const fetchRange = vi.fn(
+    async (range: { start: number }) => parts(range.start / 4096).get(0)![0]
+  );
+  const { fill } = ancestorFill(
+    { 9: { blocks: [0], cut: false, clipped: false } },
+    undefined,
+    undefined,
+    fetchRange
+  );
+  selected = 1;
+  finestDerived = true;
+  expect(await fill.prefetch([0], "k", () => true)).toBe(0);
+  finestDerived = false;
+  useGlobeControlStore().levelAuto = false;
+  expect(await fill.prefetch([0], "k", () => true)).toBe(0);
+  // the finest level on screen has nothing finer
+  useGlobeControlStore().levelAuto = true;
+  selected = 0;
+  expect(await fill.prefetch([0], "k", () => true)).toBe(0);
+  expect(fetchRange).not.toHaveBeenCalled();
 });
