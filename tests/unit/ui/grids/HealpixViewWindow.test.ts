@@ -672,11 +672,12 @@ it("reuses the fields in memory across a zoom between neighbouring levels", asyn
       .some((v) => v < 0)
   ).toBe(true);
 
-  // zooming back in: the parent is beneath from memory, the level is read
+  // zooming back in: the parent is beneath from memory, and the level's
+  // blocks come back from the cache, not read again
   sources.selectedLevel = 0;
   await until(() => hover.lookup?.(11, 31)?.value === cellAt(10, 11, 31) + 1);
   expect(fetchedCells("t", "parent")).toBe(parentCells);
-  expect(fetchedCells("t")).toBe(2 * fineCells);
+  expect(fetchedCells("t")).toBe(fineCells);
   expect(drawnFaces(-0.5).flatMap(texels).some(hasFraction)).toBe(true);
 });
 

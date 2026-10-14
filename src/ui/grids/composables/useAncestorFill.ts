@@ -4,7 +4,11 @@ import type * as zarr from "zarrita";
 
 import { coarserLevels } from "@/lib/data/levels.ts";
 import { digestVariableOf } from "@/lib/digest/digestVariables.ts";
-import type { TFaceParts } from "@/lib/grids/healpixBlockFetch.ts";
+import {
+  blockParts,
+  createBlockCache,
+  type TFaceParts,
+} from "@/lib/grids/healpixBlockFetch.ts";
 import {
   decodeHealpixFaceXY,
   type THealpixDataRect,
@@ -49,29 +53,33 @@ export type TBeneath = {
   batches: THealpixBatch[];
 };
 
-/** The faces of a level as read over its window, and as built. */
-type TLevelField = {
+/**
+ * The faces of a level as last built over its window: the blocks it holds
+ * and its textures. The blocks are kept in the cache (never let go while
+ * the level is on screen or beneath); the textures go with the level.
+ */
+type TBuiltField = {
   key: string;
-  grid: healpixGeo.Grid;
-  cellsPerBlock: number;
-  parts: TFaceParts;
+  blocks: Set<number>;
   batches: THealpixBatch[];
 };
-
-/**
- * How many levels' fields are kept: the level on screen and the one beneath
- * it. Zooming in, the level on screen becomes the one beneath with no read;
- * zooming out, the level beneath comes on screen reading only the blocks
- * its window gains. A field is one window (at most the view cap of cells,
- * or the byte budget's worth of digest cells) as values, cell ids and the
- * textures built from them; the coarsest level, loaded whole, is kept
- * beside these for the colour range.
- */
-const KEPT_FIELDS = 2;
 
 const cellsPerBlockOf = (level: Pick<TReadLevel, "grid" | "blockDepth">) =>
   4 **
   (level.grid.level - healpixBlockLevel(level.grid.level, level.blockDepth));
+
+/** The centres of a level's blocks, lon and lat interleaved (degrees). */
+function blockCentres(
+  level: Pick<TReadLevel, "grid" | "blockDepth">,
+  blocks: number[]
+) {
+  const { grid, blockDepth } = level;
+  using blockGrid = grid.replace({
+    level: healpixBlockLevel(grid.level, blockDepth),
+    scheme: "nested",
+  });
+  return blockGrid.healpixToLonLat(BigUint64Array.from(blocks, BigInt));
+}
 
 /**
  * The value a drawn face holds for a point, from the texture itself: the
@@ -120,8 +128,9 @@ export function faceValue(
  * coarser stored level whose window fits its budget at this view, or else
  * the coarsest, which is loaded whole) is read and drawn beneath, so that
  * the cells not yet landed, and those the budget leaves out, show the
- * parent instead of nothing. The fields read are kept (`KEPT_FIELDS`) so
- * that a zoom between neighbouring levels reads only what is new.
+ * parent instead of nothing. The blocks read are kept in a cache bounded by
+ * decoded bytes (`createBlockCache`), so that a pan back or a zoom between
+ * levels reads only what it has not held.
  */
 // eslint-disable-next-line max-lines-per-function
 export function useAncestorFill(options: {
@@ -154,54 +163,76 @@ export function useAncestorFill(options: {
   show: (beneath: TBeneath | undefined) => void;
   /** The meshes drawn beneath. */
   meshes: readonly (THREE.Mesh | undefined)[];
+  /** Decoded bytes the block cache may hold (`DEFAULT_BLOCK_CACHE_BYTES`). */
+  cacheBytes?: number;
 }) {
   const store = useGlobeControlStore();
-  const fields = new Map<number, TLevelField>();
+  const cache = createBlockCache(options.cacheBytes);
+  const built = new Map<number, TBuiltField>();
   let shown: TBeneath | undefined;
 
-  /** The blocks a part of a face covers. */
-  function blocksOf(
-    part: { range: { start: number; end: number } },
-    cellsPerBlock: number
-  ) {
-    const blocks: number[] = [];
-    for (
-      let block = Math.floor(part.range.start / cellsPerBlock);
-      block < Math.ceil(part.range.end / cellsPerBlock);
-      block++
-    ) {
-      blocks.push(block);
+  /**
+   * What a level's window can take from the cache: the parts of the blocks
+   * it holds, by face, and the blocks still to read. A block is one part, so
+   * the parts seeded are disjoint, and none of them is read again.
+   */
+  function take(index: number, key: string, blocks: number[]) {
+    const seed: TFaceParts = new Map();
+    const missing: number[] = [];
+    for (const block of blocks) {
+      const held = cache.get(index, key, block);
+      if (!held) {
+        missing.push(block);
+      } else if (seed.has(held.face)) {
+        seed.get(held.face)!.push(held.part);
+      } else {
+        seed.set(held.face, [held.part]);
+      }
     }
-    return blocks;
+    return { seed, missing };
+  }
+
+  /** Let the blocks farthest from the camera go, past the cache's bound. */
+  function evict() {
+    cache.evict(
+      store.viewFootprint ?? { centreLon: 0, centreLat: 0 },
+      (index, block) => built.get(index)?.blocks.has(block) ?? false
+    );
+  }
+
+  /** Hold the parts of a level in the cache, block by block; their blocks. */
+  function hold(
+    index: number,
+    key: string,
+    level: Pick<TReadLevel, "grid" | "blockDepth">,
+    parts: TFaceParts
+  ) {
+    const cellsPerBlock = cellsPerBlockOf(level);
+    const cut = [...parts].flatMap(([face, faceParts]) =>
+      faceParts.flatMap((part) =>
+        blockParts(part, cellsPerBlock).map((held) => ({ face, ...held }))
+      )
+    );
+    const centres = blockCentres(
+      level,
+      cut.map(({ block }) => block)
+    );
+    cut.forEach(({ face, block, part }, at) =>
+      cache.add(index, key, block, {
+        face,
+        part,
+        lon: centres[2 * at],
+        lat: centres[2 * at + 1],
+      })
+    );
+    return cut.map(({ block }) => block);
   }
 
   /**
-   * What a level's window can take from its kept field: the parts that
-   * reach into `blocks`, by face, and the blocks still to read.
+   * Keep a level's field as read and built over its window: its blocks join
+   * the cache, held while the level is on screen or beneath, and its
+   * textures are kept for a redraw with no read.
    */
-  function take(index: number, key: string, blocks: number[]) {
-    const field = fields.get(index);
-    if (!field || field.key !== key) {
-      return { seed: new Map() as TFaceParts, missing: blocks };
-    }
-    const required = new Set(blocks);
-    const have = new Set<number>();
-    const seed: TFaceParts = new Map();
-    for (const [face, parts] of field.parts) {
-      const kept = parts.filter((part) =>
-        blocksOf(part, field.cellsPerBlock).some((block) => required.has(block))
-      );
-      for (const part of kept) {
-        blocksOf(part, field.cellsPerBlock).forEach((block) => have.add(block));
-      }
-      if (kept.length > 0) {
-        seed.set(face, kept);
-      }
-    }
-    return { seed, missing: blocks.filter((block) => !have.has(block)) };
-  }
-
-  /** Keep a level's field as read and built over its window. */
   function keep(
     index: number,
     key: string,
@@ -209,23 +240,23 @@ export function useAncestorFill(options: {
     parts: TFaceParts,
     batches: THealpixBatch[]
   ) {
-    fields.set(index, {
-      key,
-      grid: level.grid,
-      cellsPerBlock: cellsPerBlockOf(level),
-      parts,
-      batches,
-    });
+    const blocks = new Set(hold(index, key, level, parts));
+    built.set(index, { key, blocks, batches });
+    evict();
   }
 
-  /** Let go of every field but those of `indices` (at most `KEPT_FIELDS`). */
+  /**
+   * Let go of the textures of every level but those of `indices` (the level
+   * on screen and the one beneath): the blocks of the others stay in the
+   * cache, now free to go, while its bound holds.
+   */
   function retain(indices: (number | undefined)[]) {
-    const wanted = indices.filter((index) => index !== undefined);
-    for (const index of [...fields.keys()]) {
-      if (!wanted.slice(0, KEPT_FIELDS).includes(index)) {
-        fields.delete(index);
+    for (const index of [...built.keys()]) {
+      if (!indices.includes(index)) {
+        built.delete(index);
       }
     }
+    evict();
   }
 
   /** A dense nested level and its window's blocks, or nothing to window. */
@@ -268,7 +299,7 @@ export function useAncestorFill(options: {
     };
   }
 
-  /** Draw a level's window beneath, reading only what its field lacks. */
+  /** Draw a level's window beneath, reading only what the cache lacks. */
   async function fill(
     index: number,
     level: TReadLevel,
@@ -279,8 +310,11 @@ export function useAncestorFill(options: {
   ) {
     const levelKey = `${index}:${key}`;
     const { seed, missing } = take(index, key, blocks);
-    const field = fields.get(index);
-    if (field && missing.length === 0) {
+    const field = built.get(index);
+    if (
+      field?.key === key &&
+      blocks.every((block) => field.blocks.has(block))
+    ) {
       shown = beneathOf(index, levelKey, level, field.batches);
       options.show(shown);
       return shown;
@@ -373,7 +407,7 @@ export function useAncestorFill(options: {
         // coarser level is the parent instead
         continue;
       }
-      // the fields of the level and of this parent only, before the read
+      // the textures of the level and of this parent only, before the read
       retain([sources.selectedLevel ?? 0, index]);
       return await fill(index, level, window.blocks, key, indices, isCurrent);
     }

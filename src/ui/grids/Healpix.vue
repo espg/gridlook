@@ -1623,7 +1623,8 @@ async function fetchAndRenderData(
     return;
   }
   const own = loadedBlocks && fill.take(selected, key, loadedBlocks);
-  // at most the level's field and its parent's, from before the level's read
+  // the textures of the level and its parent only, from before the level's
+  // read; the blocks of other levels stay cached within the bound
   fill.retain([selected, beneath?.index]);
   const result = await processHealpixChunks(level, indices, isCurrent, {
     cells: cellCoord,

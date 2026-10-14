@@ -3,11 +3,14 @@ import { expect, it } from "vitest";
 
 import "@/utils/disposablePolyfill.ts";
 import {
+  blockParts,
+  createBlockCache,
   createFaceAssembly,
   createWindowRead,
   fetchInOrder,
   rangeDistance,
   orderedBlockRanges,
+  partBytes,
   readFaceProgressively,
   readRanges,
 } from "@/lib/grids/healpixBlockFetch.ts";
@@ -261,4 +264,74 @@ it("ranks a block range by its centre's great-circle distance from the camera", 
   const range = { face: 0, start: 0, end: 4, lon: 10, lat: 0 };
   expect(rangeDistance(range, { centreLon: 10, centreLat: 0 })).toBeCloseTo(0);
   expect(rangeDistance(range, { centreLon: 20, centreLat: 0 })).toBeCloseTo(10);
+});
+
+/** A block of 4 cells as held: 4 values, 4 ids (48 bytes), centred at `lon`. */
+const heldBlock = (block: number, lon: number) => ({
+  face: 0,
+  part: {
+    range: { start: 4 * block, end: 4 * block + 4 },
+    data: new Float32Array(4),
+    cells: [0, 1, 2, 3].map((cell) => 4 * block + cell),
+  },
+  lon,
+  lat: 0,
+});
+
+it("cuts a part into one part per block, a sparse block empty", () => {
+  const part = {
+    range: { start: 8, end: 20 },
+    data: Float32Array.of(1, 2, 3, 4),
+    cells: [8, 9, 17, 19],
+  };
+  const cut = blockParts(part, 4);
+  expect(cut.map(({ block }) => block)).toEqual([2, 3, 4]);
+  expect(cut[0].part).toEqual({
+    range: { start: 8, end: 12 },
+    data: Float32Array.of(1, 2),
+    cells: [8, 9],
+  });
+  expect(cut[1].part.cells).toEqual([]);
+  expect([...cut[2].part.data]).toEqual([3, 4]);
+  expect(cut.reduce((sum, { part }) => sum + partBytes(part), 0)).toBe(
+    partBytes(part)
+  );
+  // a part of one block is held as it is
+  const one = { ...part, range: { start: 8, end: 12 } };
+  expect(blockParts(one, 4)[0].part).toBe(one);
+});
+
+it("holds a block per level and key, and misses on another key", () => {
+  const cache = createBlockCache();
+  cache.add(3, "a", 7, heldBlock(7, 0));
+  expect(cache.get(3, "a", 7)?.part.range).toEqual({ start: 28, end: 32 });
+  expect(cache.get(3, "b", 7)).toBeUndefined();
+  expect(cache.get(2, "a", 7)).toBeUndefined();
+  // a block held again is counted once
+  cache.add(3, "a", 7, heldBlock(7, 0));
+  expect(cache.bytes()).toBe(48);
+  // another key for the level lets the stale blocks go
+  cache.add(3, "b", 8, heldBlock(8, 0));
+  expect(cache.get(3, "a", 7)).toBeUndefined();
+  expect(cache.bytes()).toBe(48);
+});
+
+it("evicts the blocks farthest from the camera first, never those kept, within the bound", () => {
+  // room for three blocks of 48 bytes
+  const cache = createBlockCache(3 * 48);
+  const lons = [0, 10, 170, 20, 90];
+  lons.forEach((lon, block) => cache.add(0, "k", block, heldBlock(block, lon)));
+  expect(cache.bytes()).toBe(5 * 48);
+  // block 2, the farthest, is on screen: 4 and then 3 go instead
+  cache.evict({ centreLon: 0, centreLat: 0 }, (_, block) => block === 2);
+  expect(cache.bytes()).toBe(3 * 48);
+  const held = lons.map((_, block) => cache.get(0, "k", block) !== undefined);
+  expect(held).toEqual([true, true, true, false, false]);
+  // over the bound with only kept blocks left, nothing kept goes
+  cache.add(1, "k", 0, heldBlock(0, 0));
+  cache.evict({ centreLon: 0, centreLat: 0 }, () => true);
+  expect(cache.bytes()).toBe(4 * 48);
+  cache.evict({ centreLon: 0, centreLat: 0 }, () => false);
+  expect(cache.get(0, "k", 2)).toBeUndefined();
+  expect(cache.bytes()).toBeLessThanOrEqual(3 * 48);
 });
