@@ -6,6 +6,7 @@ import {
   createFaceAssembly,
   createWindowRead,
   fetchInOrder,
+  rangeDistance,
   orderedBlockRanges,
   readFaceProgressively,
   readRanges,
@@ -157,6 +158,8 @@ it("reads a window's faces as their ranges land, the seeded parts first", async 
     face,
     start: block * 4,
     end: (block + 1) * 4,
+    lon: 0,
+    lat: 0,
   });
   const cells = ({ start, end }: { start: number; end: number }) => ({
     cells: Array.from({ length: end - start }, (_, i) => start + i),
@@ -205,4 +208,57 @@ it("reads every range of a face a few at a time, in ascending order", async () =
   expect(most).toBe(8);
   expect(face.cells).toEqual(Array.from({ length: 200 }, (_, i) => i));
   expect(Array.from(face.data)).toEqual(face.cells);
+});
+
+it("re-ranks what is left each time a slot frees, nothing in flight abandoned", async () => {
+  // one fetch at a time; the rank flips after the first start, as a pan would
+  const items = ["a", "b", "c", "d"];
+  let flipped = false;
+  const rankOf = { a: 0, b: 1, c: 2, d: 3 } as Record<string, number>;
+  const started: string[] = [];
+  const landings = fetchInOrder(
+    items,
+    async (item) => {
+      started.push(item);
+      flipped = true;
+      return item;
+    },
+    {
+      concurrency: 1,
+      rank: (item) => (flipped ? -rankOf[item] : rankOf[item]),
+    }
+  );
+  const landed: string[] = [];
+  for (
+    let landing = await landings.next();
+    landing;
+    landing = await landings.next()
+  ) {
+    landed.push(landing.item);
+  }
+  // "a" was first under the original rank; then the order reverses for the rest
+  expect(started).toEqual(["a", "d", "c", "b"]);
+  expect(landed.sort()).toEqual(items);
+});
+
+it("keeps the given order when no rank is passed", async () => {
+  const started: number[] = [];
+  const landings = fetchInOrder(
+    [3, 1, 2],
+    async (item) => {
+      started.push(item);
+      return item;
+    },
+    { concurrency: 1 }
+  );
+  while (await landings.next()) {
+    // drain
+  }
+  expect(started).toEqual([3, 1, 2]);
+});
+
+it("ranks a block range by its centre's great-circle distance from the camera", () => {
+  const range = { face: 0, start: 0, end: 4, lon: 10, lat: 0 };
+  expect(rangeDistance(range, { centreLon: 10, centreLat: 0 })).toBeCloseTo(0);
+  expect(rangeDistance(range, { centreLon: 20, centreLat: 0 })).toBeCloseTo(10);
 });

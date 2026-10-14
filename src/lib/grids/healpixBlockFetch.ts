@@ -1,11 +1,23 @@
 import type { Grid } from "healpix-geo";
 
-import { blocksByDistance, healpixBlockRanges } from "./healpixWindow.ts";
+import {
+  blocksByDistance,
+  degreesApart,
+  healpixBlockRanges,
+} from "./healpixWindow.ts";
 
 import type { TAxisRange } from "@/lib/data/viewWindow.ts";
 
-/** A run of cells of a view window read in one go, on one face. */
-export type TBlockRange = TAxisRange & { face: number };
+/**
+ * A run of cells of a view window read in one go, on one face, and the
+ * centre of its nearest block (degrees): where it sits, to re-rank it against
+ * a camera that has moved since the window was built.
+ */
+export type TBlockRange = TAxisRange & {
+  face: number;
+  lon: number;
+  lat: number;
+};
 
 /** The cells of a range as read: their values and their ids. */
 export type TRangeCells = { data: Float32Array; cells: number[] };
@@ -37,17 +49,77 @@ export function orderedBlockRanges(
   );
   const faceBlocks = 4 ** blockGrid.level;
   const ascending = [...blocks].sort((a, b) => a - b);
-  return healpixBlockRanges(ascending, cellsPerBlock, chunkCells)
+  const placed = healpixBlockRanges(ascending, cellsPerBlock, chunkCells)
     .map((range) => {
       const first = range.start / cellsPerBlock;
-      let nearest = Infinity;
+      let [nearest, nearestBlock] = [Infinity, first];
       for (let block = first; block < range.end / cellsPerBlock; block++) {
-        nearest = Math.min(nearest, rank.get(block)!);
+        if (rank.get(block)! < nearest) {
+          [nearest, nearestBlock] = [rank.get(block)!, block];
+        }
       }
-      return { range, face: Math.floor(first / faceBlocks), nearest };
+      return {
+        range,
+        face: Math.floor(first / faceBlocks),
+        nearest,
+        nearestBlock,
+      };
     })
-    .sort((a, b) => a.nearest - b.nearest)
-    .map(({ range, face }) => ({ ...range, face }));
+    .sort((a, b) => a.nearest - b.nearest);
+  const centres = blockGrid.healpixToLonLat(
+    BigUint64Array.from(placed, ({ nearestBlock }) => BigInt(nearestBlock))
+  );
+  return placed.map(({ range, face }, index) => ({
+    ...range,
+    face,
+    lon: centres[2 * index],
+    lat: centres[2 * index + 1],
+  }));
+}
+
+/**
+ * The rank of a block range against a camera centre (lower is read sooner):
+ * its nearest block's great-circle distance from the point, in degrees.
+ */
+export function rangeDistance(
+  range: TBlockRange,
+  centre: { centreLon: number; centreLat: number }
+) {
+  return degreesApart(range.lon, range.lat, centre.centreLon, centre.centreLat);
+}
+
+/** How `fetchInOrder` paces and orders its fetches. */
+type TFetchOptions<TItem> = {
+  concurrency?: number;
+  isCurrent?: () => boolean;
+  rank?: (item: TItem) => number;
+};
+
+/** Remove and return the next item: the first, or the one `rank` puts lowest now. */
+function takeNext<TItem>(
+  remaining: TItem[],
+  rank?: (item: TItem) => number
+): TItem {
+  if (!rank || remaining.length === 1) {
+    return remaining.shift()!;
+  }
+  let [best, bestRank] = [0, rank(remaining[0])];
+  for (let index = 1; index < remaining.length; index++) {
+    const value = rank(remaining[index]);
+    if (value < bestRank) {
+      [best, bestRank] = [index, value];
+    }
+  }
+  return remaining.splice(best, 1)[0];
+}
+
+/** Items still to start, handed out first-first or lowest-`rank`-now first. */
+function rankedQueue<TItem>(items: TItem[], rank?: (item: TItem) => number) {
+  const remaining = [...items];
+  return {
+    size: () => remaining.length,
+    take: () => takeNext(remaining, rank),
+  };
 }
 
 /**
@@ -55,18 +127,24 @@ export function orderedBlockRanges(
  * result over as it lands, in the order they land. `next` resolves with
  * undefined once nothing more will land; a fetch that fails makes it
  * throw. Once `isCurrent` is false nothing more is started.
+ *
+ * With `rank`, the order is re-taken every time a slot frees: the next item
+ * started is the one `rank` puts lowest NOW, not where it sat when the list
+ * was built. A window read ranks by distance from the current camera, so
+ * the cells still to read follow a pan instead of finishing around where
+ * the camera used to be. Nothing already in flight is abandoned.
  */
 export function fetchInOrder<TItem, TResult>(
   items: TItem[],
   fetch: (item: TItem) => Promise<TResult>,
-  options: { concurrency?: number; isCurrent?: () => boolean } = {}
+  options: TFetchOptions<TItem> = {}
 ) {
   const { concurrency = FETCH_CONCURRENCY, isCurrent = () => true } = options;
   const landed: { item: TItem; result: TResult }[] = [];
   let failure: { error: unknown } | undefined;
-  let [position, inFlight] = [0, 0];
+  const queue = rankedQueue(items, options.rank);
+  let inFlight = 0;
   let wake: (() => void) | undefined;
-
   async function run(item: TItem) {
     inFlight++;
     try {
@@ -83,11 +161,11 @@ export function fetchInOrder<TItem, TResult>(
   function start() {
     while (
       inFlight < concurrency &&
-      position < items.length &&
+      queue.size() > 0 &&
       !failure &&
       isCurrent()
     ) {
-      void run(items[position++]);
+      void run(queue.take());
     }
   }
   start();
@@ -100,7 +178,7 @@ export function fetchInOrder<TItem, TResult>(
       if (failure) {
         throw failure.error;
       }
-      if (inFlight === 0 && (position >= items.length || !isCurrent())) {
+      if (inFlight === 0 && (queue.size() === 0 || !isCurrent())) {
         return undefined;
       }
       await new Promise<void>((resolve) => (wake = resolve));

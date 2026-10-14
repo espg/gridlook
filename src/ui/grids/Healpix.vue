@@ -64,6 +64,7 @@ import {
 import {
   createWindowRead,
   fetchInOrder,
+  rangeDistance,
   orderedBlockRanges,
   readFaceProgressively,
   readRanges,
@@ -1314,6 +1315,12 @@ async function processHealpixChunks(
     createWindowRead(
       fetchInOrder(ranges, (range) => fetchCellRange(level, range, indices), {
         isCurrent,
+        // re-ranked as the camera moves: the cells still to read follow a pan
+        rank: (range) =>
+          rangeDistance(
+            range,
+            store.viewFootprint ?? { centreLon: 0, centreLat: 0 }
+          ),
       }),
       ranges,
       window!.seed

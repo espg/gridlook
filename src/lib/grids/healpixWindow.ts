@@ -66,7 +66,13 @@ function healpixBlockSide(blockLevel: number) {
 }
 
 /** Great-circle distance between two points, in degrees. */
-function degreesApart(lon: number, lat: number, toLon: number, toLat: number) {
+/** Great-circle distance between two points, in degrees. */
+export function degreesApart(
+  lon: number,
+  lat: number,
+  toLon: number,
+  toLat: number
+) {
   const cosine =
     Math.sin(lat * RADIANS) * Math.sin(toLat * RADIANS) +
     Math.cos(lat * RADIANS) *
