@@ -3,7 +3,10 @@ import { Grid } from "healpix-geo";
 import { createPinia, setActivePinia } from "pinia";
 import { expect, it, vi } from "vitest";
 
-import type { TFaceParts } from "@/lib/grids/healpixBlockFetch.ts";
+import {
+  fetchConcurrency,
+  type TFaceParts,
+} from "@/lib/grids/healpixBlockFetch.ts";
 import type { TViewFootprint } from "@/lib/projection/viewFootprint.ts";
 import { ZARR_FORMAT, type TSources } from "@/lib/types/GlobeTypes.ts";
 import { useGlobeControlStore } from "@/store/store.ts";
@@ -228,7 +231,11 @@ it("yields the moment a new load starts, and keeps nothing that lands after", as
   const landed: (() => void)[] = [];
   const started: number[] = [];
   let current = true;
-  const blocks = Array.from({ length: 20 }, (_, block) => block);
+  // more blocks than the reads in flight at once, so a load lands mid-prefetch
+  const blocks = Array.from(
+    { length: 2 * fetchConcurrency() },
+    (_, block) => block
+  );
   const { fill } = ancestorFill(
     { 9: { blocks, cut: false, clipped: false } },
     undefined,
@@ -243,6 +250,7 @@ it("yields the moment a new load starts, and keeps nothing that lands after", as
   const prefetch = fill.prefetch([0], "k", () => current);
   await new Promise((resolve) => setTimeout(resolve, 0));
   const inFlight = started.length;
+  expect(inFlight).toBeLessThanOrEqual(fetchConcurrency());
   expect(inFlight).toBeLessThan(blocks.length);
   // a camera move starts a load: what is in flight lands, unkept
   current = false;

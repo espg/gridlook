@@ -3,6 +3,9 @@ import { expect, it } from "vitest";
 
 import "@/utils/disposablePolyfill.ts";
 import {
+  fetchConcurrency,
+  concurrencyFor,
+  fetchOverride,
   blockParts,
   createBlockCache,
   createFaceAssembly,
@@ -37,11 +40,18 @@ it("orders a window's ranges by their distance from the camera", () => {
     end: (under + 4) * 4096,
     face: Math.floor(under / 4 ** 6),
   });
-  expect(ranges[1]).toEqual({
+  expect(ranges[1]).toMatchObject({
     start: (7 * 4 ** 6 + 5) * 4096,
     end: (7 * 4 ** 6 + 6) * 4096,
     face: 7,
   });
+  // each range carries its nearest block's centre, to re-rank against a moved camera
+  expect(
+    rangeDistance(ranges[0], { centreLon: 31, centreLat: 11 })
+  ).toBeLessThan(2);
+  expect(
+    rangeDistance(ranges[1], { centreLon: 31, centreLat: 11 })
+  ).toBeGreaterThan(20);
   // a run never crosses into another chunk
   const chunked = orderedBlockRanges(blockGrid, blocks, 4096, 2 * 4096, 31, 11);
   expect(chunked).toHaveLength(under % 2 === 0 ? 3 : 4);
@@ -208,7 +218,9 @@ it("reads every range of a face a few at a time, in ascending order", async () =
       cells: Array.from({ length: end - start }, (_, i) => start + i),
     };
   });
-  expect(most).toBe(8);
+  // the cap now: no protocol to read in a test, so the multiplexed one
+  expect(most).toBe(fetchConcurrency());
+  expect(most).toBe(32);
   expect(face.cells).toEqual(Array.from({ length: 200 }, (_, i) => i));
   expect(Array.from(face.data)).toEqual(face.cells);
 });
@@ -334,4 +346,21 @@ it("evicts the blocks farthest from the camera first, never those kept, within t
   cache.evict({ centreLon: 0, centreLat: 0 }, () => false);
   expect(cache.get(0, "k", 2)).toBeUndefined();
   expect(cache.bytes()).toBeLessThanOrEqual(3 * 48);
+});
+
+it("caps reads at 8 on HTTP/1.x and 32 otherwise, unless the hash overrides", () => {
+  expect(concurrencyFor("http/1.1")).toBe(8);
+  expect(concurrencyFor("http/1.0")).toBe(8);
+  expect(concurrencyFor("h2")).toBe(32);
+  expect(concurrencyFor("h3")).toBe(32);
+  // not reported (a cross-origin entry may hide it): counted as multiplexed
+  expect(concurrencyFor("")).toBe(32);
+  expect(concurrencyFor(undefined)).toBe(32);
+  expect(concurrencyFor("http/1.1", 64)).toBe(64);
+  expect(fetchOverride("#hive+https://x/y.zarr::fetch=64")).toBe(64);
+  expect(fetchOverride("#hive+https://x/y.zarr::fetch=64::lat=37")).toBe(64);
+  expect(fetchOverride("#fetch=16")).toBe(16);
+  expect(fetchOverride("#hive+https://x/y.zarr")).toBeUndefined();
+  expect(fetchOverride("#hive+https://x/y.zarr::fetch=0")).toBeUndefined();
+  expect(fetchOverride("#hive+https://x/y.zarr::fetch=abc")).toBeUndefined();
 });
