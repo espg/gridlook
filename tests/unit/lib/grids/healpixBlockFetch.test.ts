@@ -1,5 +1,5 @@
 import { Grid } from "healpix-geo";
-import { expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 
 import "@/utils/disposablePolyfill.ts";
 import {
@@ -29,7 +29,17 @@ const deferred = <T>() => {
 };
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+/** One chunk a range, as `::chunks=1` asks: one range per run in a chunk. */
+function oneChunkARange() {
+  vi.stubGlobal("location", { hash: "#hive+https://x/y.zarr::chunks=1" });
+}
+
 it("orders a window's ranges by their distance from the camera", () => {
+  oneChunkARange();
   using blockGrid = new Grid({ scheme: "nested", level: 6 });
   const under = Number(blockGrid.lonLatToHealpix(Float64Array.of(31, 11))[0]);
   // the block under the camera, its neighbours and one far away
@@ -221,7 +231,7 @@ it("reads every range of a face a few at a time, in ascending order", async () =
   });
   // the cap now: no protocol to read in a test, so the multiplexed one
   expect(most).toBe(fetchConcurrency());
-  expect(most).toBe(32);
+  expect(most).toBe(16);
   expect(face.cells).toEqual(Array.from({ length: 200 }, (_, i) => i));
   expect(Array.from(face.data)).toEqual(face.cells);
 });
@@ -349,14 +359,14 @@ it("evicts the blocks farthest from the camera first, never those kept, within t
   expect(cache.bytes()).toBeLessThanOrEqual(3 * 48);
 });
 
-it("caps reads at 8 on HTTP/1.x and 32 otherwise, unless the hash overrides", () => {
+it("caps reads at 8 on HTTP/1.x and 16 otherwise, unless the hash overrides", () => {
   expect(concurrencyFor("http/1.1")).toBe(8);
   expect(concurrencyFor("http/1.0")).toBe(8);
-  expect(concurrencyFor("h2")).toBe(32);
-  expect(concurrencyFor("h3")).toBe(32);
+  expect(concurrencyFor("h2")).toBe(16);
+  expect(concurrencyFor("h3")).toBe(16);
   // not reported (a cross-origin entry may hide it): counted as multiplexed
-  expect(concurrencyFor("")).toBe(32);
-  expect(concurrencyFor(undefined)).toBe(32);
+  expect(concurrencyFor("")).toBe(16);
+  expect(concurrencyFor(undefined)).toBe(16);
   expect(concurrencyFor("http/1.1", 64)).toBe(64);
   expect(fetchOverride("#hive+https://x/y.zarr::fetch=64")).toBe(64);
   expect(fetchOverride("#hive+https://x/y.zarr::fetch=64::lat=37")).toBe(64);
@@ -366,14 +376,15 @@ it("caps reads at 8 on HTTP/1.x and 32 otherwise, unless the hash overrides", ()
   expect(fetchOverride("#hive+https://x/y.zarr::fetch=abc")).toBeUndefined();
 });
 
-it("spans ranges over ::chunks= aligned chunks, one chunk by default", () => {
-  expect(rangeChunks("#hive+https://x/y.zarr")).toBe(1);
+it("spans ranges over ::chunks= aligned chunks, four by default", () => {
+  expect(rangeChunks("#hive+https://x/y.zarr")).toBe(4);
   expect(rangeChunks("#hive+https://x/y.zarr::chunks=4")).toBe(4);
   expect(
     rangeChunks("#hive+https://x/y.zarr::fetch=64::chunks=6::lat=37")
   ).toBe(6);
-  expect(rangeChunks("#hive+https://x/y.zarr::chunks=0")).toBe(1);
+  expect(rangeChunks("#hive+https://x/y.zarr::chunks=0")).toBe(4);
   // the same run of eight one-chunk blocks: eight ranges, then two of four
+  oneChunkARange();
   using blockGrid = new Grid({ scheme: "nested", level: 6 });
   const blocks = Array.from({ length: 8 }, (_, block) => block);
   const one = orderedBlockRanges(blockGrid, blocks, 4096, 4096, 0, 0);

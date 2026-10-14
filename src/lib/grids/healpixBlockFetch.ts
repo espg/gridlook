@@ -33,9 +33,11 @@ const FETCH_CONCURRENCY_HTTP1 = 8;
  * Reads in flight at once over a multiplexed connection (HTTP/2, HTTP/3),
  * which has no per-host connection limit: a zoom on a zagg v4 store over
  * HTTP/3 spent 79% of its fetch time pinned at 8 in flight with ~150 ms to
- * first byte and the CPU idle, so the cap, not the network, was the limit.
+ * first byte and the CPU idle, so the cap, not the network, was the limit;
+ * at 32 an ~8 MB/s link was full with far-off reads queued behind the near
+ * ones. 16 fills a link of ~40 MB/s at 400 KB a read (espg, 2026-10-14).
  */
-const FETCH_CONCURRENCY_MULTIPLEXED = 32;
+const FETCH_CONCURRENCY_MULTIPLEXED = 16;
 
 /** A positive integer `::<name>=<n>` of the page hash, if any. */
 function hashNumber(hash: string, name: string): number | undefined {
@@ -52,21 +54,26 @@ export function fetchOverride(hash: string): number | undefined {
 }
 
 /**
- * Chunks one window range may span (`::chunks=<n>`, default 1). Spans are
+ * Chunks one window range may span (`::chunks=<n>`, default 4: a whole
+ * object at orders 14 and 15 of a zagg v4 store, a quarter at 16; espg,
+ * 2026-10-14). Spans are
  * aligned groups of `n` neighbouring chunks, so the chunk reads of a range
  * start together and the store's range coalescer can serve the inner chunks
  * of one shard object in one request; a span past an object boundary still
  * costs one request per object.
  */
 export function rangeChunks(hash: string): number {
-  return hashNumber(hash, "chunks") ?? 1;
+  return hashNumber(hash, "chunks") ?? DEFAULT_RANGE_CHUNKS;
 }
+
+/** Chunks a window range spans without `::chunks=`. */
+const DEFAULT_RANGE_CHUNKS = 4;
 
 function pageHash() {
   return typeof location === "undefined" ? "" : location.hash;
 }
 
-/** The cap for a protocol (`nextHopProtocol`): 8 on HTTP/1.x, 32 otherwise. */
+/** The cap for a protocol (`nextHopProtocol`): 8 on HTTP/1.x, 16 otherwise. */
 export function concurrencyFor(protocol?: string, override?: number) {
   if (override !== undefined) {
     return override;
