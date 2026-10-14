@@ -1,5 +1,7 @@
 import axios from "axios";
 
+import { withXsrfToken } from "@/utils/xsrfToken.ts";
+
 export type TCatalogEntry = {
   url: string;
   title?: string;
@@ -33,9 +35,12 @@ function newAbortSignal(timeoutMs: number) {
 
 export async function fetchCatalog(url: string): Promise<TCatalog | null> {
   try {
-    const response = await axios.get(url, {
-      signal: newAbortSignal(5000), //Aborts request after 5 seconds
-    });
+    const response = await axios.get(
+      withXsrfToken(url, document.cookie, location.href),
+      {
+        signal: newAbortSignal(5000), //Aborts request after 5 seconds
+      }
+    );
     const data = response.data;
     if (isCatalog(data)) {
       return data;
