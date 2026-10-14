@@ -69,6 +69,9 @@ import InfoPanel from "@/ui/overlays/InfoPanel.vue";
 
 const props = defineProps<{ src: string }>();
 
+// a zagg t-digest store opens on the signal heights' percentile
+const DIGEST_DEFAULT_VAR = "h_percentile_signal";
+
 useUrlSync();
 const { logError } = useLog();
 const store = useGlobeControlStore();
@@ -283,7 +286,11 @@ function prepareDefaults(src: string, index: TSources) {
     return !varinfo.hidden;
   });
   varnameSelector.value =
-    paramVarname.value ?? modelInfo.value!.defaultVar ?? validVars[0];
+    paramVarname.value ??
+    modelInfo.value!.defaultVar ??
+    (validVars.includes(DIGEST_DEFAULT_VAR)
+      ? DIGEST_DEFAULT_VAR
+      : validVars[0]);
 
   if (
     datasources.value &&
