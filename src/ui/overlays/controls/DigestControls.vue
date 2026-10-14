@@ -16,12 +16,6 @@ const props = withDefaults(
     digest: TDigestVariable;
     /** The strata the store's digests hold (`signal`, `noise`). */
     strata?: string[];
-    /**
-     * Whether the level on screen is derived from the leaves. Only such a
-     * level is smoothed, so the gap controls are shown there alone; the
-     * setting itself is kept across levels.
-     */
-    derivedLevel: boolean;
   }>(),
   { strata: () => [] }
 );
@@ -160,7 +154,7 @@ function setHigh(high: number) {
         />
       </div>
     </template>
-    <div v-if="derivedLevel" class="digest-row">
+    <div class="digest-row">
       <label
         class="checkbox is-size-7"
         title="Fill cells without photons from the cells around them (a Gaussian-weighted mean of the values under the kernel). Cells with photons keep their value."

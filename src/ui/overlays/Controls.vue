@@ -111,11 +111,6 @@ const selectedDigest = computed(() =>
 const strata = computed(() =>
   digestStrata(props.modelInfo?.vars ?? {}).map(({ name }) => name)
 );
-// whether the level on screen is computed from the leaves (see levels.ts)
-const derivedLevel = computed(() => {
-  const levels = props.modelInfo?.levels ?? [];
-  return Boolean((levels[store.selectedLevel] ?? levels[0])?.derived);
-});
 
 const menuCollapsed: Ref<boolean> = ref(false);
 const mobileMenuCollapsed: Ref<boolean> = ref(true);
@@ -442,7 +437,6 @@ defineExpose({
             v-if="selectedDigest"
             :digest="selectedDigest"
             :strata="strata"
-            :derived-level="derivedLevel"
           />
           <LevelSelector
             v-if="modelInfo?.levels && modelInfo.levels.length > 1"

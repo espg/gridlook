@@ -22,7 +22,7 @@ function variable(product: string) {
     attrs: { digest: { array: "h_tdigest_signal", product } },
   };
 }
-// one level derived from the leaves (smoothed) and one stored (never)
+// one level derived from the leaves and one stored, both smoothed
 const level = {
   grid: { store: "s", dataset: "8" },
   time: { store: "s", dataset: "8" },
@@ -147,22 +147,13 @@ it("leaves a count as read", async () => {
   expect(shown.data).toBe(low);
 });
 
-it("never fills a stored level, and keeps the setting for a derived one", async () => {
-  const { store, reload, gapFill } = setup("h_percentile_signal", stored);
+it("fills a stored level as it does a derived one", async () => {
+  const { store, gapFill } = setup("h_percentile_signal", stored);
   store.setGapFill(true);
   store.setGapFillSize(3);
   await nextTick();
   const shown = await gapFill.fill(FACE, NSIDE, { data: low }, percentileField);
-  expect(shown.data).toBe(low);
-  expect(shown.histogramSummary).toBeUndefined();
-  expect(gapFill.interpolated(OFFSET + 1, GRID)).toBeUndefined();
-  // a toggle on a stored level recomputes nothing
-  store.setGapFill(false);
-  store.setGapFill(true);
-  await nextTick();
-  expect(reload).not.toHaveBeenCalled();
-  expect(store.gapFill).toBe(true);
-  // the same setting fills the derived level
+  expect(shown.data).toEqual(fillFaceGaps({ data: low }, FACE, NSIDE, 3));
   const derived = setup("h_percentile_signal");
   const filled = await derived.gapFill.fill(
     FACE,
@@ -170,5 +161,5 @@ it("never fills a stored level, and keeps the setting for a derived one", async 
     { data: low },
     percentileField
   );
-  expect(filled.data).toEqual(fillFaceGaps({ data: low }, FACE, NSIDE, 3));
+  expect(filled.data).toEqual(shown.data);
 });

@@ -14,7 +14,7 @@
 
 /** Kernel sizes offered, in cells across. */
 export const GAP_FILL_SIZES = [3, 5, 7, 9, 15, 31] as const;
-export const DEFAULT_GAP_FILL_SIZE = 31;
+export const DEFAULT_GAP_FILL_SIZE = 15;
 
 /**
  * The standard deviation, in cells, of a kernel `size` cells across: the
