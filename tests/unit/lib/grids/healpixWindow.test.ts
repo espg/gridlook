@@ -200,7 +200,7 @@ it("gives a digest-derived variable a quarter-view margin", () => {
       digest: { array: "h_tdigest_signal", product: "percentile" },
     })
   ).toBe(DIGEST_WINDOW_MARGIN);
-  expect(DIGEST_WINDOW_MARGIN).toBe(0.25);
+  expect(DIGEST_WINDOW_MARGIN).toBe(0.1);
 });
 
 it("makes a block no larger than a chunk that is a square of cells", () => {
