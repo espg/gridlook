@@ -472,6 +472,8 @@ async function release(dataset: string) {
 }
 
 it("draws a window as its blocks land, the block under the camera first", async () => {
+  // one chunk a range, so that every block is a read of its own
+  vi.stubGlobal("location", { hash: "#hive+https://x/y.zarr::chunks=1" });
   // 256-cell chunks: the window is made of blocks of one chunk
   stored.fine = { level: 9, chunk: 256, manual: true };
   stored.coarse = { level: 3 };
@@ -509,6 +511,7 @@ it("draws a window as its blocks land, the block under the camera first", async 
   expect(whole.length).toBeGreaterThan(256);
   expect(whole.length).toBe(fetchedCells("t"));
   expect(hover.lookup!(11, 31)!.value).toBe(under + 1);
+  vi.stubGlobal("location", undefined);
 });
 
 it("reads the ranges under the camera again once a digest window has landed", async () => {
