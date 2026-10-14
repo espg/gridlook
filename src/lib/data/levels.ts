@@ -111,19 +111,23 @@ export const DEFAULT_PIXELS_PER_CELL = 2;
 /**
  * The floor of a digest level finer than `FINE_DIGEST_ORDER`: such a level
  * is loaded as a window, read again for every new area, so its cells must
- * span 4 pixels before it is picked, the level it replaces 8 (espg,
- * 2026-10-14; 8 on the finer level was too coarse): 4 times fewer cells in
- * view than at 2. The levels at and above the order load whole and keep the
- * default floor.
+ * span more pixels before it is picked than a level loaded whole: 6 at the
+ * first windowed order, 8 past it (espg, 2026-10-14, after trying 4 and 8
+ * everywhere), 9 and 16 times fewer cells in view than at 2.
  */
-export const FINE_DIGEST_PIXELS_PER_CELL = 4;
 export const FINE_DIGEST_ORDER = 13;
+export const FIRST_FINE_DIGEST_PIXELS_PER_CELL = 6;
+export const FINE_DIGEST_PIXELS_PER_CELL = 8;
 
 /** The pixel floor of a level of cells of `resolution` metres. */
 export function pixelFloorOf(resolution: number, digest: boolean) {
-  return digest && healpixOrderOf(resolution) > FINE_DIGEST_ORDER
-    ? FINE_DIGEST_PIXELS_PER_CELL
-    : DEFAULT_PIXELS_PER_CELL;
+  const order = healpixOrderOf(resolution);
+  if (!digest || order <= FINE_DIGEST_ORDER) {
+    return DEFAULT_PIXELS_PER_CELL;
+  }
+  return order === FINE_DIGEST_ORDER + 1
+    ? FIRST_FINE_DIGEST_PIXELS_PER_CELL
+    : FINE_DIGEST_PIXELS_PER_CELL;
 }
 
 /**
