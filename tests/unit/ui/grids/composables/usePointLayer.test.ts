@@ -96,6 +96,7 @@ const sources = {
         },
       },
       derived: { dataset: "19", refinement: 2 },
+      points: "19",
     },
   ],
 } as unknown as TSources;

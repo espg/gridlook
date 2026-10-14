@@ -144,12 +144,11 @@ export const POINT_TIER = "points";
 
 /**
  * The point tier takes over once one cell of the finest level spans this
- * many pixels at the sub-camera point. The level picker above holds the
- * finest level from 2 px per cell; at 64 px its cells are drawn far past
- * what a digest's value per cell resolves, where a level one order finer
- * would be wanted, and the points come on in its place.
+ * many pixels at the sub-camera point: on a zagg v4 store, order 16 at 8 px
+ * (espg, 2026-10-14), where the picker's floors would bring on a finer
+ * level, so the points come on in its place.
  */
-export const POINT_TIER_PIXELS_PER_CELL = 64;
+export const POINT_TIER_PIXELS_PER_CELL = 8;
 
 /**
  * Hysteresis of the point tier's hand-off, in orders (log2 of cell size, so

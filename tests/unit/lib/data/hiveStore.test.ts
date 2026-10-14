@@ -309,26 +309,28 @@ describe("createHiveStore with a t-digest field", () => {
 
 // eslint-disable-next-line max-lines-per-function
 describe("createHiveStore levels derived from the leaves", () => {
-  it("lists the orders from the leaf chunk's to two below the leaves", async () => {
+  it("lists the orders from the leaf chunk's to three below the leaves", async () => {
     const store = await createHiveStore("mem://hive", hive());
     const paths = store.contents().map(({ path }) => path);
     expect(paths.filter((path) => DERIVED.test(path))).toEqual(
-      [17, 16, 15, 14].flatMap((order) => [`/${order}`, `/${order}/count`])
+      [16, 15, 14].flatMap((order) => [`/${order}`, `/${order}/count`])
     );
     // the leaves stay listed, as the source the derived levels read from
     expect(paths).toContain("/19");
     expect(paths).toContain("/19/count");
     expect(
       decode(await store.get("/zarr.json")).attributes.derived_levels
-    ).toEqual({ dataset: "19", cells: [17, 16, 15, 14] });
-    // 18 is the point tier's: no group, no array
-    expect(await store.get("/18/zarr.json")).toBeUndefined();
-    expect(await store.get("/18/count/zarr.json")).toBeUndefined();
+    ).toEqual({ dataset: "19", cells: [16, 15, 14] });
+    // 18 and 17 are the point tier's: no group, no array
+    for (const order of [18, 17]) {
+      expect(await store.get(`/${order}/zarr.json`)).toBeUndefined();
+      expect(await store.get(`/${order}/count/zarr.json`)).toBeUndefined();
+    }
   });
 
   it("grids a derived array chunk for chunk on the leaves'", async () => {
     const store = await createHiveStore("mem://hive", hive());
-    for (const order of [14, 15, 16, 17]) {
+    for (const order of [14, 15, 16]) {
       const count = decode(await store.get(`/${order}/count/zarr.json`));
       expect(count.shape).toEqual([1, 12 * 4 ** order]);
       // one chunk is one order-13 cell, as a leaf chunk is

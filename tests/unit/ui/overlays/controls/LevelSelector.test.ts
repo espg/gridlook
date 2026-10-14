@@ -25,7 +25,7 @@ const height = {
     },
   },
 };
-const level = (order: number, derived: boolean) => ({
+const level = (order: number, derived: boolean, points = derived) => ({
   name: `order ${order}${derived ? " (derived)" : ""}`,
   grid: { store: "hive+s", dataset: String(order) },
   time: { store: "hive+s", dataset: String(order) },
@@ -36,6 +36,7 @@ const level = (order: number, derived: boolean) => ({
   resolution: 50 * 2 ** (17 - order),
   cellCount: 12 * 4 ** order,
   ...(derived ? { derived: { dataset: "19", refinement: 19 - order } } : {}),
+  ...(points ? { points: "19" } : {}),
 });
 const levels = [level(17, true), level(13, false)];
 
@@ -74,7 +75,7 @@ it("lists the points before the finest level under a height variable", async () 
   store.setDigestStratum("noise");
   expect(await render(strata)).toContain("points (noise)");
   store.setDigestStratum("signal");
-  // not under count, nor without a derived finest level
+  // not under count, nor without leaves under the finest level
   store.varnameSelector = "count";
   expect(await render()).not.toContain("points (");
   store.varnameSelector = "h_percentile_signal";

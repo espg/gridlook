@@ -222,6 +222,19 @@ describe("parseMultiscales for zagg-multiscales/1", () => {
     expect(resolutions).toEqual([...resolutions].sort((a, b) => a - b));
     expect(levels[0].derived).toEqual({ dataset: "19", refinement: 2 });
     expect(levels[4].derived).toBeUndefined();
+    // the finest level names the leaves as the point tier's source
+    expect(levels[0].points).toBe("19");
+    expect(levels.slice(1).some((level) => level.points)).toBe(false);
+  });
+
+  it("names the leaves as the finest stored level's points without derived levels", () => {
+    const levels = parseMultiscales({
+      multiscales: [zagg],
+      derived_levels: { dataset: "19", cells: [] },
+    });
+    expect(levels.map((level) => level.path)).not.toContain("19");
+    expect(levels[0]).toMatchObject({ path: "13", points: "19" });
+    expect(levels[0].derived).toBeUndefined();
   });
 
   it("keeps the leaves when the derived levels come from another group", () => {
@@ -230,6 +243,7 @@ describe("parseMultiscales for zagg-multiscales/1", () => {
       derived_levels: { dataset: "13", cells: [12] },
     });
     expect(levels[0]).toMatchObject({ path: "19", name: "order 19" });
+    expect(levels.some((level) => level.points)).toBe(false);
   });
 
   it("sizes the cells by the cell order and never paths by the node order", () => {
