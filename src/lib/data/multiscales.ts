@@ -13,6 +13,8 @@ export type TMultiscaleEntry = {
   resolution?: number;
   /** Computed from the arrays of another group, this many orders finer. */
   derived?: { dataset: string; refinement: number };
+  /** The leaf group whose observations the point tier draws past this level. */
+  points?: string;
 };
 
 export type TLevelGeometry = {
@@ -197,9 +199,10 @@ function geoZarrEntries(
  * `derived` (the `derived_levels` attribute a hive store view adds) names
  * the orders a viewer computes from the group `dataset`, the leaves',
  * finest first. That group is then their source and no level of its own:
- * finer than the finest derived level the viewer shows the points
- * themselves (`POINT_TIER_ORDERS` in `hiveStore.ts`), so the list starts
- * at the derived levels.
+ * finer than the finest level the viewer shows the points themselves
+ * (`POINT_TIER_ORDERS` in `hiveStore.ts`), so the list starts at the derived
+ * levels, or at the finest stored one when there are none; that finest
+ * entry names the group as its `points`.
  */
 function zaggEntries(
   multiscale: Record<string, unknown>,
@@ -216,7 +219,7 @@ function zaggEntries(
   const cells =
     isRecord(derived) && Array.isArray(derived.cells) ? derived.cells : [];
   const base = cellOrder(multiscale.base);
-  return [
+  const entries = [
     // the leaves, unless they are the source of derived levels
     ...(base === source ? [] : zaggEntry(base)),
     // between the leaves and the first level the store holds
@@ -234,6 +237,9 @@ function zaggEntries(
         : []
     ),
   ];
+  return base === source && entries.length
+    ? [{ ...entries[0], points: String(source) }, ...entries.slice(1)]
+    : entries;
 }
 
 function zaggEntry(

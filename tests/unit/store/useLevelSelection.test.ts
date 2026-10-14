@@ -231,6 +231,7 @@ function hivePyramid() {
       ...(order > 13
         ? { derived: { dataset: "19", refinement: 19 - order } }
         : {}),
+      ...(index === 0 ? { points: "19" } : {}),
     });
   }
   return sources;
@@ -248,7 +249,8 @@ it("turns the point tier on past the finest level and off again with hysteresis"
   const scope = effectScope();
   scope.run(() => useLevelSelection(hivePyramid(), () => VIEWPORT));
   try {
-    store.metersPerPixel = order17At(40);
+    // over the finest level's floor (8 px), short of the tier's 32
+    store.metersPerPixel = order17At(0.8 * POINT_TIER_PIXELS_PER_CELL);
     await nextPick();
     expect(store.selectedLevel).toBe(0);
     expect(store.pointTier).toBe(false);
@@ -260,10 +262,10 @@ it("turns the point tier on past the finest level and off again with hysteresis"
     expect(store.levelAuto).toBe(true);
 
     // back inside the band: still on; below it: off, the level stays
-    store.metersPerPixel = order17At(55);
+    store.metersPerPixel = order17At(0.85 * POINT_TIER_PIXELS_PER_CELL);
     await nextPick();
     expect(store.pointTier).toBe(true);
-    store.metersPerPixel = order17At(45);
+    store.metersPerPixel = order17At(0.76 * POINT_TIER_PIXELS_PER_CELL);
     await nextPick();
     expect(store.pointTier).toBe(false);
     expect(store.selectedLevel).toBe(0);

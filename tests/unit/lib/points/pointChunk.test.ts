@@ -225,7 +225,7 @@ describe("pointTierSource", () => {
     attrs,
   });
   const level = {
-    derived: { dataset: "19", refinement: 2 },
+    points: "19",
     datasources: {
       count: variable({}),
       // eslint-disable-next-line camelcase
@@ -239,7 +239,7 @@ describe("pointTierSource", () => {
     },
   };
 
-  it("names the leaf digest of a height variable on a derived level only", () => {
+  it("names the leaf digest of a height variable on a level with points only", () => {
     const source = pointTierSource(level, "h_percentile_signal");
     expect(source).toEqual({
       store: "hive+s",
@@ -253,7 +253,7 @@ describe("pointTierSource", () => {
     );
     expect(pointTierSource(level, "count")).toBeUndefined();
     expect(
-      pointTierSource({ ...level, derived: undefined }, "h_percentile_signal")
+      pointTierSource({ ...level, points: undefined }, "h_percentile_signal")
     ).toBeUndefined();
     expect(pointTierSource(undefined, "h_percentile_signal")).toBeUndefined();
   });

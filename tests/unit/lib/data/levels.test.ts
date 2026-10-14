@@ -16,6 +16,8 @@ import {
   DEFAULT_VIEW_BUDGET_BYTES,
   DIGEST_CHUNK_BYTES,
   digestCellBytes,
+  FINE_DIGEST_PIXELS_PER_CELL,
+  pixelFloorOf,
   exceedsCellCap,
   finerLevel,
   finestLevel,
@@ -266,9 +268,14 @@ describe("selectViewLevel", () => {
     expect(selectViewLevel(scale, VIEWPORT_PIXELS, HIVE, at(13), options)).toBe(
       at(13)
     );
-    // once the chunks fit, the finest derived level over the floor: at 2.6
-    // px per order-15 cell (5.2 per order-14 cell) that is 15, not 14
-    const fits = scaleFor(15, 2.6);
+    // order 14 waits for 4 px a cell: at 3.6 px, where 2 px would have
+    // taken 14, it is still 13
+    expect(
+      selectViewLevel(scaleFor(15, 1.8), VIEWPORT_PIXELS, HIVE, at(13), options)
+    ).toBe(at(13));
+    // once the chunks fit, the finest derived level over its floor: at 8 px
+    // per order-15 cell (4 per order-16 cell) that is 15, not 14 or 16
+    const fits = scaleFor(15, 8);
     expect(
       windowCost(
         derived(15),
@@ -294,7 +301,7 @@ describe("selectViewLevel", () => {
     );
     // very close in, derived 17; never the leaves (not in the ladder)
     for (const order of [17, 18, 19, 22]) {
-      const scale = scaleFor(order, DEFAULT_PIXELS_PER_CELL);
+      const scale = scaleFor(order, FINE_DIGEST_PIXELS_PER_CELL.at(-1)!);
       expect(
         selectViewLevel(scale, VIEWPORT_PIXELS, HIVE, at(4), options)
       ).toBe(0);
@@ -398,6 +405,18 @@ describe("a level derived from the leaves", () => {
   });
 });
 
+describe("pixelFloorOf", () => {
+  it("is 4, 8 and 16 px at orders 14, 15 and 16 on for a digest, else the default", () => {
+    expect(pixelFloorOf(resolution(13), true)).toBe(DEFAULT_PIXELS_PER_CELL);
+    expect(pixelFloorOf(resolution(14), true)).toBe(4);
+    expect(pixelFloorOf(resolution(15), true)).toBe(8);
+    for (const order of [16, 17]) {
+      expect(pixelFloorOf(resolution(order), true)).toBe(16);
+    }
+    expect(pixelFloorOf(resolution(14), false)).toBe(DEFAULT_PIXELS_PER_CELL);
+  });
+});
+
 describe("windowBlocks", () => {
   it("prices a stored level per cell and a derived level per leaf chunk", () => {
     // order 13 in 256-cell chunks: the budget over the chunks' bytes
@@ -462,24 +481,24 @@ describe("selectPointTier", () => {
   /** The ground scale at which an order-17 cell spans `pixels`. */
   const scaleAt = (pixels: number) => order17 / pixels;
 
-  it("comes on where a finest cell spans 64 pixels", () => {
-    expect(POINT_TIER_PIXELS_PER_CELL).toBe(64);
-    expect(selectPointTier(scaleAt(63), order17, false)).toBe(false);
-    expect(selectPointTier(scaleAt(64), order17, false)).toBe(true);
+  it("comes on where a finest cell spans 32 pixels", () => {
+    expect(POINT_TIER_PIXELS_PER_CELL).toBe(32);
+    expect(selectPointTier(scaleAt(31.9), order17, false)).toBe(false);
+    expect(selectPointTier(scaleAt(32), order17, false)).toBe(true);
     expect(selectPointTier(scaleAt(300), order17, false)).toBe(true);
   });
 
   it("stays on through the hysteresis band and goes off below it", () => {
     const leave = POINT_TIER_PIXELS_PER_CELL / 2 ** DEFAULT_HYSTERESIS_ORDERS;
-    expect(leave).toBeCloseTo(50.2, 1);
-    for (const pixels of [63, 55, 51]) {
+    expect(leave).toBeCloseTo(25.11, 2);
+    for (const pixels of [31.9, 28, 25.6]) {
       expect(selectPointTier(scaleAt(pixels), order17, true)).toBe(true);
       expect(selectPointTier(scaleAt(pixels), order17, false)).toBe(false);
     }
-    expect(selectPointTier(scaleAt(49), order17, true)).toBe(false);
-    expect(selectPointTier(scaleAt(49), order17, true, 0)).toBe(false);
-    expect(selectPointTier(scaleAt(63), order17, true, 0)).toBe(false);
-    expect(selectPointTier(scaleAt(33), order17, true, 1)).toBe(true);
+    expect(selectPointTier(scaleAt(24.5), order17, true)).toBe(false);
+    expect(selectPointTier(scaleAt(24.5), order17, true, 0)).toBe(false);
+    expect(selectPointTier(scaleAt(31.9), order17, true, 0)).toBe(false);
+    expect(selectPointTier(scaleAt(16.1), order17, true, 1)).toBe(true);
   });
 
   it("reads the camera as groundMetersPerPixel does, and never comes on without a scale", () => {
@@ -490,9 +509,9 @@ describe("selectPointTier", () => {
         (2 * Math.tan((CAMERA_VERTICAL_FOV_DEGREES * Math.PI) / 360)),
       viewportHeightPx: 900,
     });
-    expect(groundMetersPerPixel(cameraAt(63))).toBeCloseTo(scaleAt(63));
-    expect(selectPointTier(cameraAt(63), order17, false)).toBe(false);
-    expect(selectPointTier(cameraAt(64), order17, false)).toBe(true);
+    expect(groundMetersPerPixel(cameraAt(31.9))).toBeCloseTo(scaleAt(31.9));
+    expect(selectPointTier(cameraAt(31.9), order17, false)).toBe(false);
+    expect(selectPointTier(cameraAt(32), order17, false)).toBe(true);
     expect(selectPointTier(0, order17, true)).toBe(false);
     expect(selectPointTier(scaleAt(300), NaN, true)).toBe(false);
   });

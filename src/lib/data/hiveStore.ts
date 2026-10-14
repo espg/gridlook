@@ -55,12 +55,13 @@ const INDEX_CHECKSUM_BYTES = 4;
 const ABSENT = 0xffffffffffffffffn;
 /**
  * Orders at the fine end that are no level of the viewer: the leaves and
- * the order above them (19 and 18 in the stores so far). Past the finest
- * derived level, two orders above the leaves, the viewer shows the points
- * themselves (gridlook#21); the leaves stay the source of every derived
- * level and of the digests, and are not listed as a level (`multiscales.ts`).
+ * the two orders above them (19, 18 and 17 in the stores so far; espg,
+ * 2026-10-14, dropped derived 17). Past the finest level, three orders above
+ * the leaves, the viewer shows the points themselves (gridlook#21); the
+ * leaves stay the source of every derived level and of the digests, and are
+ * not listed as a level (`multiscales.ts`).
  */
-const POINT_TIER_ORDERS = 2;
+const POINT_TIER_ORDERS = 3;
 
 const CHUNK_KEY = /^\/(\d+)\/([^/]+)\/c\/(\d+)\/(\d+)$/;
 const GROUP_KEY = /^\/(\d+)\/zarr\.json$/;
@@ -88,7 +89,12 @@ type TContents = { path: zarr.AbsolutePath; kind: "array" | "group" }[];
 // a derived variable's name -> the digest array beside it and its attributes
 type TDerived = Map<string, { array: string; attributes: TJson }>;
 // the orders computed from the leaves, finest first, and their arrays
-type TPooled = { orders: number[]; names: string[] };
+/**
+ * The levels computed from the leaves (`orders`, their arrays `names`), and
+ * whether the leaves are a source at all (`leaves`): of the point tier past
+ * the finest level, also when every order above them is stored.
+ */
+type TPooled = { orders: number[]; names: string[]; leaves: boolean };
 
 export type THiveStore = zarr.Listable<zarr.AsyncReadable>;
 
@@ -352,7 +358,7 @@ function createHiveReader(
   const decoder = new TextDecoder();
   const cache = new Map<string, Promise<unknown>>();
   const derived: TDerived = new Map();
-  const pooled: TPooled = { orders: [], names: [] };
+  const pooled: TPooled = { orders: [], names: [], leaves: false };
   // Every derived fact is computed once per key, however many chunks ask.
   function once<T>(key: string, compute: () => Promise<T>): Promise<T> {
     let pending = cache.get(key) as Promise<T> | undefined;
@@ -488,7 +494,7 @@ function createHiveReader(
         node_type: "group",
         attributes: {
           multiscales: rootMultiscales(manifest, levels),
-          ...(pooled.orders.length
+          ...(pooled.leaves
             ? {
                 // eslint-disable-next-line camelcase
                 derived_levels: {
@@ -604,7 +610,7 @@ async function pooledLevels(
     : undefined;
   const chunkOrder = leaf.cellOrder - Math.log2(inner ?? NaN) / 2;
   if (stored.length === 0 || !Number.isInteger(chunkOrder)) {
-    return { orders: [], names: [] };
+    return { orders: [], names: [], leaves: false };
   }
   const held = Math.max(...stored.map(({ cellOrder }) => cellOrder));
   const orders: number[] = [];
@@ -614,7 +620,7 @@ async function pooledLevels(
       orders.push(order);
     }
   }
-  return { orders, names: [...sums, ...reader.derived.keys()] };
+  return { orders, names: [...sums, ...reader.derived.keys()], leaves: true };
 }
 
 function listContents(

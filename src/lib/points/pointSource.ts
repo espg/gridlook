@@ -8,8 +8,8 @@ import { TIME_WORDS, type TTimeWords } from "@/lib/points/pointTimes.ts";
 import type { TSourceLevel } from "@/lib/types/GlobeTypes.ts";
 
 /**
- * Where the point tier reads its observations: the leaf group a derived
- * level is computed from, and the t-digest array the displayed variable is
+ * Where the point tier reads its observations: the leaf group the finest
+ * level names (`points`, the group the derived levels are computed from), and the t-digest array the displayed variable is
  * derived from. Each centroid of a leaf digest below the compression limit
  * is one observation at its mean (a height), located by the order-29 point
  * word of the `locations` sibling the array's attributes name
@@ -32,24 +32,25 @@ function isRecord(value: unknown): value is TJson {
 }
 
 /**
- * The point source of a level and the variable shown on it: only a level
- * derived from the leaves has one (the leaves are where the points are),
+ * The point source of a level and the variable shown on it: only the
+ * finest level of a store with leaves has one (`points`; the leaves are
+ * where the points are),
  * and only for a variable derived from a t-digest, so that the heights
  * drawn are the quantity the colour range already shows. Undefined
  * otherwise: under `count` the level ladder ends at the finest level.
  */
 export function pointTierSource(
-  level: Pick<TSourceLevel, "derived" | "datasources"> | undefined,
+  level: Pick<TSourceLevel, "points" | "datasources"> | undefined,
   varname: string
 ): TPointSource | undefined {
   const source = level?.datasources[varname];
   const digest = digestVariableOf(source?.attrs);
-  if (!level?.derived || !source || !digest) {
+  if (!level?.points || !source || !digest) {
     return undefined;
   }
   return {
     store: source.store,
-    dataset: level.derived.dataset,
+    dataset: level.points,
     array: digest.array,
     stratum: digest.stratum,
   };
@@ -68,7 +69,7 @@ export type TPointStratum = TPointSource & {
  * alone, at full strength. Empty where the level has no point source.
  */
 export function pointTierSources(
-  level: Pick<TSourceLevel, "derived" | "datasources"> | undefined,
+  level: Pick<TSourceLevel, "points" | "datasources"> | undefined,
   varname: string,
   choice: TStratumChoice
 ): TPointStratum[] {

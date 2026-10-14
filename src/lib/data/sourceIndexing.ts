@@ -370,6 +370,7 @@ async function indexLevel(
     resolution: entry.resolution ?? geometry.resolution,
     cellCount: geometry.cellCount,
     ...(entry.derived ? { derived: entry.derived } : {}),
+    ...(entry.points ? { points: entry.points } : {}),
   };
 }
 

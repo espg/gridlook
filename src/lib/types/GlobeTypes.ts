@@ -92,6 +92,8 @@ export type TSourceLevel = {
   // arrays of the group `dataset`, whose cells are `refinement` orders
   // finer; it is never loaded whole
   derived?: { dataset: string; refinement: number };
+  // the leaf group whose observations the point tier draws past this level
+  points?: string;
 };
 
 export type TSources = {
