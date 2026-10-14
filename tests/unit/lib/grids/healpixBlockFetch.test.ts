@@ -3,6 +3,7 @@ import { expect, it } from "vitest";
 
 import "@/utils/disposablePolyfill.ts";
 import {
+  rangeChunks,
   fetchConcurrency,
   concurrencyFor,
   fetchOverride,
@@ -363,4 +364,27 @@ it("caps reads at 8 on HTTP/1.x and 32 otherwise, unless the hash overrides", ()
   expect(fetchOverride("#hive+https://x/y.zarr")).toBeUndefined();
   expect(fetchOverride("#hive+https://x/y.zarr::fetch=0")).toBeUndefined();
   expect(fetchOverride("#hive+https://x/y.zarr::fetch=abc")).toBeUndefined();
+});
+
+it("spans ranges over ::chunks= aligned chunks, one chunk by default", () => {
+  expect(rangeChunks("#hive+https://x/y.zarr")).toBe(1);
+  expect(rangeChunks("#hive+https://x/y.zarr::chunks=4")).toBe(4);
+  expect(
+    rangeChunks("#hive+https://x/y.zarr::fetch=64::chunks=6::lat=37")
+  ).toBe(6);
+  expect(rangeChunks("#hive+https://x/y.zarr::chunks=0")).toBe(1);
+  // the same run of eight one-chunk blocks: eight ranges, then two of four
+  using blockGrid = new Grid({ scheme: "nested", level: 6 });
+  const blocks = Array.from({ length: 8 }, (_, block) => block);
+  const one = orderedBlockRanges(blockGrid, blocks, 4096, 4096, 0, 0);
+  expect(one).toHaveLength(8);
+  const four = orderedBlockRanges(blockGrid, blocks, 4096, 4 * 4096, 0, 0);
+  expect(
+    four
+      .map(({ start, end }) => [start / 4096, end / 4096])
+      .sort((a, b) => a[0] - b[0])
+  ).toEqual([
+    [0, 4],
+    [4, 8],
+  ]);
 });

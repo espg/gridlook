@@ -37,11 +37,33 @@ const FETCH_CONCURRENCY_HTTP1 = 8;
  */
 const FETCH_CONCURRENCY_MULTIPLEXED = 32;
 
-/** `::fetch=<n>` in the page hash overrides the cap (to compare 32 and 64). */
-export function fetchOverride(hash: string): number | undefined {
-  const match = /(?:^|::)fetch=(\d+)(?:::|$)/.exec(hash.replace(/^#/, ""));
+/** A positive integer `::<name>=<n>` of the page hash, if any. */
+function hashNumber(hash: string, name: string): number | undefined {
+  const match = new RegExp(`(?:^|::)${name}=(\\d+)(?:::|$)`).exec(
+    hash.replace(/^#/, "")
+  );
   const value = match ? Number(match[1]) : NaN;
   return Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+/** `::fetch=<n>` in the page hash overrides the cap (to compare 32 and 64). */
+export function fetchOverride(hash: string): number | undefined {
+  return hashNumber(hash, "fetch");
+}
+
+/**
+ * Chunks one window range may span (`::chunks=<n>`, default 1). Spans are
+ * aligned groups of `n` neighbouring chunks, so the chunk reads of a range
+ * start together and the store's range coalescer can serve the inner chunks
+ * of one shard object in one request; a span past an object boundary still
+ * costs one request per object.
+ */
+export function rangeChunks(hash: string): number {
+  return hashNumber(hash, "chunks") ?? 1;
+}
+
+function pageHash() {
+  return typeof location === "undefined" ? "" : location.hash;
 }
 
 /** The cap for a protocol (`nextHopProtocol`): 8 on HTTP/1.x, 32 otherwise. */
@@ -59,7 +81,7 @@ export function concurrencyFor(protocol?: string, override?: number) {
  * fetch response (every data read is one; unknown counts as multiplexed).
  */
 export function fetchConcurrency() {
-  const hash = typeof location === "undefined" ? "" : location.hash;
+  const hash = pageHash();
   const entries =
     typeof performance === "undefined" || !performance.getEntriesByType
       ? []
@@ -93,7 +115,11 @@ export function orderedBlockRanges(
   );
   const faceBlocks = 4 ** blockGrid.level;
   const ascending = [...blocks].sort((a, b) => a - b);
-  const placed = healpixBlockRanges(ascending, cellsPerBlock, chunkCells)
+  const placed = healpixBlockRanges(
+    ascending,
+    cellsPerBlock,
+    chunkCells * rangeChunks(pageHash())
+  )
     .map((range) => {
       const first = range.start / cellsPerBlock;
       let [nearest, nearestBlock] = [Infinity, first];
