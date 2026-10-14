@@ -233,14 +233,19 @@ function manifestLevels(manifest: HiveManifest): THiveLevel[] {
     if (!isRecord(dataset) || !Array.isArray(dataset.cells)) {
       continue;
     }
-    const cellOrder = Number(dataset.cells[0]);
     const nodeOrder = Number(dataset.order);
     const artifact =
       dataset.artifact === HiveArtifact.COLUMN
         ? HiveArtifact.COLUMN
         : HiveArtifact.OVERVIEW;
-    if (Number.isInteger(cellOrder) && Number.isInteger(nodeOrder)) {
-      levels.push({ cellOrder, nodeOrder, artifact, nodes: new Map() });
+    // One artifact per node can hold SEVERAL cell orders: a zagg >= 0.60 leaf
+    // column stores `cells: [16, 15, 14, 13]` at node 9, one group per order
+    // inside the node's `all.pyramid.zarr`. Each order is its own level.
+    for (const cell of dataset.cells) {
+      const cellOrder = Number(cell);
+      if (Number.isInteger(cellOrder) && Number.isInteger(nodeOrder)) {
+        levels.push({ cellOrder, nodeOrder, artifact, nodes: new Map() });
+      }
     }
   }
   return levels;
