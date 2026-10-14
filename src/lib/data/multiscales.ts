@@ -189,8 +189,9 @@ function geoZarrEntries(
 
 /**
  * zagg: `base` (the leaves) and then `datasets`, finest first as declared. A
- * level's group is named by its cell order, `cells[0]`, never by `order`,
- * which is the HEALPix node order the sweep built it at. The cell order also
+ * level's group is named by its cell order, one level per entry of `cells`
+ * (a leaf column stores several), never by `order`, which is the HEALPix
+ * node order the sweep built it at. The cell order also
  * gives the resolution: the HEALPix cell size at nside 2^cellOrder.
  *
  * `derived` (the `derived_levels` attribute a hive store view adds) names
@@ -225,7 +226,13 @@ function zaggEntries(
         refinement: source - Number(order),
       })
     ),
-    ...datasets.flatMap((dataset) => zaggEntry(cellOrder(dataset))),
+    // every cell order a dataset stores: a zagg >= 0.60 leaf column holds
+    // `cells: [16, 15, 14, 13]` in one artifact, one level group per order
+    ...datasets.flatMap((dataset) =>
+      isRecord(dataset) && Array.isArray(dataset.cells)
+        ? dataset.cells.flatMap((order) => zaggEntry(Number(order)))
+        : []
+    ),
   ];
 }
 
