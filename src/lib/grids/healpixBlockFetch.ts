@@ -23,10 +23,54 @@ export type TBlockRange = TAxisRange & {
 export type TRangeCells = { data: Float32Array; cells: number[] };
 
 /**
- * Reads in flight at once: a little over the connections a browser opens
- * to one host, so that its queue never runs dry while the order is kept.
+ * Reads in flight at once over HTTP/1.1: a little over the ~6 connections a
+ * browser opens to one host, so that its queue never runs dry while the
+ * order (and `rank`) is kept.
  */
-const FETCH_CONCURRENCY = 8;
+const FETCH_CONCURRENCY_HTTP1 = 8;
+
+/**
+ * Reads in flight at once over a multiplexed connection (HTTP/2, HTTP/3),
+ * which has no per-host connection limit: a zoom on a zagg v4 store over
+ * HTTP/3 spent 79% of its fetch time pinned at 8 in flight with ~150 ms to
+ * first byte and the CPU idle, so the cap, not the network, was the limit.
+ */
+const FETCH_CONCURRENCY_MULTIPLEXED = 32;
+
+/** `::fetch=<n>` in the page hash overrides the cap (to compare 32 and 64). */
+export function fetchOverride(hash: string): number | undefined {
+  const match = /(?:^|::)fetch=(\d+)(?:::|$)/.exec(hash.replace(/^#/, ""));
+  const value = match ? Number(match[1]) : NaN;
+  return Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+/** The cap for a protocol (`nextHopProtocol`): 8 on HTTP/1.x, 32 otherwise. */
+export function concurrencyFor(protocol?: string, override?: number) {
+  if (override !== undefined) {
+    return override;
+  }
+  return /^http\/1/.test(protocol ?? "")
+    ? FETCH_CONCURRENCY_HTTP1
+    : FETCH_CONCURRENCY_MULTIPLEXED;
+}
+
+/**
+ * The cap now: the hash override, else by the protocol of the page's latest
+ * fetch response (every data read is one; unknown counts as multiplexed).
+ */
+export function fetchConcurrency() {
+  const hash = typeof location === "undefined" ? "" : location.hash;
+  const entries =
+    typeof performance === "undefined" || !performance.getEntriesByType
+      ? []
+      : (performance.getEntriesByType(
+          "resource"
+        ) as PerformanceResourceTiming[]);
+  const latest = entries
+    .filter((entry) => entry.initiatorType === "fetch")
+    .at(-1);
+  return concurrencyFor(latest?.nextHopProtocol, fetchOverride(hash));
+}
 
 /**
  * The cell ranges of a window's blocks, the nearest to a point first. A
@@ -139,7 +183,7 @@ export function fetchInOrder<TItem, TResult>(
   fetch: (item: TItem) => Promise<TResult>,
   options: TFetchOptions<TItem> = {}
 ) {
-  const { concurrency = FETCH_CONCURRENCY, isCurrent = () => true } = options;
+  const { concurrency = fetchConcurrency(), isCurrent = () => true } = options;
   const landed: { item: TItem; result: TResult }[] = [];
   let failure: { error: unknown } | undefined;
   const queue = rankedQueue(items, options.rank);

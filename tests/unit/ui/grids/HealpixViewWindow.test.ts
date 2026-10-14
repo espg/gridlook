@@ -4,6 +4,7 @@ import * as THREE from "three";
 import { expect, it, vi } from "vitest";
 import { effectScope, onBeforeUnmount, reactive, watch } from "vue";
 
+import { fetchConcurrency } from "@/lib/grids/healpixBlockFetch.ts";
 import { ZARR_FORMAT, type TSources } from "@/lib/types/GlobeTypes.ts";
 
 type TSource = { dataset: string };
@@ -482,7 +483,7 @@ it("draws a window as its blocks land, the block under the camera first", async 
   const issued = fine();
   // a few reads in flight, the one under the camera first
   expect(issued.length).toBeGreaterThanOrEqual(2);
-  expect(issued.length).toBeLessThanOrEqual(8);
+  expect(issued.length).toBeLessThanOrEqual(fetchConcurrency());
   const under = cellAt(9, 11, 31);
   expect(issued[0].start).toBeLessThanOrEqual(under);
   expect(issued[0].stop).toBeGreaterThan(under);
