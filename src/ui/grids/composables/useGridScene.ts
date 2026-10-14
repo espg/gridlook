@@ -383,8 +383,8 @@ export function useGridScene(options: UseGridSceneOptions) {
   };
 
   /**
-   * The distance scale under the cursor; on the pivot camera, at the pivot
-   * itself, so that the tier's scale bar reads the ground scale at the
+   * The distance scale under the cursor, at the canvas centre while the
+   * cursor is off it; on the pivot camera, at the pivot itself, so that the tier's scale bar reads the ground scale at the
    * pivot's depth whether or not the pointer is over the canvas (not the
    * ground behind the lifted pivot).
    */
@@ -396,7 +396,12 @@ export function useGridScene(options: UseGridSceneOptions) {
       );
       return;
     }
-    const at = lastPointerPosition;
+    const at =
+      lastPointerPosition ??
+      (rect && {
+        clientX: rect.left + rect.width / 2,
+        clientY: rect.top + rect.height / 2,
+      });
     store.distanceScale =
       at && camera && rect
         ? getDistanceScale(

@@ -5,9 +5,10 @@ import { computed } from "vue";
 import { useGlobeControlStore } from "@/store/store.ts";
 
 /**
- * The horizontal distance scale: under the cursor when switched on, and
- * always on the point tier, in the upper-left corner, reading the ground
- * scale at the pivot (useGridScene.ts).
+ * The horizontal distance scale, in the upper-left corner at every level
+ * (on by default, the toggle hides it): the ground scale under the cursor,
+ * at the view's centre without one, and always on the point tier, at the
+ * pivot (useGridScene.ts).
  */
 const { distanceScale, showDistanceScale, pointTier } = storeToRefs(
   useGlobeControlStore()
@@ -40,17 +41,12 @@ const label = computed(() => {
 .distance-scale {
   position: absolute;
   left: 18px;
-  bottom: 18px;
+  top: 18px;
   pointer-events: none;
   padding: 0.5rem 0.75rem;
   border-radius: 4px;
   background: rgba(17, 24, 39, 0.85);
   font-variant-numeric: tabular-nums;
-}
-
-.distance-scale.is-pivot {
-  top: 18px;
-  bottom: auto;
 }
 
 .distance-scale-bar {
