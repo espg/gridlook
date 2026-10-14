@@ -17,11 +17,12 @@ const HEALPIX_BLOCK_DEPTH = 6;
  */
 export const VIEW_WINDOW_MARGIN = 0.5;
 /**
- * The margin of a variable derived from a t-digest, whose cells cost a few
- * kilobytes each: a quarter of the view, 1.56 times the visible area, about
- * 30% fewer bytes than the half-view margin.
+ * The margin of a variable derived from a t-digest, whose cells cost
+ * hundreds of bytes each: a tenth of the view, 1.44 times the visible area,
+ * 36% fewer bytes than the half-view margin, so that a pan to a new area
+ * reads little past the view.
  */
-export const DIGEST_WINDOW_MARGIN = 0.25;
+export const DIGEST_WINDOW_MARGIN = 0.1;
 
 /** The window margin of a variable, from its attributes. */
 export function viewWindowMargin(attributes: unknown) {
