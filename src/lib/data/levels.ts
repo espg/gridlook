@@ -112,12 +112,13 @@ export const DEFAULT_PIXELS_PER_CELL = 2;
  * The floor of a digest level finer than `FINE_DIGEST_ORDER`: such a level
  * is loaded as a window, read again for every new area, so its cells must
  * span more pixels before it is picked than a level loaded whole: 4 at the
- * first windowed order, 6 past it (espg, 2026-10-14, after trying 4 and 8
- * everywhere, then 6 and 8), 4 and 9 times fewer cells in view than at 2.
+ * first windowed order, 8 past it (espg, 2026-10-14, after trying 4 and 8
+ * everywhere, 6 and 8, then 4 and 6), 4 and 16 times fewer cells in view
+ * than at 2.
  */
 export const FINE_DIGEST_ORDER = 13;
 export const FIRST_FINE_DIGEST_PIXELS_PER_CELL = 4;
-export const FINE_DIGEST_PIXELS_PER_CELL = 6;
+export const FINE_DIGEST_PIXELS_PER_CELL = 8;
 
 /** The pixel floor of a level of cells of `resolution` metres. */
 export function pixelFloorOf(resolution: number, digest: boolean) {
@@ -144,11 +145,11 @@ export const POINT_TIER = "points";
 
 /**
  * The point tier takes over once one cell of the finest level spans this
- * many pixels at the sub-camera point: on a zagg v4 store, order 16 at 8 px
- * (espg, 2026-10-14), where the picker's floors would bring on a finer
- * level, so the points come on in its place.
+ * many pixels at the sub-camera point: where a level one order finer would
+ * span `FINE_DIGEST_PIXELS_PER_CELL` and be picked, the points come on in
+ * its place (espg, 2026-10-14: order 16 at 16 px, order 17 at 8).
  */
-export const POINT_TIER_PIXELS_PER_CELL = 8;
+export const POINT_TIER_PIXELS_PER_CELL = 2 * FINE_DIGEST_PIXELS_PER_CELL;
 
 /**
  * Hysteresis of the point tier's hand-off, in orders (log2 of cell size, so

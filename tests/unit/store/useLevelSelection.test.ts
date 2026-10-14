@@ -249,7 +249,7 @@ it("turns the point tier on past the finest level and off again with hysteresis"
   const scope = effectScope();
   scope.run(() => useLevelSelection(hivePyramid(), () => VIEWPORT));
   try {
-    // over the finest level's floor (6 px), short of the tier's 8
+    // over the finest level's floor (8 px), short of the tier's 16
     store.metersPerPixel = order17At(0.8 * POINT_TIER_PIXELS_PER_CELL);
     await nextPick();
     expect(store.selectedLevel).toBe(0);
