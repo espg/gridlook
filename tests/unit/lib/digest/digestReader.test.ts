@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   createByteLru,
+  createDenseReader,
   createDigestReader,
   createWordReader,
   digestArrayFromMetadata,
@@ -170,5 +171,61 @@ describe("createWordReader", () => {
       },
     });
     await expect(reader.chunk("19/h_locations", 0)).rejects.toThrow(/uint64/);
+  });
+});
+
+/** A dense numeric array's `zarr.json` and its one chunk of bytes. */
+function denseStore(dataType: string, bytes: Uint8Array) {
+  return {
+    async get(key: string) {
+      return key.endsWith("zarr.json")
+        ? encoder.encode(
+            JSON.stringify({
+              ...metadata([{ name: "bytes" }]),
+              data_type: dataType, // eslint-disable-line camelcase
+            })
+          )
+        : bytes;
+    },
+  };
+}
+
+describe("createDenseReader", () => {
+  it("reads a zagg >= 0.60 int64 count as exact doubles", async () => {
+    const counts = [0n, 7n, 2n ** 40n + 3n, 1n];
+    const bytes = new Uint8Array(8 * counts.length);
+    counts.forEach((count, cell) =>
+      new DataView(bytes.buffer).setBigInt64(8 * cell, count, true)
+    );
+    const reader = createDenseReader(denseStore("int64", bytes));
+    const chunk = (await reader.chunk("19/count", 0))!;
+    expect(chunk).toBeInstanceOf(Float64Array);
+    expect([...chunk]).toEqual(counts.map(Number));
+  });
+
+  it("reads uint64, and still reads int32 as before", async () => {
+    const wide = new Uint8Array(16);
+    new DataView(wide.buffer).setBigUint64(8, 2n ** 52n, true);
+    const uint64 = await createDenseReader(denseStore("uint64", wide)).chunk(
+      "19/count",
+      0
+    );
+    expect([...uint64!]).toEqual([0, 2 ** 52]);
+    const narrow = new Uint8Array(new Int32Array([5, -1, 9, 0]).buffer);
+    const int32 = await createDenseReader(denseStore("int32", narrow)).chunk(
+      "19/count",
+      0
+    );
+    expect(int32).toBeInstanceOf(Int32Array);
+    expect([...int32!]).toEqual([5, -1, 9, 0]);
+  });
+
+  it("refuses a type it cannot read", async () => {
+    const reader = createDenseReader(
+      denseStore("complex64", new Uint8Array(32))
+    );
+    await expect(reader.chunk("19/count", 0)).rejects.toThrow(
+      /unsupported data type complex64/
+    );
   });
 });

@@ -191,20 +191,36 @@ async function wordArrayFromMetadata(
   };
 }
 
+/**
+ * 64-bit integer arrays (a zagg >= 0.60 `count` is int64), read as doubles:
+ * exact for any value below 2^53, which no cell count reaches.
+ */
+const WIDE_TYPES = { int64: BigInt64Array, uint64: BigUint64Array } as const;
+
+/** One chunk of a numeric array, from its little-endian bytes. */
+function denseChunk(dataType: unknown, bytes: Uint8Array): TDenseChunk {
+  // a copy: the bytes of a ranged read are not aligned
+  const buffer = bytes.slice().buffer;
+  const wide = WIDE_TYPES[dataType as keyof typeof WIDE_TYPES];
+  if (wide) {
+    return Float64Array.from(new wide(buffer), Number);
+  }
+  return new DENSE_TYPES[dataType as keyof typeof DENSE_TYPES](buffer);
+}
+
 /** The decoder of a little-endian numeric array, from its `zarr.json`. */
 async function denseArrayFromMetadata(
   metadata: Record<string, unknown>
 ): Promise<TChunkArray<TDenseChunk>> {
   const { cells, chunkCells, unpack } = await chunkGrid(metadata, "bytes");
-  const type = DENSE_TYPES[metadata.data_type as keyof typeof DENSE_TYPES];
-  if (!type) {
-    throw new Error(`unsupported data type ${String(metadata.data_type)}`);
+  const type = String(metadata.data_type);
+  if (!(type in DENSE_TYPES) && !(type in WIDE_TYPES)) {
+    throw new Error(`unsupported data type ${type}`);
   }
   return {
     cells,
     chunkCells,
-    // a copy: the bytes of a ranged read are not aligned
-    decode: async (bytes) => new type((await unpack(bytes)).slice().buffer),
+    decode: async (bytes) => denseChunk(type, await unpack(bytes)),
   };
 }
 
