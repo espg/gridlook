@@ -43,6 +43,11 @@ type TGridDataLoaderOptions = {
   canLoadByView?: () => boolean;
   viewWindowStale?: () => boolean;
   resetDataVars?: () => void;
+  /**
+   * Every read has landed and no load is pending: work that may run until
+   * the next load starts, when `isCurrent` turns false.
+   */
+  onIdle?: (isCurrent: () => boolean) => void;
   refreshStreamlines?: (reuseCached?: boolean) => void | Promise<void>;
   suspendStreamlines?: () => void;
   scalarCache?: {
@@ -219,9 +224,16 @@ function registerGridDataLoaderWatches(
     await regrid();
   }
   state.afterLoad = () => {
+    // taken first: a reload of the window started below supersedes it
+    const revision = state.requestRevision;
     if (state.windowStale) {
       state.windowStale = false;
       void reloadWindow();
+    }
+    if (revision === state.requestRevision) {
+      options.onIdle?.(
+        () => !state.disposed && revision === state.requestRevision
+      );
     }
   };
   watch(

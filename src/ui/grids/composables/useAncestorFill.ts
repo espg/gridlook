@@ -2,12 +2,16 @@ import type * as healpixGeo from "healpix-geo";
 import type * as THREE from "three";
 import type * as zarr from "zarrita";
 
-import { coarserLevels } from "@/lib/data/levels.ts";
+import { coarserLevels, finerLevel } from "@/lib/data/levels.ts";
 import { digestVariableOf } from "@/lib/digest/digestVariables.ts";
 import {
   blockParts,
   createBlockCache,
+  fetchInOrder,
+  rangeDistance,
+  type TBlockRange,
   type TFaceParts,
+  type TRangeCells,
 } from "@/lib/grids/healpixBlockFetch.ts";
 import {
   decodeHealpixFaceXY,
@@ -165,6 +169,16 @@ export function useAncestorFill(options: {
   meshes: readonly (THREE.Mesh | undefined)[];
   /** Decoded bytes the block cache may hold (`DEFAULT_BLOCK_CACHE_BYTES`). */
   cacheBytes?: number;
+  /** The cell ranges of a level's blocks, as a window reads them. */
+  ranges: (level: TReadLevel, blocks: number[]) => TBlockRange[];
+  /** Read the cells of a level in a range, as a window does; draws nothing. */
+  fetchRange: (
+    level: TReadLevel,
+    range: TBlockRange,
+    indices: TIndices
+  ) => Promise<TRangeCells>;
+  /** Whether a level of so many cells is loaded by view, not whole. */
+  byView: (cellCount: number) => boolean;
 }) {
   const store = useGlobeControlStore();
   const cache = createBlockCache(options.cacheBytes);
@@ -415,6 +429,70 @@ export function useAncestorFill(options: {
   }
 
   /**
+   * The level a zoom in reaches next, as a window reads it, when its read
+   * is the block read the window makes of the level on screen: a dense
+   * nested stored level loaded by view. Not a derived level (read from leaf
+   * chunks, with its own block depth), nor under the point tier, nor with
+   * the level picked by hand (a zoom then reaches no other level).
+   */
+  async function finerWindowed(isCurrent: () => boolean) {
+    const sources = options.getDatasources();
+    if (!sources || store.pointTier || !store.levelAuto) {
+      return undefined;
+    }
+    const index = finerLevel(sources.levels, sources.selectedLevel ?? 0);
+    if (index === undefined || sources.levels[index].derived) {
+      return undefined;
+    }
+    const level = await describeWindowed({ ...sources, selectedLevel: index });
+    return level && isCurrent() && options.byView(level.datavar.shape.at(-1)!)
+      ? { ...level, index }
+      : undefined;
+  }
+
+  /**
+   * Read the in-view blocks of the next finer level into the cache, nearest
+   * the camera first and within that level's window budget, for the next
+   * zoom's `take` to find. Draws nothing. Nothing more starts once
+   * `isCurrent` is false, and what lands after is dropped: a visible read
+   * never waits on more than the reads already in flight. The blocks cached.
+   */
+  async function prefetch(
+    indices: TIndices,
+    key: string,
+    isCurrent: () => boolean
+  ) {
+    const level = await finerWindowed(isCurrent);
+    if (!level) {
+      return 0;
+    }
+    const blocks = options
+      .window(level, 0)
+      .blocks.filter((block) => !cache.get(level.index, key, block));
+    const landings = fetchInOrder(
+      options.ranges(level, blocks),
+      (range) => options.fetchRange(level, range, indices),
+      {
+        isCurrent,
+        rank: (range) =>
+          rangeDistance(
+            range,
+            store.viewFootprint ?? { centreLon: 0, centreLat: 0 }
+          ),
+      }
+    );
+    let cached = 0;
+    for (let landing = await landings.next(); landing && isCurrent();) {
+      const { start, end, face } = landing.item;
+      const part = { range: { start, end }, ...landing.result };
+      cached += hold(level.index, key, level, new Map([[face, [part]]])).length;
+      evict();
+      landing = await landings.next();
+    }
+    return cached;
+  }
+
+  /**
    * The value of the level beneath at a point, with the level's name, where
    * it is drawn and has one.
    */
@@ -431,6 +509,7 @@ export function useAncestorFill(options: {
     retain,
     loadBeneath,
     coarsestBeneath,
+    prefetch,
     lookup,
     /** The level drawn beneath now, if any. */
     beneath: () => shown,
