@@ -225,13 +225,15 @@ it("loads the view window of a large level over the whole coarsest level", async
   expect(fetched("coarse")).toHaveLength(1);
   expect(fetched("coarse")[0].selection.slice(-2)).toEqual([null, null]);
 
-  // the coarse level is drawn first and supplies the colour range
+  // the coarse level is drawn first; the colour range holds both levels
   const backdrop = meshes().filter((mesh) => mesh.renderOrder === -0.5);
   const level = meshes().filter((mesh) => mesh.renderOrder === 0);
   expect(backdrop).toHaveLength(1);
   expect(level.length).toBeGreaterThan(0);
   expect(level[0].material.depthFunc).toBe(THREE.AlwaysDepth);
-  expect(store.varinfo!.bounds.high).toBeLessThan(0);
+  expect(store.varinfo!.bounds.low).toBeLessThan(0);
+  const { high } = store.varinfo!.bounds;
+  expect(high).toBeGreaterThanOrEqual(525 * 10000 + 175 + 1);
 
   // hover reads the fine cell inside the window and nothing outside it
   const inside = hover().findNearest(15, 35)!;
@@ -256,6 +258,8 @@ it("loads the view window of a large level over the whole coarsest level", async
   expect(meshes().every((mesh) => mesh.renderOrder === 0)).toBe(true);
   expect(meshes()[0].material.depthFunc).toBe(THREE.LessEqualDepth);
   expect(hover().findNearest(-60, 200)!.value).toBe(-(1 * 10000 + 10 + 1));
+  // and keeps the range the fine cells widened
+  expect(store.varinfo!.bounds.high).toBeGreaterThanOrEqual(high);
   scope.stop();
 });
 

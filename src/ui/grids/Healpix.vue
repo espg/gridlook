@@ -20,6 +20,8 @@ import { useVolume } from "./composables/useVolume.ts";
 import { buildDimensionRangesAndIndices } from "@/lib/data/dimensionHandling.ts";
 import {
   coarsestLevel,
+  colourRangeKey,
+  createColourRange,
   currentLevel,
   DEFAULT_MAX_LEVEL_CELLS,
   DEFAULT_MAX_VIEW_CELLS,
@@ -178,8 +180,8 @@ let loadedBlocks: number[] | undefined;
 let mainMeshes: Array<THREE.Mesh | undefined> = new Array(HEALPIX_NUMCHUNKS);
 
 // The coarsest level of a multi-resolution dataset at the selected slice. A
-// finer level takes its colour range from it and is drawn over it, so the
-// range holds still and nothing is empty where the finer level has no cells.
+// finer level starts its colour range from it and is drawn over it, so
+// nothing is empty where the finer level has no cells.
 type TBackdropFrame = {
   key: string;
   min: number;
@@ -189,6 +191,7 @@ type TBackdropFrame = {
 };
 let backdropFrame: TBackdropFrame | undefined;
 let backdropKey: string | undefined;
+const colourRange = createColourRange();
 const backdropMeshes: Array<THREE.Mesh | undefined> = new Array(
   HEALPIX_NUMCHUNKS
 );
@@ -1271,10 +1274,11 @@ async function fetchAndRenderData(
   const scalarInfo = {
     attrs: datavar.attrs,
     dimInfo,
-    bounds: {
-      low: backdropData?.min ?? dataMin,
-      high: backdropData?.max ?? dataMax,
-    },
+    bounds: colourRange(
+      colourRangeKey(props.datasources!, varnameSelector.value, indices),
+      backdropData && { low: backdropData.min, high: backdropData.max },
+      { low: dataMin, high: dataMax }
+    ) ?? { low: dataMin, high: dataMax },
     dimRanges: dimensionRanges,
   };
   let geometryPending = deferDisplay;

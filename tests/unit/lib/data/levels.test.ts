@@ -6,6 +6,8 @@ import {
 } from "@/lib/camera/cameraSettings.ts";
 import {
   coarsestLevel,
+  colourRangeKey,
+  createColourRange,
   currentLevel,
   DEFAULT_HYSTERESIS_ORDERS,
   DEFAULT_MAX_LEVEL_CELLS,
@@ -232,4 +234,43 @@ it("names the coarsest level, when every level states its resolution", () => {
   ).toBe(1);
   expect(coarsestLevel([{ resolution: 100 }])).toBeUndefined();
   expect(coarsestLevel([{ resolution: 100 }, {}])).toBeUndefined();
+});
+
+it("widens the colour range of a slice to every level shown, and never narrows it", () => {
+  const colourRange = createColourRange();
+  // a 50 km block mean of reflectance, then the 10 m cells in view
+  const coarse = { low: 0.006, high: 0.115 };
+  expect(colourRange("b02", coarse, { low: 0.001, high: 0.42 })).toEqual({
+    low: 0.001,
+    high: 0.42,
+  });
+  // the view moves to darker cells, then back to the coarsest level alone
+  expect(colourRange("b02", coarse, { low: 0.01, high: 0.08 })).toEqual({
+    low: 0.001,
+    high: 0.42,
+  });
+  expect(colourRange("b02", undefined, coarse)).toEqual({
+    low: 0.001,
+    high: 0.42,
+  });
+  // a frame with no values leaves it as it is
+  expect(
+    colourRange("b02", { low: Infinity, high: -Infinity }, undefined)
+  ).toEqual({ low: 0.001, high: 0.42 });
+  // another slice starts over
+  expect(colourRange("b03", coarse, undefined)).toEqual(coarse);
+  expect(createColourRange()("b02", undefined)).toBeUndefined();
+});
+
+it("keys the colour range on the dataset, the variable and the slice", () => {
+  const sources = (dataset: string) =>
+    ({
+      zarr_format: ZARR_FORMAT.V3, // eslint-disable-line camelcase
+      levels: [{ datasources: { t: { store: "s.zarr", dataset } } }],
+    }) as unknown as TSources;
+  const key = colourRangeKey(sources("a"), "t", [0, null]);
+  expect(colourRangeKey(sources("a"), "t", [0, null])).toBe(key);
+  expect(colourRangeKey(sources("b"), "t", [0, null])).not.toBe(key);
+  expect(colourRangeKey(sources("a"), "u", [0, null])).not.toBe(key);
+  expect(colourRangeKey(sources("a"), "t", [1, null])).not.toBe(key);
 });

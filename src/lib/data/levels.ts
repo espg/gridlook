@@ -15,9 +15,9 @@ export function currentLevel(datasources: TSources): TSourceLevel {
 
 /**
  * Index of the level with the largest cells. Grids that load only the view
- * draw it whole under a finer level and take the colour range from it, so
- * neither changes as the view moves. Undefined for a single level, or when a
- * level does not state its resolution.
+ * draw it whole under a finer level and start the colour range from it (see
+ * createColourRange). Undefined for a single level, or when a level does not
+ * state its resolution.
  */
 export function coarsestLevel(
   levels: readonly Pick<TSourceLevel, "resolution">[]
@@ -35,6 +35,48 @@ export function coarsestLevel(
     }
   }
   return coarsest;
+}
+
+/** Values a colour scale spans. */
+export type TValueRange = { low: number; high: number };
+
+/**
+ * The colour range of a dataset with levels, kept per variable and slice
+ * (`key`): the smallest range that holds the coarsest level, the level on
+ * screen, and every range already shown for that key. The coarsest level
+ * alone would hold colours still, but its cells are means of finer ones, so
+ * the brightest and darkest cells of a fine level fall outside it and
+ * saturate. The range only widens: colours change when the view reaches
+ * values outside what was shown, never when it moves back or a coarser level
+ * replaces a finer one. Ranges with a bound that is not finite (a frame with
+ * no values) are skipped; undefined when none is left.
+ */
+export function createColourRange() {
+  let shown: { key: string; range: TValueRange } | undefined;
+  return (key: string, ...ranges: (TValueRange | undefined)[]) => {
+    let range = shown?.key === key ? shown.range : undefined;
+    for (const next of ranges) {
+      if (!next || !Number.isFinite(next.low) || !Number.isFinite(next.high)) {
+        continue;
+      }
+      range = {
+        low: Math.min(range?.low ?? next.low, next.low),
+        high: Math.max(range?.high ?? next.high, next.high),
+      };
+    }
+    shown = range && { key, range };
+    return range;
+  };
+}
+
+/** Key of createColourRange: the dataset, the variable and the slice. */
+export function colourRangeKey(
+  datasources: TSources,
+  varname: string,
+  indices: unknown
+) {
+  const source = datasources.levels[0]?.datasources[varname];
+  return JSON.stringify([source?.store, source?.dataset, varname, indices]);
 }
 
 /** Shown in place of streamlines on a level that cannot be loaded whole. */
