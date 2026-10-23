@@ -9,8 +9,8 @@ import {
   EARTH_RADIUS_METERS,
   getGlobeFitCameraDistance,
 } from "@/lib/camera/cameraSettings.ts";
-import { selectLevel } from "@/lib/data/levels.ts";
-import type { TSources } from "@/lib/types/GlobeTypes.ts";
+import { levelHoldsVariable, selectLevel } from "@/lib/data/levels.ts";
+import type { TSourceLevel, TSources } from "@/lib/types/GlobeTypes.ts";
 
 /**
  * Pick a level at most this often while the camera moves, so a zoom swaps
@@ -21,6 +21,24 @@ export const LEVEL_PICK_INTERVAL_MS = 200;
 export type TViewportSize = { width: number; height: number };
 
 /**
+ * A level as `selectLevel` should see it: never picked without the selected
+ * variable (nothing to show), never too large where the grid loads only the
+ * view of it.
+ */
+function pickable(
+  store: ReturnType<typeof useGlobeControlStore>,
+  levels: readonly TSourceLevel[],
+  index: number
+): TSourceLevel {
+  if (!levelHoldsVariable(levels, index, store.varnameSelector)) {
+    return { ...levels[index], cellCount: Number.POSITIVE_INFINITY };
+  }
+  return store.loadsLevelByView(index)
+    ? { ...levels[index], cellCount: 0 }
+    : levels[index];
+}
+
+/**
  * Camera-driven level selection for multi-resolution datasets.
  *
  * The scene writes the ground metres one pixel covers below the camera into
@@ -29,7 +47,8 @@ export type TViewportSize = { width: number; height: number };
  * the store, also while the camera is moving. `pickLevel` runs the same
  * choice on demand — before the first render, from the URL camera or else
  * the globe's fitted one — so a pyramid never opens on a level the renderer
- * cannot hold.
+ * cannot hold. Levels that do not hold the selected variable are never
+ * picked (see `levelHoldsVariable`).
  */
 export function useLevelSelection(
   datasources: Ref<TSources | undefined>,
@@ -58,10 +77,7 @@ export function useLevelSelection(
         altitudeMeters: altitudeMeters(viewport),
         viewportHeightPx: viewport.height,
       },
-      // no level is too large where the grid loads only the view of it
-      levels.map((level, index) =>
-        store.loadsLevelByView(index) ? { ...level, cellCount: 0 } : level
-      ),
+      levels.map((_, index) => pickable(store, levels, index)),
       store.selectedLevel
     );
     store.selectLevel(next, false);
@@ -73,6 +89,7 @@ export function useLevelSelection(
   watch(
     () => [
       store.levelAuto,
+      store.varnameSelector,
       ...(datasources.value?.levels ?? []).map((_, index) =>
         store.loadsLevelByView(index)
       ),
