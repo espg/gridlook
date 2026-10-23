@@ -82,10 +82,15 @@ around the point below the camera.
 
 The coarsest level is the exception: it is always loaded whole. It is drawn
 under a finer level wherever that level has no cells on screen (outside its
-window, or outside the region it covers), and the colour range and histogram
-are taken from it, so colours do not shift as the view moves or the level
-changes. A pyramid whose levels do not state their resolution has no known
-coarsest level, and loads every level whole.
+window, or outside the region it covers), and the histogram is taken from it.
+The colour range starts from it too, and is widened to the values of the
+level on screen: a coarse cell is the mean of finer ones, so the brightest
+and darkest fine cells lie outside the coarsest level's range and would
+otherwise saturate. For one variable and slice the range only widens, so
+colours shift only when the view reaches values outside what was shown, not
+when it moves back or a coarser level replaces a finer one. A pyramid whose
+levels do not state their resolution has no known coarsest level, and loads
+every level whole.
 
 A level that is loaded by view can be of any size, so automatic selection has
 no cap for it. Streamlines and the volume layer read the whole level: while

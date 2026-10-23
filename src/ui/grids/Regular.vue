@@ -30,6 +30,8 @@ import { downsampleDataTexture } from "@/lib/data/dataTexture.ts";
 import { buildDimensionRangesAndIndices } from "@/lib/data/dimensionHandling.ts";
 import {
   coarsestLevel,
+  colourRangeKey,
+  createColourRange,
   currentLevel,
   DEFAULT_MAX_LEVEL_CELLS,
   DEFAULT_MAX_VIEW_CELLS,
@@ -151,8 +153,8 @@ let meshes: THREE.Mesh[] = [];
 let geometryPending = false;
 
 // The coarsest level of a multi-resolution dataset at the selected slice. A
-// finer level takes its colour range from it and is drawn over it, so the
-// range holds still and nothing is empty where the finer level has no cells.
+// finer level starts its colour range from it and is drawn over it, so
+// nothing is empty where the finer level has no cells.
 type TBackdropFrame = {
   key: string;
   latitudes: Float32Array;
@@ -163,6 +165,7 @@ type TBackdropFrame = {
 };
 let backdropFrame: TBackdropFrame | undefined;
 let backdrop: THREE.Mesh | undefined;
+const colourRange = createColourRange();
 
 function drawnMeshes() {
   return backdrop ? [backdrop, ...meshes] : meshes;
@@ -1326,7 +1329,11 @@ async function fetchAndRenderData(
   const scalarInfo = {
     attrs: datavar.attrs,
     dimInfo,
-    bounds: { low: backdropData?.min ?? min, high: backdropData?.max ?? max },
+    bounds: colourRange(
+      colourRangeKey(props.datasources!, varnameSelector.value, indices),
+      backdropData && { low: backdropData.min, high: backdropData.max },
+      { low: min, high: max }
+    ) ?? { low: min, high: max },
     dimRanges: dimensionRanges,
   };
   const renderScalar = () => {
