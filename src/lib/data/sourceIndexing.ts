@@ -14,6 +14,7 @@ import {
   splitIcechunkStoreAndGroup,
 } from "./icechunkStore.ts";
 import {
+  groupArrayAssets,
   levelGeometryFromGrid,
   parseMultiscales,
   type TMultiscaleEntry,
@@ -370,11 +371,21 @@ async function indexLevel(
   };
 }
 
+function joinPath(...parts: string[]) {
+  return parts
+    .map((part) => trim(part, "/"))
+    .filter(Boolean)
+    .join("/");
+}
+
 /**
  * Index a group whose `multiscales` attribute declares a pyramid: one level
  * per declared child group that holds arrays, finest first. A level that
  * fails to index is left out, and a group left with fewer than two levels is
  * indexed as a single level by the caller, as it was before levels existed.
+ * A zarr-conventions layout may describe the arrays of the levels instead of
+ * the level groups (`asset: "18/b02"`): those are read as one level per
+ * parent group.
  */
 async function indexLevels(
   store: zarr.Listable<zarr.AsyncReadable>,
@@ -392,12 +403,18 @@ async function indexLevels(
     // The single-level path opens the group again and reports the error.
     return null;
   }
+  const arrays = new Set(
+    store
+      .contents()
+      .filter(({ kind }) => kind === "array")
+      .map(({ path }) => trim(path, "/"))
+  );
+  const entries = groupArrayAssets(parseMultiscales(group.attrs), (asset) =>
+    arrays.has(joinPath(groupPath, asset))
+  );
   const levels: TSourceLevel[] = [];
-  for (const entry of parseMultiscales(group.attrs)) {
-    const path = [groupPath, entry.path]
-      .map((part) => trim(part, "/"))
-      .filter(Boolean)
-      .join("/");
+  for (const entry of entries) {
+    const path = joinPath(groupPath, entry.path);
     const level = await indexLevel(
       store,
       root,

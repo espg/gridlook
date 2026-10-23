@@ -10,6 +10,12 @@ import type { TDataSource } from "@/lib/types/GlobeTypes.ts";
 export type TMultiscaleEntry = {
   path: string;
   resolution?: number;
+  /**
+   * The arrays a zarr-conventions layout names at this level, when its items
+   * describe arrays (`asset: "18/b02"`) rather than level groups; the level
+   * is then the parent group of its arrays.
+   */
+  arrays?: string[];
 };
 
 export type TLevelGeometry = {
@@ -106,9 +112,12 @@ function omeEntries(multiscale: Record<string, unknown>): TMultiscaleEntry[] {
 }
 
 /**
- * The zarr-conventions `multiscales` layout: one level per `layout[].asset`,
+ * The zarr-conventions `multiscales` layout: one entry per `layout[].asset`,
  * kept as declared. Its `transform.scale` is relative to another level, not a
- * ground size, so the resolution is left to the level's grid.
+ * ground size, so the resolution is left to the level's grid. An asset may
+ * name a level group or one array of a level (the parent group then is the
+ * level); `groupArrayAssets` folds the latter into levels once the store
+ * tells which assets are arrays.
  */
 function layoutEntries(
   multiscale: Record<string, unknown>
@@ -123,6 +132,37 @@ function layoutEntries(
         isRecord(level) && typeof level.asset === "string"
     )
     .map((level) => ({ path: level.asset as string }));
+}
+
+/**
+ * Fold entries whose path names an array (`isArray`) into the level that
+ * holds it: its parent group, listed once, at the position of its first
+ * array, with the arrays the layout names there. Entries naming groups are
+ * kept as they are; a layout mixing both is folded the same way.
+ */
+export function groupArrayAssets(
+  entries: readonly TMultiscaleEntry[],
+  isArray: (path: string) => boolean
+): TMultiscaleEntry[] {
+  const levels = new Map<string, TMultiscaleEntry>();
+  for (const entry of entries) {
+    const path = entry.path.replace(/\/+$/, "");
+    if (!isArray(path)) {
+      levels.set(path, levels.get(path) ?? { ...entry, path });
+      continue;
+    }
+    const separator = path.lastIndexOf("/");
+    const level = separator < 0 ? "" : path.slice(0, separator);
+    const array = path.slice(separator + 1);
+    const existing = levels.get(level);
+    if (existing) {
+      existing.resolution ??= entry.resolution;
+      (existing.arrays ??= []).push(array);
+    } else {
+      levels.set(level, { ...entry, path: level, arrays: [array] });
+    }
+  }
+  return [...levels.values()];
 }
 
 // Geographic CRSs whose tile matrix `cellSize` is in degrees.

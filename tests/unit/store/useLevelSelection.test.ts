@@ -203,3 +203,31 @@ it("lifts the cap for levels loaded by view, not for one that is loaded whole", 
     scope.stop();
   }
 });
+
+it("never picks a level that does not hold the selected variable", async () => {
+  const store = useGlobeControlStore();
+  const scope = effectScope();
+  const datasources = pyramid([10, 9, 8]);
+  const tas = { store: "s", dataset: "" };
+  // the variable is converted at the order 10 and aggregated to the order 8
+  datasources.value.levels[0].datasources = { tas };
+  datasources.value.levels[2].datasources = { tas };
+  scope.run(() => useLevelSelection(datasources, () => VIEWPORT));
+  try {
+    // nothing selected yet: the nearest level is picked
+    store.metersPerPixel = scaleFor(9) / 1.2;
+    await nextPick();
+    expect(store.selectedLevel).toBe(1);
+
+    // the variable is selected: the pick moves to a level that holds it
+    store.selectVariable("tas");
+    await nextTick();
+    expect(store.selectedLevel).toBe(0);
+
+    store.metersPerPixel = scaleFor(9) * 1.5;
+    await nextPick();
+    expect(store.selectedLevel).toBe(2);
+  } finally {
+    scope.stop();
+  }
+});

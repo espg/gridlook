@@ -37,6 +37,22 @@ export function coarsestLevel(
   return coarsest;
 }
 
+/**
+ * Whether `levels[index]` holds the variable `varname`, i.e. can show it. A
+ * pyramid may hold a variable on some levels only (the bands of a
+ * multi-resolution product, each converted at its own level); while no level
+ * holds the variable (none selected yet), every level is taken to.
+ */
+export function levelHoldsVariable(
+  levels: readonly Pick<TSourceLevel, "datasources">[],
+  index: number,
+  varname: string
+) {
+  const holds = (level: Pick<TSourceLevel, "datasources">) =>
+    Object.hasOwn(level.datasources, varname);
+  return holds(levels[index]) || !levels.some(holds);
+}
+
 /** Shown in place of streamlines on a level that cannot be loaded whole. */
 export const STREAMLINES_NEED_WHOLE_LEVEL =
   "Streamlines read a whole level, and this one is too large to load whole. Pick a coarser level.";
