@@ -34,7 +34,9 @@ import {
   coarsestLevel,
   coarsestLevelOf,
   currentLevel,
+  createColourRange,
   levelRangeOrigin,
+  sharedLevelRange,
   STREAMLINES_NEED_WHOLE_LEVEL,
   variableOnLevel,
 } from "@/lib/data/levels.ts";
@@ -168,6 +170,7 @@ type TBackdropFrame = {
   max: number;
 };
 let backdropFrame: TBackdropFrame | undefined;
+const colourRange = createColourRange();
 let backdrop: THREE.Mesh | undefined;
 
 function drawnMeshes() {
@@ -1314,14 +1317,31 @@ async function fetchAndRenderData(
     indices
   );
 
+  // The shared range starts from the coarsest level and widens to the
+  // levels shown, so a fine level of means does not saturate.
+  // On the coarsest level itself (no backdrop), the range keeps what finer
+  // levels widened it to.
+  const shared = store.sharesLevelRange(datavar.attrs)
+    ? sharedLevelRange(
+        colourRange,
+        {
+          datasources: props.datasources!,
+          varname: varnameSelector.value,
+          indices,
+        },
+        rangeSource ?? { min, max },
+        { low: min, high: max }
+      )
+    : undefined;
   const scalarInfo = {
     attrs: datavar.attrs,
     dimInfo,
-    bounds: { low: rangeSource?.min ?? min, high: rangeSource?.max ?? max },
+    bounds: shared?.range ?? { low: min, high: max },
     dimRanges: dimensionRanges,
     rangeOrigin: levelRangeOrigin(
-      Boolean(rangeSource),
-      gridWindow !== undefined
+      Boolean(rangeSource) || Boolean(shared?.widened),
+      gridWindow !== undefined,
+      shared?.widened
     ),
   };
   const renderScalar = () => {
