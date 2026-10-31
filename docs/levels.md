@@ -106,9 +106,14 @@ nothing is marked, so it never shows through a translucent grid. A cell
 that is not drawn (no value, or hidden at or beyond a bound of the colour
 range) marks nothing either, so the coarsest level shows through it: along
 a coastline or at a threshold, coarse cells fill the gaps of the finer
-level. By default the colour range and histogram are taken from the
-coarsest level, so colours do not shift as the view moves or the level
-changes (see the toggles below). When the levels do not share one range,
+level. By default the histogram is taken from the coarsest
+level, and the colour range starts from it and is widened to the levels
+shown (see the toggles below): for a mean, a coarse cell averages finer
+ones, so the brightest and darkest fine cells lie outside the coarsest
+level's range and would otherwise saturate. For one variable and slice the
+range only widens, so colours shift only when the view reaches values
+outside what was shown, not when it moves back or a coarser level replaces
+a finer one. When the levels do not share one range,
 the coarsest level is not drawn beneath, as its colours would be off the
 level's scale. A pyramid
 whose levels do not state their resolution has no known coarsest level, and
@@ -143,8 +148,9 @@ Two checkboxes under the level list, independent of each other:
   coarser level where the view would need a larger one; a level over the cap
   can still be picked by hand, marked as having too many cells, and is then
   loaded by view.
-- **Keep one colour range across levels** (on by default) takes the range
-  and histogram of every level from the coarsest level. Off, each level
+- **Keep one colour range across levels** (on by default) shares one range
+  across the levels: the coarsest level's, widened to the levels shown, as
+  above; the histogram is the coarsest level's. Off, each level
   takes its own: the whole level's when it is loaded whole, else the loaded
   window's, which changes when the window reloads (the same view always
   gives the same colours), and no coarsest level is drawn beneath. The

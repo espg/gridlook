@@ -155,6 +155,7 @@ export function sumsOverCells(attrs: Record<string, unknown> | undefined) {
 /** Where the colour range and histogram of a level not shown whole come from. */
 export const LEVEL_RANGE_ORIGINS = {
   COARSEST: "coarsest level",
+  SHOWN_LEVELS: "coarsest level, widened to the levels shown",
   LOADED_AREA: "loaded area",
 } as const;
 
@@ -162,14 +163,97 @@ export type TLevelRangeOrigin =
   (typeof LEVEL_RANGE_ORIGINS)[keyof typeof LEVEL_RANGE_ORIGINS];
 
 /**
- * The coarsest level when the range was taken from it, else the loaded
- * window of a level loaded by view; none for a range of the whole level.
+ * The coarsest level when the range was taken from it (widened past it to
+ * the levels shown, see createColourRange), else the loaded window of a
+ * level loaded by view; none for a range of the whole level.
  */
-export function levelRangeOrigin(fromCoarsest: boolean, loadedByView: boolean) {
+export function levelRangeOrigin(
+  fromCoarsest: boolean,
+  loadedByView: boolean,
+  widened = false
+) {
   if (fromCoarsest) {
-    return LEVEL_RANGE_ORIGINS.COARSEST;
+    return widened
+      ? LEVEL_RANGE_ORIGINS.SHOWN_LEVELS
+      : LEVEL_RANGE_ORIGINS.COARSEST;
   }
   return loadedByView ? LEVEL_RANGE_ORIGINS.LOADED_AREA : undefined;
+}
+
+/** Values a colour scale spans. */
+export type TValueRange = { low: number; high: number };
+
+/**
+ * The colour range shared by the levels of a dataset, kept per variable and
+ * slice (`key`): the smallest range that holds the coarsest level, the level
+ * on screen, and every range already shown for that key. The coarsest level
+ * alone would hold colours still, but for a mean its cells are means of finer
+ * ones, so the brightest and darkest cells of a fine level fall outside it and
+ * saturate. The range only widens: colours change when the view reaches
+ * values outside what was shown, never when it moves back or a coarser level
+ * replaces a finer one. Ranges with a bound that is not finite (a frame with
+ * no values) are skipped; undefined when none is left.
+ */
+export function createColourRange() {
+  let shown: { key: string; range: TValueRange } | undefined;
+  return (key: string, ...ranges: (TValueRange | undefined)[]) => {
+    let range = shown?.key === key ? shown.range : undefined;
+    for (const next of ranges) {
+      if (!next || !Number.isFinite(next.low) || !Number.isFinite(next.high)) {
+        continue;
+      }
+      range = {
+        low: Math.min(range?.low ?? next.low, next.low),
+        high: Math.max(range?.high ?? next.high, next.high),
+      };
+    }
+    shown = range && { key, range };
+    return range;
+  };
+}
+
+/**
+ * Key of createColourRange: the dataset, the variable (named as on the
+ * first level, so that it does not change with the level) and the slice.
+ * The dataset is the one of the level the variable is named on, as the
+ * first level may not hold it.
+ */
+export function colourRangeKey(
+  datasources: TSources,
+  varname: string,
+  indices: unknown
+) {
+  const name = variableOnLevel(datasources.levels, varname, 0);
+  const level = levelOfVariable(datasources.levels, varname) ?? 0;
+  const source = datasources.levels[level]?.datasources[varname];
+  return JSON.stringify([source?.store, source?.dataset, name, indices]);
+}
+
+/**
+ * The colour range of a level when the levels of `variable` share one: the
+ * coarsest level's (`coarsest`) widened to the level on screen (`shown`) by
+ * `colourRange`, and whether it was widened past the coarsest level.
+ * Undefined for a variable without levels.
+ */
+export function sharedLevelRange(
+  colourRange: ReturnType<typeof createColourRange>,
+  variable: { datasources: TSources; varname: string; indices: unknown },
+  coarsest: { min: number; max: number },
+  shown: TValueRange
+) {
+  const { datasources, varname, indices } = variable;
+  if (coarsestLevelOf(datasources.levels, varname) === undefined) {
+    return undefined;
+  }
+  const range = colourRange(
+    colourRangeKey(datasources, varname, indices),
+    { low: coarsest.min, high: coarsest.max },
+    shown
+  ) ?? { low: coarsest.min, high: coarsest.max };
+  return {
+    range,
+    widened: range.low < coarsest.min || range.high > coarsest.max,
+  };
 }
 
 /** Shown in place of streamlines on a level that cannot be loaded whole. */
