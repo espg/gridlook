@@ -24,7 +24,9 @@ import {
   currentLevel,
   DEFAULT_MAX_LEVEL_CELLS,
   DEFAULT_MAX_VIEW_CELLS,
+  createColourRange,
   levelRangeOrigin,
+  sharedLevelRange,
   STREAMLINES_NEED_WHOLE_LEVEL,
   variableOnLevel,
 } from "@/lib/data/levels.ts";
@@ -193,6 +195,7 @@ type TBackdropFrame = {
   batches: THealpixBatch[];
 };
 let backdropFrame: TBackdropFrame | undefined;
+const colourRange = createColourRange();
 let backdropKey: string | undefined;
 const backdropMeshes: Array<THREE.Mesh | undefined> = new Array(
   HEALPIX_NUMCHUNKS
@@ -1291,17 +1294,31 @@ async function fetchAndRenderData(
   }
   const dimInfo = await getDimensionValues(dimensionRanges, indices);
 
+  // The shared range starts from the coarsest level and widens to the
+  // levels shown, so a fine level of means does not saturate.
+  // On the coarsest level itself (no backdrop), the range keeps what finer
+  // levels widened it to.
+  const shared = store.sharesLevelRange(datavar.attrs)
+    ? sharedLevelRange(
+        colourRange,
+        {
+          datasources: props.datasources!,
+          varname: varnameSelector.value,
+          indices,
+        },
+        rangeSource ?? { min: dataMin, max: dataMax },
+        { low: dataMin, high: dataMax }
+      )
+    : undefined;
   const scalarInfo = {
     attrs: datavar.attrs,
     dimInfo,
-    bounds: {
-      low: rangeSource?.min ?? dataMin,
-      high: rangeSource?.max ?? dataMax,
-    },
+    bounds: shared?.range ?? { low: dataMin, high: dataMax },
     dimRanges: dimensionRanges,
     rangeOrigin: levelRangeOrigin(
-      Boolean(rangeSource),
-      loadedBlocks !== undefined
+      Boolean(rangeSource) || Boolean(shared?.widened),
+      loadedBlocks !== undefined,
+      shared?.widened
     ),
   };
   let geometryPending = deferDisplay;

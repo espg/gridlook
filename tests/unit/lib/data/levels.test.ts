@@ -6,6 +6,8 @@ import {
 } from "@/lib/camera/cameraSettings.ts";
 import {
   coarsestLevel,
+  colourRangeKey,
+  createColourRange,
   currentLevel,
   DEFAULT_HYSTERESIS_ORDERS,
   DEFAULT_MAX_LEVEL_CELLS,
@@ -16,6 +18,7 @@ import {
   LEVEL_RANGE_ORIGINS,
   levelOfVariable,
   levelRangeOrigin,
+  sharedLevelRange,
   selectLevel,
   sumsOverCells,
   type TLevelSelectionCamera,
@@ -304,4 +307,96 @@ it("names where a level's range comes from unless it is the whole level's", () =
   expect(levelRangeOrigin(true, false)).toBe(LEVEL_RANGE_ORIGINS.COARSEST);
   expect(levelRangeOrigin(false, true)).toBe(LEVEL_RANGE_ORIGINS.LOADED_AREA);
   expect(levelRangeOrigin(false, false)).toBeUndefined();
+  expect(levelRangeOrigin(true, true, true)).toBe(
+    LEVEL_RANGE_ORIGINS.SHOWN_LEVELS
+  );
+});
+
+it("widens the colour range of a slice to every level shown, and never narrows it", () => {
+  const colourRange = createColourRange();
+  // a 50 km block mean of reflectance, then the 10 m cells in view
+  const coarse = { low: 0.006, high: 0.115 };
+  expect(colourRange("b02", coarse, { low: 0.001, high: 0.42 })).toEqual({
+    low: 0.001,
+    high: 0.42,
+  });
+  // the view moves to darker cells, then back to the coarsest level alone
+  expect(colourRange("b02", coarse, { low: 0.01, high: 0.08 })).toEqual({
+    low: 0.001,
+    high: 0.42,
+  });
+  expect(colourRange("b02", undefined, coarse)).toEqual({
+    low: 0.001,
+    high: 0.42,
+  });
+  // a frame with no values leaves it as it is
+  expect(
+    colourRange("b02", { low: Infinity, high: -Infinity }, undefined)
+  ).toEqual({ low: 0.001, high: 0.42 });
+  // another slice starts over
+  expect(colourRange("b03", coarse, undefined)).toEqual(coarse);
+  expect(createColourRange()("b02", undefined)).toBeUndefined();
+});
+
+it("says whether the shared range was widened past the coarsest level", () => {
+  const datasources = {
+    levels: [
+      { path: "20", resolution: 10, datasources: { "20/b02": {} } },
+      { path: "7", resolution: 50000, datasources: { "7/b02": {} } },
+    ],
+  } as unknown as TSources;
+  const variable = { datasources, varname: "20/b02", indices: [] };
+  const coarsest = { min: 0.006, max: 0.115 };
+  expect(
+    sharedLevelRange(createColourRange(), variable, coarsest, {
+      low: 0.01,
+      high: 0.1,
+    })
+  ).toEqual({ range: { low: 0.006, high: 0.115 }, widened: false });
+  expect(
+    sharedLevelRange(createColourRange(), variable, coarsest, {
+      low: 0.01,
+      high: 0.4,
+    })
+  ).toEqual({ range: { low: 0.006, high: 0.4 }, widened: true });
+  // a variable without levels keeps its own range
+  expect(
+    sharedLevelRange(
+      createColourRange(),
+      { ...variable, varname: "elevation" },
+      coarsest,
+      { low: 0.01, high: 0.4 }
+    )
+  ).toBeUndefined();
+});
+
+it("keys the colour range on the dataset, the variable on the first level and the slice", () => {
+  const sources = (dataset: string) =>
+    ({
+      zarr_format: ZARR_FORMAT.V3, // eslint-disable-line camelcase
+      levels: [
+        { path: "1", datasources: { "1/t": { store: "s.zarr", dataset } } },
+        { path: "0", datasources: { "0/t": { store: "s.zarr", dataset } } },
+      ],
+    }) as unknown as TSources;
+  const key = colourRangeKey(sources("a"), "1/t", [0, null]);
+  // the same variable on another level shares the key
+  expect(colourRangeKey(sources("a"), "0/t", [0, null])).toBe(key);
+  expect(colourRangeKey(sources("b"), "1/t", [0, null])).not.toBe(key);
+  expect(colourRangeKey(sources("a"), "1/u", [0, null])).not.toBe(key);
+  expect(colourRangeKey(sources("a"), "1/t", [1, null])).not.toBe(key);
+});
+
+it("keys the colour range on the dataset of a variable the first level lacks", () => {
+  const sources = (store: string) =>
+    ({
+      zarr_format: ZARR_FORMAT.V3, // eslint-disable-line camelcase
+      levels: [
+        { path: "20", datasources: { "20/b02": { store, dataset: "r" } } },
+        { path: "19", datasources: { "19/b05": { store, dataset: "r" } } },
+      ],
+    }) as unknown as TSources;
+  expect(colourRangeKey(sources("a.zarr"), "19/b05", [0])).not.toBe(
+    colourRangeKey(sources("b.zarr"), "19/b05", [0])
+  );
 });

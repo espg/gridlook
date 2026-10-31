@@ -291,7 +291,10 @@ it("loads the blocks in view of a dense level over the coarsest level", async ()
       THREE.Material
     >[]
   );
-  expect(store.varinfo!.bounds.high).toBeLessThan(0);
+  // the colour range holds the coarse level and the fine cells in view
+  expect(store.varinfo!.bounds.low).toBeLessThan(0);
+  const { high } = store.varinfo!.bounds;
+  expect(high).toBeGreaterThanOrEqual(cellAt(9, 11, 31) + 1);
 
   // hover reads the fine cell in view, and no cell where nothing is loaded
   expect(hover.lookup!(11, 31)!.value).toBe(cellAt(9, 11, 31) + 1);
@@ -318,6 +321,8 @@ it("loads the blocks in view of a dense level over the coarsest level", async ()
     )
   ).toBe(true);
   expect(hover.lookup!(-41, 171)!.value).toBe(-(cellAt(3, -41, 171) + 1));
+  // and keeps the range the fine cells widened
+  expect(store.varinfo!.bounds.high).toBeGreaterThanOrEqual(high);
   scope.stop();
 });
 
