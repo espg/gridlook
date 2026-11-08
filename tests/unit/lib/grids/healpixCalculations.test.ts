@@ -2,10 +2,12 @@ import { expect, it } from "vitest";
 
 import {
   buildHealpixTexture,
+  decodeHealpixFaceXY,
   getHealpixFaceDataRect,
   getHealpixFaceRange,
   getHealpixTextureIndex,
   healpixCellCoordinateNames,
+  healpixFaceCover,
 } from "@/lib/grids/healpixCalculations.ts";
 import { buildHistogramSummary } from "@/utils/histogram.ts";
 
@@ -83,4 +85,83 @@ it("finds xdggs cell_ids when the dggs metadata names no coordinate", () => {
   expect(healpixCellCoordinateNames(undefined)).toEqual(["cell", "cell_ids"]);
   expect(healpixCellCoordinateNames(null)).toEqual(["cell", "cell_ids"]);
   expect(healpixCellCoordinateNames("zone_ids")).toEqual(["zone_ids"]);
+});
+
+it("covers the whole face of a dense level", () => {
+  expect(healpixFaceCover(3, 12)).toEqual({
+    width: 1,
+    height: 1,
+    values: Uint8Array.of(255),
+    dataRect: { u: 0, v: 0, width: 1, height: 1 },
+  });
+});
+
+it("covers the parts of a face a sparse level has cells in", () => {
+  // level 2 on face 1: cells 16..31; 17 and 18 are in the corner cell
+  // (x, y) = (1, 0) and (0, 1), 31 is (3, 3); NaN values still count
+  const { width, height, values } = healpixFaceCover(1, 2, [17, 18, 31]);
+  expect([width, height]).toEqual([4, 4]);
+  const covered = [...values.keys()].filter((index) => values[index] === 255);
+  expect(covered).toEqual([1, 4, 15]);
+});
+
+it("crops a fine mask to its exact cell extent", () => {
+  const cells = Array.from({ length: 16 }, (_, index) => 9 * 16 + index);
+  const { width, height, values, dataRect } = healpixFaceCover(0, 10, cells);
+  expect([width, height]).toEqual([4, 4]);
+  expect([...values]).toEqual(Array(16).fill(255));
+  expect(dataRect).toEqual({
+    u: 4 / 1024,
+    v: 8 / 1024,
+    width: 4 / 1024,
+    height: 4 / 1024,
+  });
+});
+
+function coveredCell(
+  face: number,
+  level: number,
+  cells: number[],
+  cell: number
+) {
+  const cover = healpixFaceCover(face, level, cells);
+  const { x, y } = decodeHealpixFaceXY(cell - face * 4 ** level);
+  const localX = x - cover.dataRect.u * 2 ** level;
+  const localY = y - cover.dataRect.v * 2 ** level;
+  return (
+    localX >= 0 &&
+    localX < cover.width &&
+    localY >= 0 &&
+    localY < cover.height &&
+    cover.values[localY * cover.width + localX] === 255
+  );
+}
+
+it("leaves the backdrop under unread level-20 blocks", () => {
+  const cells = Array.from({ length: 4096 }, (_, index) => index);
+  expect(coveredCell(0, 20, cells, 0)).toBe(true);
+  expect(coveredCell(0, 20, cells, 4095)).toBe(true);
+  expect(coveredCell(0, 20, cells, 4096)).toBe(false);
+});
+
+it("leaves the backdrop in sparse gaps within a level-8 ancestor", () => {
+  // Same ancestor, different fine cells, including an internal texture hole.
+  const cells = [0, 3];
+  expect(coveredCell(0, 9, cells, 0)).toBe(true);
+  expect(coveredCell(0, 9, cells, 3)).toBe(true);
+  expect(coveredCell(0, 9, cells, 1)).toBe(false);
+  expect(coveredCell(0, 9, cells, 2)).toBe(false);
+});
+
+it("keeps sparse coverage exact on nonzero faces and offsets", () => {
+  const start = 7 * 4 ** 20;
+  const cells = [start + 144, start + 147];
+  expect(coveredCell(7, 20, cells, start + 144)).toBe(true);
+  expect(coveredCell(7, 20, cells, start + 145)).toBe(false);
+  expect(coveredCell(7, 20, cells, start + 143)).toBe(false);
+});
+
+it("does not cover empty faces or cells belonging to another face", () => {
+  expect([...healpixFaceCover(1, 20, []).values]).toEqual([0]);
+  expect([...healpixFaceCover(1, 20, [0, 3]).values]).toEqual([0]);
 });

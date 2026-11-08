@@ -14,6 +14,10 @@ uniform sampler2D data;
 uniform vec2 dataUvOffset;
 uniform vec2 dataUvScale;
 uniform int clipToDataRect;
+uniform sampler2D coverMask;
+uniform int useCoverMask;
+uniform vec2 coverUvOffset;
+uniform vec2 coverUvScale;
 uniform int projectionType;
 uniform float projectionRadius;
 uniform int edgeQuality;
@@ -22,6 +26,17 @@ varying vec2 vUv;
 varying vec2 vProjectedXY;
 
 void main() {
+    // A pyramid's backdrop stays out of where its level has cells: the
+    // level's missing values there are shown as missing, not filled in.
+    vec2 coverUv = (vUv - coverUvOffset) / coverUvScale;
+    // Test the rectangle before sampling: clamp-to-edge must not extend a
+    // cropped mask into neighbouring unread blocks.
+    if (useCoverMask == 1
+    && coverUv.x >= 0.0 && coverUv.x < 1.0
+    && coverUv.y >= 0.0 && coverUv.y < 1.0
+    && texture(coverMask, coverUv).r > 0.5) {
+        discard;
+    }
     vec2 dataUv = (vUv - dataUvOffset) / dataUvScale;
     // Only a HEALPix face cropped to its sparse data's bounding box clips here;
     // a full-face/full-globe texture (the common case) relies on the texture's

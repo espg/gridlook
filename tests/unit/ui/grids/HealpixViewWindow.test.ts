@@ -4,6 +4,7 @@ import * as THREE from "three";
 import { expect, it, vi } from "vitest";
 import { effectScope, reactive, watch } from "vue";
 
+import { decodeHealpixFaceXY } from "@/lib/grids/healpixCalculations.ts";
 import { ZARR_FORMAT, type TSources } from "@/lib/types/GlobeTypes.ts";
 
 type TSource = { dataset: string };
@@ -11,7 +12,7 @@ type TLevelSources = {
   levels: { datasources: Record<string, TSource> }[];
   selectedLevel?: number;
 };
-type TStoredLevel = { level: number; cells?: number[] };
+type TStoredLevel = { level: number; cells?: number[]; missingCell?: number };
 type THoverLookup = (
   lat: number,
   lon: number
@@ -136,9 +137,10 @@ vi.mock("@/lib/grids/gridDataWorkerClient.ts", () => ({
     const id = (index: number) => level.cells?.[index] ?? index;
     return request.variable === "cell"
       ? Float64Array.from({ length: stop - start }, (_, i) => id(start + i))
-      : Float32Array.from(
-          { length: stop - start },
-          (_, i) => (dataset === "coarse" ? -1 : 1) * (id(start + i) + 1)
+      : Float32Array.from({ length: stop - start }, (_, i) =>
+          id(start + i) === level.missingCell
+            ? NaN
+            : (dataset === "coarse" ? -1 : 1) * (id(start + i) + 1)
         );
   },
   terminateGridDataWorker: vi.fn(),
@@ -416,3 +418,79 @@ it("keeps the window of a view too large for the budget while the camera stays n
   }
   scope.stop();
 }, 30_000);
+
+it("binds a cropped presence mask, keeping sparse gaps open and NaN cells covered", async () => {
+  // Four children of one level-8 parent, with two absent cells and one NaN.
+  stored.fine = { level: 9, cells: [144, 147], missingCell: 144 };
+  stored.coarse = { level: 3 };
+  const { scope } = await mount(0, 45);
+  const meshes = scene.current!.children as THREE.Mesh<
+    THREE.BufferGeometry,
+    THREE.ShaderMaterial
+  >[];
+  const backdrop = meshes.find((mesh) => mesh.renderOrder > 0)!;
+  const uniforms = backdrop.material.uniforms;
+  expect(uniforms.useCoverMask.value).toBe(1);
+  expect(uniforms.coverUvOffset.value.toArray()).toEqual([4 / 512, 8 / 512]);
+  expect(uniforms.coverUvScale.value.toArray()).toEqual([2 / 512, 2 / 512]);
+  const mask = uniforms.coverMask.value as THREE.DataTexture;
+  expect([mask.image.width, mask.image.height]).toEqual([2, 2]);
+  expect(Array.from(mask.image.data as Uint8Array)).toEqual([255, 0, 0, 255]);
+  const fine = meshes.find((mesh) => mesh.renderOrder === 0)!;
+  expect(Number.isNaN(fine.material.uniforms.data.value.image.data[0])).toBe(
+    true
+  );
+  // The shader must bound the sample before clamp-to-edge can extend the mask.
+  expect(backdrop.material.fragmentShader).toContain("coverUv.x < 1.0");
+  expect(backdrop.material.fragmentShader).toContain("coverUv.y < 1.0");
+  scope.stop();
+});
+
+it("keeps an unread level-20 block visible in the bound backdrop mask", async () => {
+  stored.fine = { level: 20 };
+  stored.coarse = { level: 3 };
+  const { scope } = await mount(11, 31);
+  const reads = fetches.filter(
+    ({ dataset, variable }) => dataset === "fine" && variable === "t"
+  );
+  const loadedCell = reads[0].start;
+  // Find an unread block sharing the loaded cell's old level-8 mask texel.
+  const ancestorStart = Math.floor(loadedCell / 4 ** 12) * 4 ** 12;
+  let unreadCell = ancestorStart;
+  while (
+    reads.some(({ start, stop }) => unreadCell >= start && unreadCell < stop)
+  ) {
+    unreadCell += 4096;
+  }
+  expect(unreadCell).toBeLessThan(ancestorStart + 4 ** 12);
+  const face = Math.floor(loadedCell / 4 ** 20);
+  const backdrop = (
+    scene.current!.children as THREE.Mesh<
+      THREE.BufferGeometry,
+      THREE.ShaderMaterial
+    >[]
+  ).filter((mesh) => mesh.renderOrder > 0)[face];
+  const uniforms = backdrop.material.uniforms;
+  expect(uniforms.useCoverMask.value).toBe(1);
+  const mask = uniforms.coverMask.value as THREE.DataTexture;
+  const offset = uniforms.coverUvOffset.value as THREE.Vector2;
+  const scale = uniforms.coverUvScale.value as THREE.Vector2;
+  const covered = (cell: number) => {
+    const { x, y } = decodeHealpixFaceXY(cell - face * 4 ** 20);
+    const u = ((x + 0.5) / 2 ** 20 - offset.x) / scale.x;
+    const v = ((y + 0.5) / 2 ** 20 - offset.y) / scale.y;
+    return (
+      u >= 0 &&
+      u < 1 &&
+      v >= 0 &&
+      v < 1 &&
+      (mask.image.data as Uint8Array)[
+        Math.floor(v * mask.image.height) * mask.image.width +
+          Math.floor(u * mask.image.width)
+      ] === 255
+    );
+  };
+  expect(covered(loadedCell)).toBe(true);
+  expect(covered(unreadCell)).toBe(false);
+  scope.stop();
+});
