@@ -1,7 +1,8 @@
-import type { CustomOrbitControls } from "three";
+import { Quaternion, Vector3, type CustomOrbitControls } from "three";
 import type { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
 import { getGlobeMovementScale } from "./cameraSettings.ts";
+import { nextFrameUp } from "./poleCrossing.ts";
 
 /*
  * The regular OrbitControls type defintion does not include the "private" methods
@@ -25,6 +26,11 @@ declare module "three" {
     _dollyIn: (scale: number) => void;
     _dollyOut: (scale: number) => void;
     _scale: number;
+    _sphericalDelta: { theta: number; phi: number };
+    // the rotation from `object.up` to +Y, built once from the up vector
+    // the controls were constructed with
+    _quat: Quaternion;
+    _quatInverse: Quaternion;
   }
 }
 
@@ -45,6 +51,42 @@ export function useSurfaceZoom(
       // Convert the pending wheel/pinch/keyboard dolly into altitude scaling.
       orbitControls._scale =
         (1 + (distance - 1) * orbitControls._scale) / distance;
+    }
+    return update(deltaTime);
+  };
+}
+
+/**
+ * Let a drag carry the globe camera across a pole (see poleCrossing.ts).
+ * Before every update the frame's up is chosen for the move about to be
+ * applied, and the controls' frame follows `camera.up` whenever it changes,
+ * which OrbitControls only reads when it is constructed. Not while the
+ * controls are disabled (a presenter display), where the camera is set from
+ * outside and keeps the roll it is given.
+ */
+export function useFreeOrbit(
+  controls: OrbitControls,
+  isFlatProjection: () => boolean
+) {
+  const orbitControls = controls as CustomOrbitControls;
+  const update = orbitControls.update.bind(orbitControls);
+  const frameUp = new Vector3();
+  const offset = new Vector3();
+  orbitControls.update = (deltaTime) => {
+    const camera = orbitControls.object;
+    if (!isFlatProjection() && orbitControls.enabled) {
+      offset.copy(camera.position).sub(orbitControls.target);
+      const phiDelta =
+        orbitControls._sphericalDelta.phi *
+        (orbitControls.enableDamping ? orbitControls.dampingFactor : 1);
+      camera.up.copy(
+        nextFrameUp(camera.up, offset, camera.quaternion, phiDelta)
+      );
+    }
+    if (!frameUp.equals(camera.up)) {
+      frameUp.copy(camera.up);
+      orbitControls._quat.setFromUnitVectors(frameUp, new Vector3(0, 1, 0));
+      orbitControls._quatInverse.copy(orbitControls._quat).invert();
     }
     return update(deltaTime);
   };

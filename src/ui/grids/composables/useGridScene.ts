@@ -36,8 +36,10 @@ import {
 } from "@/lib/camera/cameraSettings.ts";
 import {
   handleKeyDown,
+  useFreeOrbit,
   useSurfaceZoom,
 } from "@/lib/camera/OrbitControlsAddOn.ts";
+import { screenUp } from "@/lib/camera/poleCrossing.ts";
 import { getRegionalCameraPosition } from "@/lib/camera/regionalCamera.ts";
 import {
   getDistanceScale,
@@ -856,6 +858,8 @@ export function useGridScene(options: UseGridSceneOptions) {
       controls.target.set(cam.position.x, cam.position.y, 0);
     } else {
       controls.target.set(0, 0, 0);
+      // keep the roll the preset carries: the controls look along `up`
+      screenUp(cam.quaternion, cam.up);
       syncProjectionCenterFromCamera(cam);
     }
     controls.update();
@@ -919,6 +923,7 @@ export function useGridScene(options: UseGridSceneOptions) {
 
     orbitControls = new OrbitControls(camera, renderer.domElement);
     useSurfaceZoom(orbitControls, () => projectionHelper.value.isFlat);
+    useFreeOrbit(orbitControls, () => projectionHelper.value.isFlat);
     orbitControls.minDistance = GLOBE_MIN_CAMERA_DISTANCE;
     orbitControls.enablePan = false;
 
