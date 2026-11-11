@@ -39,7 +39,7 @@ import {
   useFreeOrbit,
   useSurfaceZoom,
 } from "@/lib/camera/OrbitControlsAddOn.ts";
-import { screenUp } from "@/lib/camera/poleCrossing.ts";
+import { restingUp, screenUp } from "@/lib/camera/poleCrossing.ts";
 import { getRegionalCameraPosition } from "@/lib/camera/regionalCamera.ts";
 import {
   getDistanceScale,
@@ -110,6 +110,7 @@ export function useGridScene(options: UseGridSceneOptions) {
   let camera: THREE.PerspectiveCamera | undefined = undefined;
   let renderer: THREE.WebGLRenderer | undefined = undefined;
   let orbitControls: OrbitControls | undefined = undefined;
+  let freeOrbit: ReturnType<typeof useFreeOrbit> | undefined = undefined;
   let updateLOD: (() => void) | undefined = undefined;
   let baseSurface: THREE.Mesh | undefined = undefined;
   let pickSurface: THREE.Mesh | undefined = undefined;
@@ -695,10 +696,10 @@ export function useGridScene(options: UseGridSceneOptions) {
     // fully within the viewport on both axes, with a small 5 % margin.
     const targetDistance = getGlobeFitCameraDistance(cam.aspect, cam.fov);
 
-    // North up. A drag across a pole can leave the globe south up (see
-    // useFreeOrbit); that roll is session-only, as the URL holds the camera's
-    // lat/lon/alt and nothing else, so a reload or a shared link opens the
-    // same place north up.
+    // North up, or the grid's up once a projected dataset has loaded (see
+    // applyGridUp). The roll a drag leaves is session-only, as the URL holds
+    // the camera's lat/lon/alt and nothing else, so a reload or a shared
+    // link opens the same place on the resting up.
     cam.up.set(0, 0, 1);
     cam.near = 0.1;
     cam.far = 1000;
@@ -742,6 +743,29 @@ export function useGridScene(options: UseGridSceneOptions) {
     controls.target.set(0, 0, 0);
     cam.lookAt(controls.target);
     controls.update();
+  }
+
+  /** The up of the grid shown, as a vector; none for a lat/lon grid. */
+  function gridUp() {
+    const up = store.gridUp;
+    return up ? new THREE.Vector3(...up) : undefined;
+  }
+
+  /**
+   * Point the globe camera's up the way the grid's map has it, at once:
+   * when a projected dataset loads, and on an explicit reset while the
+   * globe is not drawn (a flat map keeps +Y up).
+   */
+  function applyGridUp() {
+    const cam = getCamera();
+    const controls = getOrbitControls();
+    if (!cam || !controls || projectionHelper.value.isFlat) {
+      return;
+    }
+    cam.up.copy(restingUp(cam.position, cam.quaternion, gridUp()));
+    cam.lookAt(controls.target);
+    controls.update();
+    redraw();
   }
 
   function syncProjectionCenterFromCamera(cam: THREE.PerspectiveCamera) {
@@ -927,7 +951,10 @@ export function useGridScene(options: UseGridSceneOptions) {
 
     orbitControls = new OrbitControls(camera, renderer.domElement);
     useSurfaceZoom(orbitControls, () => projectionHelper.value.isFlat);
-    useFreeOrbit(orbitControls, () => projectionHelper.value.isFlat);
+    freeOrbit = useFreeOrbit(orbitControls, {
+      isFlatProjection: () => projectionHelper.value.isFlat,
+      getGridUp: () => gridUp(),
+    });
     orbitControls.minDistance = GLOBE_MIN_CAMERA_DISTANCE;
     orbitControls.enablePan = false;
 
@@ -1455,6 +1482,27 @@ export function useGridScene(options: UseGridSceneOptions) {
           oc.autoRotate = rotating;
         }
       }
+      animationLoop();
+    }
+  );
+
+  watch(
+    () => store.gridUp?.join(),
+    (up) => {
+      if (up !== undefined) {
+        applyGridUp();
+      }
+    }
+  );
+
+  watch(
+    () => store.orientationReset,
+    () => {
+      if (projectionHelper.value.isFlat || !freeOrbit) {
+        return;
+      }
+      initialRegionalFitPending = false;
+      freeOrbit.resetRoll();
       animationLoop();
     }
   );

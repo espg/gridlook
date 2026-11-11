@@ -2,7 +2,7 @@ import { Quaternion, Vector3, type CustomOrbitControls } from "three";
 import type { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
 import { getGlobeMovementScale } from "./cameraSettings.ts";
-import { nextFrameUp } from "./poleCrossing.ts";
+import { POLE_AXIS, screenUp, settleRoll } from "./poleCrossing.ts";
 
 /*
  * The regular OrbitControls type defintion does not include the "private" methods
@@ -27,6 +27,9 @@ declare module "three" {
     _dollyOut: (scale: number) => void;
     _scale: number;
     _sphericalDelta: { theta: number; phi: number };
+    _getAutoRotationAngle: (deltaTime: number | null) => number;
+    // -1 while no pointer is down (OrbitControls' _STATE.NONE)
+    state: number;
     // the rotation from `object.up` to +Y, built once from the up vector
     // the controls were constructed with
     _quat: Quaternion;
@@ -56,39 +59,101 @@ export function useSurfaceZoom(
   };
 }
 
+export type TFreeOrbitOptions = {
+  isFlatProjection: () => boolean;
+  /** The up of a projected dataset's grid (see gridUpOfCrs), when it has one. */
+  getGridUp?: () => Vector3 | undefined;
+};
+
 /**
- * Let a drag carry the globe camera across a pole (see poleCrossing.ts).
- * Before every update the frame's up is chosen for the move about to be
- * applied, and the controls' frame follows `camera.up` whenever it changes,
- * which OrbitControls only reads when it is constructed. Not while the
- * controls are disabled (a presenter display), where the camera is set from
- * outside and keeps the roll it is given.
+ * Let a drag carry the globe camera across a pole and settle its roll (see
+ * poleCrossing.ts). The controls' frame is kept on the camera's screen-up,
+ * so their polar angle is always π/2 and never clamps: a vertical drag
+ * crosses a pole and keeps the roll. The horizontal part of a drag (and
+ * the keyboard's, and auto-rotation) is taken out of the controls and
+ * applied here as a turn of the camera and its up about the globe's axis,
+ * along a parallel or, over a pole, about the pole. After each update the
+ * frame is read back from the camera's rotation, so the roll is whatever
+ * the moves left, until it settles. Not while the controls are disabled (a
+ * presenter display), where the camera is set from outside and keeps the
+ * roll it is given.
  */
+// eslint-disable-next-line max-lines-per-function
 export function useFreeOrbit(
   controls: OrbitControls,
-  isFlatProjection: () => boolean
+  options: TFreeOrbitOptions
 ) {
   const orbitControls = controls as CustomOrbitControls;
   const update = orbitControls.update.bind(orbitControls);
   const frameUp = new Vector3();
   const offset = new Vector3();
-  orbitControls.update = (deltaTime) => {
-    const camera = orbitControls.object;
-    if (!isFlatProjection() && orbitControls.enabled) {
-      offset.copy(camera.position).sub(orbitControls.target);
-      const phiDelta =
-        orbitControls._sphericalDelta.phi *
-        (orbitControls.enableDamping ? orbitControls.dampingFactor : 1);
-      camera.up.copy(
-        nextFrameUp(camera.up, offset, camera.quaternion, phiDelta)
-      );
-    }
-    if (!frameUp.equals(camera.up)) {
-      frameUp.copy(camera.up);
+  let resetting = false;
+
+  function syncFrame(up: Vector3) {
+    if (!frameUp.equals(up)) {
+      frameUp.copy(up);
       orbitControls._quat.setFromUnitVectors(frameUp, new Vector3(0, 1, 0));
       orbitControls._quatInverse.copy(orbitControls._quat).invert();
     }
-    return update(deltaTime);
+  }
+
+  /** Turn the camera and its up about the globe's axis by the pending azimuth. */
+  function applyAzimuth(deltaTime: number | null) {
+    const camera = orbitControls.object;
+    const damping = orbitControls.enableDamping
+      ? orbitControls.dampingFactor
+      : 1;
+    let pending = orbitControls._sphericalDelta.theta;
+    if (orbitControls.autoRotate && orbitControls.state === -1) {
+      pending += orbitControls._getAutoRotationAngle(deltaTime) * -1;
+    }
+    const applied = pending * damping;
+    orbitControls._sphericalDelta.theta = pending - applied;
+    if (applied === 0) {
+      return;
+    }
+    offset.copy(camera.position).sub(orbitControls.target);
+    offset.applyAxisAngle(POLE_AXIS, applied);
+    camera.position.copy(orbitControls.target).add(offset);
+    camera.up.applyAxisAngle(POLE_AXIS, applied);
+  }
+
+  orbitControls.update = (deltaTime = null) => {
+    const camera = orbitControls.object;
+    if (options.isFlatProjection() || !orbitControls.enabled) {
+      syncFrame(camera.up);
+      return update(deltaTime);
+    }
+    // the frame on the screen-up the last update left, as the roll to keep
+    screenUp(camera.quaternion, camera.up);
+    applyAzimuth(deltaTime);
+    offset.copy(camera.position).sub(orbitControls.target);
+    const settled = settleRoll(camera.up, offset, camera.quaternion, {
+      dragging: orbitControls.state !== -1,
+      resetting,
+      gridUp: options.getGridUp?.(),
+    });
+    if (settled === null) {
+      resetting = false;
+    } else {
+      camera.up.copy(settled);
+    }
+    syncFrame(camera.up);
+    // the controls' own auto-rotation was applied above, about the axis
+    const autoRotate = orbitControls.autoRotate;
+    orbitControls.autoRotate = false;
+    try {
+      return update(deltaTime);
+    } finally {
+      orbitControls.autoRotate = autoRotate;
+    }
+  };
+
+  return {
+    /** Settle the roll on the resting up from the next updates on, wherever the camera is. */
+    resetRoll() {
+      resetting = true;
+    },
   };
 }
 

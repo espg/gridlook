@@ -244,6 +244,12 @@ export const useGlobeControlStore = defineStore("globeControl", {
       metersPerPixel: undefined as number | undefined,
       // lat/lon box of what the camera sees, refreshed while it moves
       viewFootprint: null as TViewFootprint | null,
+      // the up of a projected grid's map, as a world vector (see
+      // gridUpOfCrs), set by the grid that shows it; none for other grids
+      gridUp: undefined as [number, number, number] | undefined,
+      // bumped by "Reset orientation": the scene settles the roll on the
+      // resting up
+      orientationReset: 0,
       // the mounted grid loads only the part of a large level that is in
       // view, except the levels it found it has to load whole
       viewLoading: false,
@@ -378,6 +384,9 @@ export const useGlobeControlStore = defineStore("globeControl", {
     },
     toggleRotating() {
       this.isRotating = !this.isRotating;
+    },
+    resetOrientation() {
+      this.orientationReset++;
     },
     setLive(live: boolean) {
       this.live = live;

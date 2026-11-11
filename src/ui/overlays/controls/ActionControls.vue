@@ -80,6 +80,18 @@ const showPresenter = !isMobileDevice();
         </span>
         <span> Rotate </span>
       </button>
+      <button
+        v-if="projectionMode === PROJECTION_TYPES.NEARSIDE_PERSPECTIVE"
+        class="button cell"
+        type="button"
+        title="Turn the globe back to its resting orientation: the grid's up for a projected dataset, else north up"
+        @click="store.resetOrientation"
+      >
+        <span class="icon">
+          <i class="fas fa-compass"></i>
+        </span>
+        <span> Orientation </span>
+      </button>
       <ShareButton class="cell" />
       <button
         v-if="showPresenter"

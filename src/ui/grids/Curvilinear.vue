@@ -16,6 +16,7 @@ import { useSharedGridLogic } from "./composables/useSharedGridLogic.ts";
 import { useViewWindow } from "./composables/useViewWindow.ts";
 import { useVolume } from "./composables/useVolume.ts";
 
+import { gridUpOfCrs } from "@/lib/camera/poleCrossing.ts";
 import {
   getCRSWkt,
   getLatLonData,
@@ -406,6 +407,12 @@ async function loadLevelCoordinates() {
     ? await loadCoordinates(sources, variable, datavar, dimensionNames)
     : undefined;
   levelCoordinatesKey = key;
+  // the up of the grid's map: the camera settles on it, away from the poles
+  const up =
+    levelCoordinates && "axes" in levelCoordinates
+      ? gridUpOfCrs(levelCoordinates.axes.crs)
+      : undefined;
+  store.gridUp = up ? [up.x, up.y, up.z] : undefined;
 }
 
 /** The lat/lon of every point of a level given as axes. */
@@ -922,6 +929,7 @@ onBeforeUnmount(() => {
   terminateGridDataWorker();
   disposeBackdropGrid();
   disposeMeshes();
+  store.gridUp = undefined;
 });
 
 defineExpose({ makeSnapshot, toggleRotate, applyCameraPreset });
