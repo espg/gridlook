@@ -10,7 +10,9 @@ import { Quaternion, Vector3 } from "three";
  * and can go on, and once the camera is away from the poles again the frame
  * is turned back to the globe's axis, or its opposite when that is nearer
  * the roll the crossing left, a step per frame so the roll settles without
- * a jump. The pure functions here are what useFreeOrbit applies.
+ * a jump. The pure functions here are what useFreeOrbit applies. The roll
+ * a crossing leaves is not saved: the URL holds the camera's position only,
+ * and a reload or a shared link opens north up.
  */
 
 /** The globe's axis: the camera's up on the globe, +Z. */
