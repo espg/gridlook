@@ -7,6 +7,7 @@ This page documents Gridlook keyboard, mouse, and touch controls.
 These shortcuts are active in the main viewer.
 
 - <kbd>r</kbd>: start or stop auto-rotation
+- <kbd>n</kbd>: turn the globe north up
 - <kbd>d</kbd>: toggle distraction-free mode
 - <kbd>g</kbd>: switch to the Hyperglobe preset
 - <kbd>h</kbd>: open the Hyperglobe presenter view in a second window on desktop
@@ -26,7 +27,7 @@ If the canvas does not react to keyboard navigation, click the viewer once to fo
 
 In the default 3D globe view:
 
-- Arrow keys rotate the globe
+- Arrow keys turn the globe up, down, left and right as seen on the screen
 - <kbd>+</kbd> zooms in
 - <kbd>-</kbd> zooms out
 
@@ -44,27 +45,32 @@ Mouse behavior depends on the current projection.
 
 ### Nearside Perspective
 
-- Left drag rotates the globe
-- Mouse wheel zooms
+- Left drag takes hold of the globe: the place under the pointer stays under it, at every latitude and across the poles. Where the pointer is off the globe, the drag turns the globe with the pointer's movement
+- Released while moving, the globe glides on and comes to a stop
+- Shift + left drag twists the view about its centre instead: what is under the pointer goes round the centre with it. Nothing glides on after it
+- Mouse wheel zooms towards the place under the cursor; towards the centre of the view where the cursor is off the globe
 - Right drag pans the camera target
+
+Nothing keeps north up on the globe: dragging and zooming turn it freely. A compass in the lower right corner shows where north is. Clicking it, the `North` action or <kbd>n</kbd> turns the view about its centre until north is up again; straight above a pole, where every direction is south or north, until the prime meridian is down the screen (north pole) or up it (south pole), as on maps of the poles. Auto-rotation spins the globe about its axis whichever way up it is.
 
 If `Data Picker` is enabled, moving the pointer over the canvas also shows the value under the cursor.
 
 ### Flat Projections
 
 - Left drag pans the map
-- Mouse wheel zooms
+- Mouse wheel zooms towards the point under the cursor
 - Right drag changes the projection center
 
 For flat projections, the projection center can also be adjusted numerically in the side panel.
 
 ## Shareable Camera Parameters
 
-The URL represents a view with five projection-independent camera parameters:
+The URL represents a view with these camera parameters:
 
 - `lat` and `lon` are the projection center in degrees
 - `alt` is the camera height above the spherical Earth surface at that center, in metres
 - `px` and `py` are horizontal and vertical camera-plane offsets in projected metres
+- `bearing` is the compass direction that is up on the screen at the centre of the globe view, in degrees clockwise from north. It is written only when north is not up; a link without it opens north up. Flat projections have none
 
 Positive `px` moves right in the projection plane and positive `py` moves up.
 Gridlook models Earth as a sphere with the IUGG mean radius of
@@ -85,8 +91,8 @@ Touch behavior also depends on the current projection.
 
 ### Nearside Perspective
 
-- One-finger drag rotates the globe
-- Pinch zooms
+- One-finger drag takes hold of the globe as a left drag does, also with the finger that is left down after a pinch
+- Pinch zooms towards the centre of the view
 
 ### Flat Projections
 
