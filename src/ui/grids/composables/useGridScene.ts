@@ -31,11 +31,18 @@ import {
   CAMERA_VERTICAL_FOV_DEGREES,
   getGlobeFitCameraDistance,
   getCameraDistanceForVerticalSpan,
-  getGlobeMovementScale,
-  getVisibleVerticalSpan,
 } from "@/lib/camera/cameraSettings.ts";
 import {
+  dragGlobe,
+  glideGlobe,
+  globePointAt,
+  setGlobeView,
+  turnBetween,
+  turnGlobeBy,
+} from "@/lib/camera/globeCamera.ts";
+import {
   handleKeyDown,
+  isOrbitControlsBusy,
   useSurfaceZoom,
 } from "@/lib/camera/OrbitControlsAddOn.ts";
 import { getRegionalCameraPosition } from "@/lib/camera/regionalCamera.ts";
@@ -120,6 +127,21 @@ export function useGridScene(options: UseGridSceneOptions) {
   let lastPointerPosition: { clientX: number; clientY: number } | null = null;
   let touchPickStart: { clientX: number; clientY: number } | null = null;
   let touchPickMoved = false;
+  // A drag of the globe: the pointer, where it last was (normalised device
+  // coordinates) and when, and the point of the globe it holds, if it is on
+  // the globe.
+  let globeDrag:
+    | {
+        pointerId: number;
+        cursor: THREE.Vector2;
+        movedAt: number;
+        grabbed: THREE.Vector3 | null;
+      }
+    | undefined = undefined;
+  // The turn a drag leaves the globe to glide on by (see glideGlobe).
+  const globeGlide = new THREE.Vector3();
+  // A pointer held still for longer than this before it lets go leaves none.
+  const GLIDE_HOLD_MS = 50;
 
   let projectionDragActive = false;
   let dragStartX = 0;
@@ -149,6 +171,9 @@ export function useGridScene(options: UseGridSceneOptions) {
   // metre on the globe, so cell edges get ragged this close; closer views
   // need camera-relative positions (or analytic sphere rendering).
   const GLOBE_MIN_CAMERA_DISTANCE = 1.0002;
+  // Auto-rotation: once around in 30 s at 60 frames a second, about the
+  // globe's axis.
+  const AUTO_ROTATION = new THREE.Vector3(0, 0, (-2 * Math.PI) / 1800);
   let targetOffset = 0;
   let isInMotion = false;
   let updatingProjectionCenterFromCamera = false;
@@ -681,6 +706,7 @@ export function useGridScene(options: UseGridSceneOptions) {
 
     controls.enablePan = true;
     controls.enableRotate = false;
+    controls.touches.ONE = THREE.TOUCH.ROTATE;
     controls.enableDamping = false;
     controls.mouseButtons = {
       LEFT: THREE.MOUSE.PAN,
@@ -699,18 +725,16 @@ export function useGridScene(options: UseGridSceneOptions) {
     // fully within the viewport on both axes, with a small 5 % margin.
     const targetDistance = getGlobeFitCameraDistance(cam.aspect, cam.fov);
 
-    // North up. A drag across a pole can leave the globe south up (see
-    // useFreeOrbit); that roll is session-only, as the URL holds the camera's
-    // lat/lon/alt and nothing else, so a reload or a shared link opens the
-    // same place north up.
-    cam.up.set(0, 0, 1);
     cam.near = 0.1;
     cam.far = 1000;
     cam.updateProjectionMatrix();
     controls.enablePan = false;
-    controls.enableRotate = true;
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.08;
+    // The globe is turned here (see globeCamera.ts): OrbitControls would
+    // keep north up and stop at the poles. With no action for one finger it
+    // also goes idle when a pinch ends with a finger still down, instead of
+    // taking that finger's moves for the pinch's.
+    controls.enableRotate = false;
+    controls.touches.ONE = null;
     controls.mouseButtons = {
       LEFT: THREE.MOUSE.ROTATE,
       MIDDLE: THREE.MOUSE.DOLLY,
@@ -721,30 +745,18 @@ export function useGridScene(options: UseGridSceneOptions) {
     applyProjectionCenterToGlobeCamera(cam, controls, targetDistance);
   }
 
-  function getProjectionCenterCameraPosition(distance: number) {
-    const center = projectionCenter.value ?? DEFAULT_PROJECTION_CENTER;
-    const latRad = THREE.MathUtils.degToRad(center.lat);
-    const lonRad = THREE.MathUtils.degToRad(center.lon);
-
-    return new THREE.Vector3(
-      Math.cos(latRad) * Math.cos(lonRad),
-      Math.cos(latRad) * Math.sin(lonRad),
-      Math.sin(latRad)
-    ).multiplyScalar(distance);
-  }
-
   function applyProjectionCenterToGlobeCamera(
     cam: THREE.PerspectiveCamera,
     controls: OrbitControls,
     distance: number
   ) {
-    cam.position.copy(
-      getProjectionCenterCameraPosition(
-        Math.max(distance, controls.minDistance)
-      )
+    globeGlide.set(0, 0, 0);
+    setGlobeView(
+      cam,
+      { ...(projectionCenter.value ?? DEFAULT_PROJECTION_CENTER), bearing: 0 },
+      Math.max(distance, controls.minDistance)
     );
     controls.target.set(0, 0, 0);
-    cam.lookAt(controls.target);
     controls.update();
   }
 
@@ -828,12 +840,11 @@ export function useGridScene(options: UseGridSceneOptions) {
       return;
     }
 
+    globeGlide.set(0, 0, 0);
     if (projectionHelper.value.isFlat) {
       configureFlatProjectionCamera(cam, controls);
-      controls.autoRotate = false;
     } else {
       configureGlobeProjectionCamera(cam, controls);
-      controls.autoRotate = store.isRotating;
     }
 
     applyCameraTarget(cam, controls);
@@ -866,6 +877,8 @@ export function useGridScene(options: UseGridSceneOptions) {
       controls.target.set(cam.position.x, cam.position.y, 0);
     } else {
       controls.target.set(0, 0, 0);
+      globeGlide.set(0, 0, 0);
+      setGlobeView(cam, { bearing: 0 });
       syncProjectionCenterFromCamera(cam);
     }
     controls.update();
@@ -900,6 +913,7 @@ export function useGridScene(options: UseGridSceneOptions) {
     camera.position
       .copy(position)
       .setLength(Math.max(position.length(), orbitControls.minDistance));
+    setGlobeView(camera, { bearing: 0 });
     orbitControls.target.set(0, 0, 0);
     applyCameraTarget(camera, orbitControls);
     syncProjectionCenterFromCamera(camera);
@@ -1072,9 +1086,6 @@ export function useGridScene(options: UseGridSceneOptions) {
 
   function toggleRotate() {
     store.toggleRotating();
-    if (!projectionHelper.value.isFlat) {
-      getOrbitControls()!.autoRotate = store.isRotating;
-    }
     animationLoop();
   }
 
@@ -1103,21 +1114,20 @@ export function useGridScene(options: UseGridSceneOptions) {
     }
   }
 
-  function updateRotationSpeed() {
-    if (projectionHelper.value.isFlat || !orbitControls || !camera) {
+  function updateAutoRotation() {
+    if (!store.isRotating) {
       return;
     }
-    // Normalize by the visible span so navigation sensitivity remains tied to
-    // apparent zoom instead of changing when the camera lens changes.
-    const normalizedDistance =
-      getVisibleVerticalSpan(camera.position.length(), camera.fov) / 4;
-    orbitControls.rotateSpeed =
-      Math.min(1, 0.01 + normalizedDistance ** 2) *
-      getGlobeMovementScale(camera.position.length());
-  }
-
-  function updateFlatProjectionRotation() {
-    if (!store.isRotating || !projectionHelper.value.isFlat) {
+    if (!projectionHelper.value.isFlat) {
+      // Paused while the globe is dragged, pinched or dollied.
+      if (
+        camera &&
+        orbitControls &&
+        !globeDrag &&
+        !isOrbitControlsBusy(orbitControls)
+      ) {
+        turnGlobeBy(camera, AUTO_ROTATION);
+      }
       return;
     }
     const center = projectionCenter.value ?? DEFAULT_PROJECTION_CENTER;
@@ -1138,8 +1148,10 @@ export function useGridScene(options: UseGridSceneOptions) {
     cancelAnimationFrame(frameId.value);
     runAnimationCallbacks(timestamp);
 
-    updateFlatProjectionRotation();
-    updateRotationSpeed();
+    updateAutoRotation();
+    if (camera && !projectionHelper.value.isFlat) {
+      glideGlobe(camera, globeGlide, globeDrag !== undefined);
+    }
 
     const controlsUpdated = render();
     const userInteractionActive = mouseDown || wheelActive;
@@ -1187,6 +1199,7 @@ export function useGridScene(options: UseGridSceneOptions) {
   }
 
   function onInteractionStart() {
+    globeGlide.set(0, 0, 0);
     initialRegionalFitPending = false;
     mouseDown = true;
     idleFrameCount = 0;
@@ -1200,6 +1213,7 @@ export function useGridScene(options: UseGridSceneOptions) {
   }
 
   function onWheelInteraction() {
+    globeGlide.set(0, 0, 0);
     initialRegionalFitPending = false;
     wheelActive = true;
     idleFrameCount = 0;
@@ -1283,8 +1297,118 @@ export function useGridScene(options: UseGridSceneOptions) {
     );
   }
 
+  function canvasCursor(event: PointerEvent) {
+    const rect = canvas.value!.getBoundingClientRect();
+    return new THREE.Vector2(
+      ((event.clientX - rect.left) / rect.width) * 2 - 1,
+      -((event.clientY - rect.top) / rect.height) * 2 + 1
+    );
+  }
+
+  // The pointers pressed on the globe and where each last was.
+  const globePointers = new Map<number, THREE.Vector2>();
+
+  /** Hold the globe with the one pointer that is down, if it is just one. */
+  function holdGlobe(timeStamp: number) {
+    const [[pointerId, cursor] = []] = globePointers;
+    globeDrag =
+      camera && pointerId !== undefined && cursor && globePointers.size === 1
+        ? {
+            pointerId,
+            cursor,
+            movedAt: timeStamp,
+            grabbed: globePointAt(camera, cursor),
+          }
+        : undefined;
+  }
+
+  function onGlobePointerDown(event: PointerEvent) {
+    if (
+      event.button !== 0 ||
+      projectionHelper.value.isFlat ||
+      isDisplayMode.value
+    ) {
+      return;
+    }
+    // A second finger makes it a pinch, which OrbitControls zooms with.
+    globeGlide.set(0, 0, 0);
+    globePointers.set(event.pointerId, canvasCursor(event));
+    holdGlobe(event.timeStamp);
+  }
+
+  function onGlobePointerMove(event: PointerEvent) {
+    if (!globePointers.has(event.pointerId)) {
+      return;
+    }
+    const cursor = canvasCursor(event);
+    globePointers.set(event.pointerId, cursor);
+    if (!camera || globeDrag?.pointerId !== event.pointerId) {
+      return;
+    }
+    if (event.shiftKey && event.pointerType !== "touch") {
+      // Twist the view about the point below the camera, in the centre of
+      // the canvas, by the angle the pointer moves around it: what is under
+      // the pointer goes round with it.
+      const { aspect } = camera;
+      const around = (at: THREE.Vector2) => Math.atan2(at.y, at.x * aspect);
+      const moved = around(cursor) - around(globeDrag.cursor);
+      turnGlobeBy(
+        camera,
+        camera.position
+          .clone()
+          .normalize()
+          // the shorter way round, as the angle wraps at half a turn
+          .multiplyScalar(-Math.atan2(Math.sin(moved), Math.cos(moved)))
+      );
+      // Nothing is held and nothing glides: letting go of shift grabs the
+      // globe anew.
+      globeDrag.grabbed = null;
+      globeGlide.set(0, 0, 0);
+    } else {
+      const before = camera.quaternion.clone();
+      globeDrag.grabbed = dragGlobe(
+        camera,
+        globeDrag.grabbed,
+        globeDrag.cursor,
+        cursor
+      );
+      globeGlide.add(turnBetween(before, camera.quaternion));
+    }
+    globeDrag.cursor = cursor;
+    globeDrag.movedAt = event.timeStamp;
+  }
+
+  function onGlobePointerUp(event: PointerEvent) {
+    if (!globePointers.delete(event.pointerId)) {
+      return;
+    }
+    if (
+      globeDrag?.pointerId !== event.pointerId ||
+      event.timeStamp - globeDrag.movedAt > GLIDE_HOLD_MS
+    ) {
+      globeGlide.set(0, 0, 0);
+    }
+    // The finger left of a pinch takes hold of the globe again.
+    holdGlobe(event.timeStamp);
+  }
+
   function setupInteractionListeners() {
     setupHoverListeners();
+
+    // OrbitControls captures the pointer it is pressed with, so the moves
+    // and the release of a drag arrive here from outside the canvas too.
+    useEventListener(canvas.value, "pointerdown", onGlobePointerDown, {
+      passive: true,
+    });
+    useEventListener(canvas.value, "pointermove", onGlobePointerMove, {
+      passive: true,
+    });
+    useEventListener(canvas.value, "pointerup", onGlobePointerUp, {
+      passive: true,
+    });
+    useEventListener(canvas.value, "pointercancel", onGlobePointerUp, {
+      passive: true,
+    });
 
     useEventListener(canvas.value, "wheel", onWheelInteraction, {
       passive: true,
@@ -1449,13 +1573,8 @@ export function useGridScene(options: UseGridSceneOptions) {
   // Sync rotation when store.isRotating is changed externally (e.g. presenter mode)
   watch(
     () => store.isRotating,
-    (rotating) => {
-      if (!projectionHelper.value.isFlat) {
-        const oc = getOrbitControls();
-        if (oc) {
-          oc.autoRotate = rotating;
-        }
-      }
+    () => {
+      globeGlide.set(0, 0, 0);
       animationLoop();
     }
   );
