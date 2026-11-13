@@ -5,9 +5,15 @@ import { computed, effectScope, ref } from "vue";
 
 import type { TProjectionType } from "@/lib/projection/projectionUtils.ts";
 
-const { mounted, unmounted } = vi.hoisted(() => ({
+const { mounted, unmounted, isDisplayMode } = vi.hoisted(() => ({
   mounted: [] as (() => void)[],
   unmounted: [] as (() => void)[],
+  isDisplayMode: { value: false },
+}));
+
+vi.mock("@/store/usePresenterSync.ts", () => ({
+  isDisplayMode,
+  isPresenterActive: { value: false },
 }));
 
 vi.mock("vue", async (importOriginal) => ({
@@ -60,6 +66,8 @@ const { getGlobeView, globePointAt, roundBearing, setGlobeView } =
 
 type TSceneSetupOptions = {
   alt?: string;
+  bearing?: string;
+  center?: { lat: number; lon: number };
   lat?: string;
   lon?: string;
   flat?: boolean;
@@ -76,10 +84,11 @@ function setupRegionalScene(saved: TSceneSetupOptions = {}) {
   setActivePinia(createPinia());
   const params = useUrlParameterStore();
   params.paramCameraAlt = saved.alt;
+  params.paramCameraBearing = saved.bearing;
   params.paramLat = saved.lat;
   params.paramLon = saved.lon;
   const scope = effectScope();
-  const center = ref({ lat: 0, lon: 0 });
+  const center = ref(saved.center ?? { lat: 0, lon: 0 });
   const grid = scope.run(() =>
     useGridScene({
       projectionHelper: computed(
@@ -612,6 +621,79 @@ it("opens north up from a centre and from a preset", async () => {
   expect(getGlobeView(camera).lon).toBeCloseTo(90, 9);
   expect(roundBearing(getGlobeView(camera).bearing)).toBe(0);
   scope.stop();
+});
+
+it.each([
+  { lat: 30, lon: 20, bearing: 77 },
+  { lat: -65, lon: -62, bearing: 200.004 },
+  { lat: 89.99996, lon: 100, bearing: 300 },
+  { lat: 90, lon: 37, bearing: 45 },
+  { lat: -90, lon: -120, bearing: 0 },
+])("opens the view a link was saved from (%j)", async (view) => {
+  const saved = setupRegionalScene();
+  setGlobeView(saved.camera, view, 1.3);
+  // a frame after an interaction, then the settled camera is written
+  saved.grid.registerAnimationCallback(() => {})();
+  await vi.advanceTimersByTimeAsync(2000);
+  const { paramCameraAlt: alt, paramCameraBearing: bearing } = saved.params;
+  const center = { ...saved.center.value };
+  // straight above a pole the meridian that is up is the longitude
+  expect(bearing === undefined).toBe(Math.abs(view.lat) === 90);
+  const camera = saved.camera.clone();
+  saved.scope.stop();
+  unmounted.splice(0).forEach((callback) => callback());
+  mounted.length = 0;
+
+  const opened = setupRegionalScene({ alt, bearing, center });
+  // the URL holds metres, 1e-4 degrees of centre and 0.01 of bearing
+  expect(opened.camera.quaternion.angleTo(camera.quaternion)).toBeLessThan(
+    2e-4
+  );
+  expect(opened.camera.position.distanceTo(camera.position)).toBeLessThan(2e-6);
+  // and a link without a bearing opens north up
+  const north = setupRegionalScene({ alt, center });
+  expect(roundBearing(getGlobeView(north.camera).bearing)).toBe(0);
+  north.scope.stop();
+  opened.scope.stop();
+});
+
+it("turns a presenter display with its controller's bearing, also at a pole", async () => {
+  isDisplayMode.value = true;
+  try {
+    // the display opens on the camera its controller put in the link
+    const { scope, camera, params, center } = setupRegionalScene({
+      alt: "9000000",
+    });
+    params.paramCameraBearing = "140";
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getGlobeView(camera).bearing).toBeCloseTo(140, 9);
+    // the centre arrives apart from the bearing, which must outlast it
+    center.value = { lat: 50, lon: 10 };
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(getGlobeView(camera).lat).toBeCloseTo(50, 9);
+    expect(getGlobeView(camera).bearing).toBeCloseTo(140, 9);
+    expect(params.paramCameraBearing).toBe("140");
+
+    // a controller within metres of a pole sends its centre as the pole
+    const controller = camera.clone();
+    for (const lon of [0, 0.0001, 25]) {
+      center.value = { lat: 90, lon };
+      await vi.advanceTimersByTimeAsync(2000);
+      setGlobeView(controller, { lat: 90, lon, bearing: 140 });
+      expect(camera.quaternion.angleTo(controller.quaternion)).toBeLessThan(
+        1e-7
+      );
+      expect(params.paramCameraBearing).toBe("140");
+    }
+
+    params.paramCameraBearing = undefined;
+    await vi.advanceTimersByTimeAsync(0);
+    setGlobeView(controller, { lat: 90, lon: 25, bearing: 0 });
+    expect(camera.quaternion.angleTo(controller.quaternion)).toBeLessThan(1e-7);
+    scope.stop();
+  } finally {
+    isDisplayMode.value = false;
+  }
 });
 
 afterEach(() => {

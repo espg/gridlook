@@ -18,6 +18,7 @@ export const useUrlParameterStore = defineStore("urlParams", {
       paramCameraPx: undefined as string | undefined,
       paramCameraPy: undefined as string | undefined,
       paramCameraAlt: undefined as string | undefined,
+      paramCameraBearing: undefined as string | undefined,
       paramColormap: undefined as TColorMap | undefined,
       paramInvertColormap: undefined as string | undefined,
       paramPosterizeLevels: undefined as string | undefined,
@@ -47,6 +48,7 @@ export const useUrlParameterStore = defineStore("urlParams", {
         "paramCameraPx",
         "paramCameraPy",
         "paramCameraAlt",
+        "paramCameraBearing",
       ] as const;
       const state = this as Record<keyof typeof this.$state, unknown>;
       const saved = Object.fromEntries(
@@ -73,6 +75,7 @@ export const STORE_PARAM_MAPPING = {
   px: "paramCameraPx",
   py: "paramCameraPy",
   alt: "paramCameraAlt",
+  bearing: "paramCameraBearing",
   invertcolormap: "paramInvertColormap",
   posterizelevels: "paramPosterizeLevels",
   hidelowerbound: "paramHideLowerBound",

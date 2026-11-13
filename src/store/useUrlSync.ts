@@ -84,6 +84,10 @@ const URL_PARAM_SYNC_MAP: TUrlSyncEntry[] = [
     param: URL_PARAMETERS.CAMERA_ALT,
   },
   {
+    key: "paramCameraBearing",
+    param: URL_PARAMETERS.CAMERA_BEARING,
+  },
+  {
     key: "paramGridType",
     param: URL_PARAMETERS.GRID_TYPE,
     transform: (v) => (v === undefined ? "" : String(v)),

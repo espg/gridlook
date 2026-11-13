@@ -31,6 +31,7 @@ export type TPresenterStatePayload = {
   paramCameraPx?: string;
   paramCameraPy?: string;
   paramCameraAlt?: string;
+  paramCameraBearing?: string;
   paramGridType?: string;
 };
 

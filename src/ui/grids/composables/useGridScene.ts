@@ -34,6 +34,7 @@ import {
 } from "@/lib/camera/cameraSettings.ts";
 import {
   dragGlobe,
+  getGlobeView,
   glideGlobe,
   globePointAt,
   setGlobeView,
@@ -748,12 +749,13 @@ export function useGridScene(options: UseGridSceneOptions) {
   function applyProjectionCenterToGlobeCamera(
     cam: THREE.PerspectiveCamera,
     controls: OrbitControls,
-    distance: number
+    distance: number,
+    bearing = 0
   ) {
     globeGlide.set(0, 0, 0);
     setGlobeView(
       cam,
-      { ...(projectionCenter.value ?? DEFAULT_PROJECTION_CENTER), bearing: 0 },
+      { ...(projectionCenter.value ?? DEFAULT_PROJECTION_CENTER), bearing },
       Math.max(distance, controls.minDistance)
     );
     controls.target.set(0, 0, 0);
@@ -761,11 +763,7 @@ export function useGridScene(options: UseGridSceneOptions) {
   }
 
   function syncProjectionCenterFromCamera(cam: THREE.PerspectiveCamera) {
-    const center = ProjectionHelper.cartesianToLatLon(
-      cam.position.x,
-      cam.position.y,
-      cam.position.z
-    );
+    const center = getGlobeView(cam);
     const nextCenter = {
       lat: roundProjectionCenter(Math.max(-90, Math.min(90, center.lat))),
       lon: roundProjectionCenter(
@@ -807,7 +805,7 @@ export function useGridScene(options: UseGridSceneOptions) {
       return;
     }
 
-    applyProjectionCenterToGlobeCamera(cam, controls, distance);
+    applyProjectionCenterToGlobeCamera(cam, controls, distance, state.bearing);
   }
 
   function applyCameraTarget(
@@ -1591,7 +1589,14 @@ export function useGridScene(options: UseGridSceneOptions) {
       if (!cam || !controls) {
         return;
       }
-      applyProjectionCenterToGlobeCamera(cam, controls, cam.position.length());
+      // A new centre opens north up. A presenter display's follows its
+      // controller's, whose bearing arrives apart from the centre.
+      applyProjectionCenterToGlobeCamera(
+        cam,
+        controls,
+        cam.position.length(),
+        isDisplayMode.value ? cameraState.decodeCameraFromURL()?.bearing : 0
+      );
       cameraState.encodeCameraToURL(cam, projectionHelper.value.isFlat);
       redraw();
     },
@@ -1603,6 +1608,7 @@ export function useGridScene(options: UseGridSceneOptions) {
       urlParameterStore.paramCameraPx,
       urlParameterStore.paramCameraPy,
       urlParameterStore.paramCameraAlt,
+      urlParameterStore.paramCameraBearing,
     ],
     () => {
       // This watcher is only relevant in presenter display mode where camera state is synced via URL.

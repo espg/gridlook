@@ -98,8 +98,13 @@ export function usePresenterSync(
     levelRangeShared,
   } = storeToRefs(store);
 
-  const { paramCameraPx, paramCameraPy, paramCameraAlt, paramGridType } =
-    storeToRefs(urlParameterStore);
+  const {
+    paramCameraPx,
+    paramCameraPy,
+    paramCameraAlt,
+    paramCameraBearing,
+    paramGridType,
+  } = storeToRefs(urlParameterStore);
 
   const { data, post } = useBroadcastChannel<
     TPresenterMessage,
@@ -171,6 +176,7 @@ export function usePresenterSync(
       paramCameraPx: paramCameraPx.value ?? "",
       paramCameraPy: paramCameraPy.value ?? "",
       paramCameraAlt: paramCameraAlt.value ?? "",
+      paramCameraBearing: paramCameraBearing.value ?? "",
       paramGridType: paramGridType.value,
     };
   }
@@ -291,6 +297,9 @@ export function usePresenterSync(
     }
     if (payload.paramCameraAlt !== undefined) {
       paramCameraAlt.value = payload.paramCameraAlt || undefined;
+    }
+    if (payload.paramCameraBearing !== undefined) {
+      paramCameraBearing.value = payload.paramCameraBearing || undefined;
     }
     if (payload.paramGridType !== undefined) {
       paramGridType.value = payload.paramGridType || undefined;
@@ -433,6 +442,7 @@ export function usePresenterSync(
     () => paramCameraPx.value,
     () => paramCameraPy.value,
     () => paramCameraAlt.value,
+    () => paramCameraBearing.value,
     () => paramGridType.value,
   ];
 

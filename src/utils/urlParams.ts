@@ -11,6 +11,8 @@ const URL_PARAMETERS = {
   CAMERA_PX: "px",
   CAMERA_PY: "py",
   CAMERA_ALT: "alt",
+  // degrees the globe's north is turned from up; absent when it is up
+  CAMERA_BEARING: "bearing",
   // legacy, only read and translated into LAYERS
   MASK_MODE: "maskmode",
   MASK_USE_TEXTURE: "maskusetexture",

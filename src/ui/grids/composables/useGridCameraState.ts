@@ -3,7 +3,9 @@ import { storeToRefs } from "pinia";
 import type * as THREE from "three";
 
 import { EARTH_RADIUS_METERS } from "@/lib/camera/cameraSettings.ts";
+import { getGlobeView, roundBearing } from "@/lib/camera/globeCamera.ts";
 import { useUrlParameterStore } from "@/store/paramStore.ts";
+import { isDisplayMode } from "@/store/usePresenterSync.ts";
 
 export type TCameraState = {
   position: number[];
@@ -14,6 +16,7 @@ export type TCameraUrlState = {
   px: number;
   py: number;
   alt: number;
+  bearing: number;
 };
 
 export type TGridCameraState = {
@@ -55,10 +58,16 @@ export function altitudeToCameraDistance(altitude: number, isFlat: boolean) {
 /* eslint-disable-next-line max-lines-per-function */
 export function useGridCameraState(): TGridCameraState {
   const urlParameterStore = useUrlParameterStore();
-  const { paramCameraPx, paramCameraPy, paramCameraAlt } =
+  const { paramCameraPx, paramCameraPy, paramCameraAlt, paramCameraBearing } =
     storeToRefs(urlParameterStore);
 
   function encodeCameraToURL(camera: THREE.PerspectiveCamera, isFlat: boolean) {
+    // A presenter display keeps the camera its controller sent. Its own
+    // would differ straight above a pole, where a bearing is read back as
+    // part of the longitude.
+    if (isDisplayMode.value) {
+      return;
+    }
     paramCameraPx.value = formatCameraParam(
       isFlat ? camera.position.x * EARTH_RADIUS_METERS : 0
     );
@@ -69,6 +78,9 @@ export function useGridCameraState(): TGridCameraState {
     paramCameraAlt.value = formatCameraParam(
       cameraDistanceToAltitude(distance, isFlat)
     );
+    // Written only for a globe whose north is not up.
+    const bearing = isFlat ? 0 : roundBearing(getGlobeView(camera).bearing);
+    paramCameraBearing.value = bearing ? String(bearing) : undefined;
   }
 
   function decodeCameraFromURL(): TCameraUrlState | null {
@@ -80,6 +92,7 @@ export function useGridCameraState(): TGridCameraState {
       px: parseCameraParam(paramCameraPx.value) ?? 0,
       py: parseCameraParam(paramCameraPy.value) ?? 0,
       alt,
+      bearing: parseCameraParam(paramCameraBearing.value) ?? 0,
     };
   }
 

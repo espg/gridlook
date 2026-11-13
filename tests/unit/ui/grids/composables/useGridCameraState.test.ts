@@ -18,6 +18,7 @@ const {
   useGridCameraState,
 } = await import("@/ui/grids/composables/useGridCameraState.ts");
 const { URL_PARAMETERS } = await import("@/utils/urlParams.ts");
+const { setGlobeView } = await import("@/lib/camera/globeCamera.ts");
 
 beforeEach(() => {
   setActivePinia(createPinia());
@@ -29,6 +30,8 @@ describe("camera URL parameters", () => {
     expect(URL_PARAMETERS.CAMERA_PX).toBe("px");
     expect(URL_PARAMETERS.CAMERA_PY).toBe("py");
     expect(URL_PARAMETERS.CAMERA_ALT).toBe("alt");
+    expect(URL_PARAMETERS.CAMERA_BEARING).toBe("bearing");
+    expect(STORE_PARAM_MAPPING.bearing).toBe("paramCameraBearing");
     expect(URL_PARAMETERS.LAT).toBe("lat");
     expect(URL_PARAMETERS.LON).toBe("lon");
 
@@ -80,6 +83,29 @@ describe("camera URL parameters", () => {
     );
   });
 
+  it("writes the globe's bearing only where north is not up", () => {
+    const camera = new THREE.PerspectiveCamera();
+    const cameraState = useGridCameraState();
+    const params = useUrlParameterStore();
+    for (const [bearing, written] of [
+      [0, undefined],
+      [0.004, undefined],
+      [359.996, undefined],
+      [123.456, "123.46"],
+      [-90, "270"],
+    ] as const) {
+      setGlobeView(camera, { lat: -65, lon: -62, bearing }, 3);
+      cameraState.encodeCameraToURL(camera, false);
+      expect(params.paramCameraBearing).toBe(written);
+    }
+    setGlobeView(camera, { lat: -65, lon: -62, bearing: 123 }, 3);
+    cameraState.encodeCameraToURL(camera, false);
+    expect(params.paramCameraBearing).toBe("123");
+    // a flat map has none
+    cameraState.encodeCameraToURL(camera, true);
+    expect(params.paramCameraBearing).toBeUndefined();
+  });
+
   it("requires a finite altitude and defaults omitted offsets to zero", () => {
     const params = useUrlParameterStore();
     const cameraState = useGridCameraState();
@@ -90,7 +116,10 @@ describe("camera URL parameters", () => {
       px: 0,
       py: 0,
       alt: 1000,
+      bearing: 0,
     });
+    params.paramCameraBearing = "123.45";
+    expect(cameraState.decodeCameraFromURL()?.bearing).toBe(123.45);
     params.paramCameraAlt = "not-a-number";
     expect(cameraState.decodeCameraFromURL()).toBeNull();
   });
