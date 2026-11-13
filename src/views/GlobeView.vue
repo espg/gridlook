@@ -79,6 +79,7 @@ import GridRegular from "@/ui/grids/Regular.vue";
 import GridTriangular from "@/ui/grids/Triangular.vue";
 import AboutView from "@/ui/overlays/AboutModal.vue";
 import BasemapAttribution from "@/ui/overlays/BasemapAttribution.vue";
+import Compass from "@/ui/overlays/Compass.vue";
 import {
   isAnimationPlaying,
   stopAnimation,
@@ -724,6 +725,8 @@ useEventListener(window, "keydown", (e: KeyboardEvent) => {
   }
   if (key === "r") {
     toggleRotate();
+  } else if (key === "n") {
+    store.requestNorthReset();
   } else if (key === "d") {
     toggleDistractionFree();
   } else if (key === "g") {
@@ -793,6 +796,11 @@ useEventListener(window, "keydown", (e: KeyboardEvent) => {
       />
       <HoverReadout v-if="detectedGridType !== undefined" />
       <DistanceScale v-if="detectedGridType !== undefined" />
+      <Compass
+        v-if="
+          detectedGridType !== undefined && !distractionFree && !isDisplayMode
+        "
+      />
       <BasemapAttribution v-if="detectedGridType !== undefined" />
     </div>
     <div

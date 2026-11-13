@@ -37,9 +37,11 @@ import {
   getGlobeView,
   glideGlobe,
   globePointAt,
+  roundBearing,
   setGlobeView,
   turnBetween,
   turnGlobeBy,
+  turnGlobeNorthUp,
 } from "@/lib/camera/globeCamera.ts";
 import {
   handleKeyDown,
@@ -254,6 +256,7 @@ export function useGridScene(options: UseGridSceneOptions) {
         ? camera.position.z
         : camera.position.length() - 1;
       const near = Math.min(isFlat ? 0.005 : 0.1, altitude / 2);
+      store.bearing = isFlat ? 0 : roundBearing(getGlobeView(camera).bearing);
       if (camera.near !== near) {
         camera.near = near;
         camera.updateProjectionMatrix();
@@ -1574,6 +1577,22 @@ export function useGridScene(options: UseGridSceneOptions) {
     () => {
       globeGlide.set(0, 0, 0);
       animationLoop();
+    }
+  );
+
+  watch(
+    () => store.northResetRequest,
+    () => {
+      const cam = getCamera();
+      // A presenter display follows its controller.
+      if (!cam || projectionHelper.value.isFlat || isDisplayMode.value) {
+        return;
+      }
+      globeGlide.set(0, 0, 0);
+      turnGlobeNorthUp(cam);
+      syncProjectionCenterFromCamera(cam);
+      cameraState.encodeCameraToURL(cam, false);
+      redraw();
     }
   );
 

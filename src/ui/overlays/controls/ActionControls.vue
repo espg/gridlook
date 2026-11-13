@@ -80,6 +80,18 @@ const showPresenter = !isMobileDevice();
         </span>
         <span> Rotate </span>
       </button>
+      <button
+        class="button cell"
+        type="button"
+        title="Turn the globe north up"
+        :disabled="projectionMode !== PROJECTION_TYPES.NEARSIDE_PERSPECTIVE"
+        @click="store.requestNorthReset"
+      >
+        <span class="icon">
+          <i class="fas fa-compass" aria-hidden="true"></i>
+        </span>
+        <span> North </span>
+      </button>
       <ShareButton class="cell" />
       <button
         v-if="showPresenter"

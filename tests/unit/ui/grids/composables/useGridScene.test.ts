@@ -657,6 +657,63 @@ it.each([
   opened.scope.stop();
 });
 
+it("turns north up on request, about the point below the camera", async () => {
+  const { grid, scope, camera, params, center } = setupRegionalScene();
+  const store = useGlobeControlStore();
+  setGlobeView(camera, { lat: -65, lon: -62, bearing: 200 }, 2.5);
+  // frames until the camera has settled and is written to the URL
+  grid.registerAnimationCallback(() => {})();
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(store.bearing).toBe(200);
+  expect(params.paramCameraBearing).toBe("200");
+  const position = camera.position.clone();
+
+  store.requestNorthReset();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(camera.position.distanceTo(position)).toBeLessThan(1e-9);
+  expect(roundBearing(getGlobeView(camera).bearing)).toBe(0);
+  expect(store.bearing).toBe(0);
+  expect(params.paramCameraBearing).toBeUndefined();
+  // and it stays north up once the camera has settled
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(store.bearing).toBe(0);
+  expect(vi.getTimerCount()).toBe(0);
+
+  // Straight above a pole every way up is north up, and the roll is read as
+  // the longitude. The request turns the view as polar maps have it.
+  for (const lat of [90, -90]) {
+    setGlobeView(camera, { lat, lon: 37, bearing: 45 }, 2.5);
+    grid.registerAnimationCallback(() => {})();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(store.bearing).toBe(0);
+    expect(center.value.lon).toBeCloseTo(lat > 0 ? -8 : 82, 3);
+    store.requestNorthReset();
+    await vi.advanceTimersByTimeAsync(0);
+    const expected = camera.clone();
+    setGlobeView(expected, { lat, lon: 0, bearing: 0 });
+    expect(camera.quaternion.angleTo(expected.quaternion)).toBeLessThan(1e-7);
+    expect(camera.position.distanceTo(expected.position)).toBeLessThan(1e-9);
+    expect(center.value).toEqual({ lat, lon: 0 });
+    // the prime meridian is down the screen at the north pole, up at the south
+    camera.updateMatrixWorld();
+    const greenwich = new THREE.Vector3(1, 0, lat).normalize().project(camera);
+    expect(greenwich.x).toBeCloseTo(0, 9);
+    expect(Math.sign(greenwich.y)).toBe(lat > 0 ? -1 : 1);
+    const turned = camera.quaternion.clone();
+    store.requestNorthReset();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(camera.quaternion.angleTo(turned)).toBeLessThan(1e-7);
+  }
+
+  isDisplayMode.value = true;
+  setGlobeView(camera, { lat: 10, lon: 10, bearing: 200 });
+  store.requestNorthReset();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(getGlobeView(camera).bearing).toBeCloseTo(200, 9);
+  isDisplayMode.value = false;
+  scope.stop();
+});
+
 it("turns a presenter display with its controller's bearing, also at a pole", async () => {
   isDisplayMode.value = true;
   try {

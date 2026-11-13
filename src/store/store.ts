@@ -237,6 +237,10 @@ export const useGlobeControlStore = defineStore("globeControl", {
       projectionMode: PROJECTION_TYPES.NEARSIDE_PERSPECTIVE as TProjectionType,
       projectionCenter: { lat: 0, lon: 0 } as TProjectionCenter,
       isRotating: false,
+      // compass direction of screen-up below the globe camera, as rendered
+      bearing: 0,
+      // counts the requests to turn the globe north up
+      northResetRequest: 0 as number,
       hoverEnabled: false,
       hoveredGridPoint: undefined as THoveredGridPoint | undefined,
       distanceScale: null as TDistanceScale | null,
@@ -606,6 +610,9 @@ export const useGlobeControlStore = defineStore("globeControl", {
     },
     requestGridExport() {
       this.gridExportRequest++;
+    },
+    requestNorthReset() {
+      this.northResetRequest++;
     },
     setStreamlinePair(pair?: TVectorVariablePair) {
       this.streamlinePair = pair;
