@@ -8,7 +8,8 @@ vi.stubGlobal("localStorage", { getItem: () => null });
 const { createPinia, setActivePinia } = await import("pinia");
 const { EARTH_RADIUS_METERS, CAMERA_VERTICAL_FOV_DEGREES } =
   await import("@/lib/camera/cameraSettings.ts");
-const { DEFAULT_PIXELS_PER_CELL } = await import("@/lib/data/levels.ts");
+const { DEFAULT_PIXELS_PER_CELL, setLevelQuality } =
+  await import("@/lib/data/levels.ts");
 const { PROJECTION_TYPES } =
   await import("@/lib/projection/projectionUtils.ts");
 const { ZARR_FORMAT } = await import("@/lib/types/GlobeTypes.ts");
@@ -58,6 +59,8 @@ async function nextPick() {
 }
 
 beforeEach(() => {
+  // the cases below are written for the standard 16 px per cell
+  setLevelQuality("standard");
   setActivePinia(createPinia());
   vi.useFakeTimers();
 });
@@ -79,6 +82,50 @@ it("picks the level from the rendered ground scale", async () => {
     store.metersPerPixel = scaleFor(6);
     await nextPick();
     expect(store.selectedLevel).toBe(2);
+  } finally {
+    scope.stop();
+  }
+});
+
+it("takes a coarser level at once and a finer one after the camera rests", async () => {
+  const store = useGlobeControlStore();
+  const scope = effectScope();
+  scope.run(() => useLevelSelection(pyramid([10, 8, 6]), () => VIEWPORT));
+  try {
+    store.metersPerPixel = scaleFor(6);
+    await nextPick();
+    expect(store.selectedLevel).toBe(2);
+
+    // zooming in: the finest level waits for the camera to settle
+    store.metersPerPixel = scaleFor(10);
+    await nextPick();
+    expect(store.selectedLevel).toBe(2);
+    vi.advanceTimersByTime(1000);
+    expect(store.selectedLevel).toBe(0);
+
+    // zooming out is not delayed
+    store.metersPerPixel = scaleFor(6);
+    await nextPick();
+    expect(store.selectedLevel).toBe(2);
+  } finally {
+    scope.stop();
+  }
+});
+
+it("picks a finer level for a sharper quality", async () => {
+  const store = useGlobeControlStore();
+  const scope = effectScope();
+  scope.run(() => useLevelSelection(pyramid([10, 8, 6]), () => VIEWPORT));
+  try {
+    store.metersPerPixel = scaleFor(8);
+    await nextPick();
+    expect(store.selectedLevel).toBe(1);
+
+    // 2 px per cell instead of 16 asks for cells 8 times smaller
+    store.setLevelQuality("sharp");
+    await nextTick();
+    vi.advanceTimersByTime(1000);
+    expect(store.selectedLevel).toBe(0);
   } finally {
     scope.stop();
   }

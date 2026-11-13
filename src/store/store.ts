@@ -1,6 +1,10 @@
 import { defineStore } from "pinia";
 
-import { sumsOverCells } from "@/lib/data/levels.ts";
+import {
+  setLevelQuality,
+  sumsOverCells,
+  type TLevelQuality,
+} from "@/lib/data/levels.ts";
 import {
   levelAxesAreIdentical,
   type TStreamlineLevelInfo,
@@ -255,6 +259,8 @@ export const useGlobeControlStore = defineStore("globeControl", {
       // whether the camera picks it (a manual pick turns that off)
       selectedLevel: 0 as number,
       levelAuto: true,
+      // how fine the camera-picked level is (see LEVEL_QUALITIES)
+      levelQuality: "auto" as TLevelQuality,
       // load the selected level whole rather than the part in view
       levelWhole: false,
       // whether every level shares the coarsest level's colour range and
@@ -354,6 +360,10 @@ export const useGlobeControlStore = defineStore("globeControl", {
     },
     setLevelAuto(auto: boolean) {
       this.levelAuto = auto;
+    },
+    setLevelQuality(quality: TLevelQuality) {
+      setLevelQuality(quality);
+      this.levelQuality = quality;
     },
     setLevelWhole(whole: boolean) {
       this.levelWhole = whole;
