@@ -47,7 +47,7 @@ Mouse behavior depends on the current projection.
 
 - Left drag takes hold of the globe: the place under the pointer stays under it, at every latitude and across the poles. Where the pointer is off the globe, the drag turns the globe with the pointer's movement
 - Released while moving, the globe glides on and comes to a stop
-- Shift + left drag twists the view about its centre instead: what is under the pointer goes round the centre with it. Nothing glides on after it
+- Shift + left drag twists the view about its centre instead: what is under the pointer goes round the centre with it, except right next to the centre, where nothing turns. Nothing glides on after it
 - Mouse wheel zooms towards the place under the cursor; towards the centre of the view where the cursor is off the globe
 - Right drag pans the camera target
 

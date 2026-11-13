@@ -1333,6 +1333,11 @@ export function useGridScene(options: UseGridSceneOptions) {
     }
     // A second finger makes it a pinch, which OrbitControls zooms with.
     globeGlide.set(0, 0, 0);
+    if (event.isPrimary) {
+      // the first pointer of a gesture: one whose release never arrived
+      // would otherwise count as a finger still down for good
+      globePointers.clear();
+    }
     globePointers.set(event.pointerId, canvasCursor(event));
     holdGlobe(event.timeStamp);
   }
@@ -1352,7 +1357,14 @@ export function useGridScene(options: UseGridSceneOptions) {
       // the pointer goes round with it.
       const { aspect } = camera;
       const around = (at: THREE.Vector2) => Math.atan2(at.y, at.x * aspect);
-      const moved = around(cursor) - around(globeDrag.cursor);
+      // Next to the centre the angle swings by half a turn within a pixel:
+      // no twist within a twentieth of the canvas height of it.
+      const steady = (at: THREE.Vector2) =>
+        Math.hypot(at.x * aspect, at.y) > 0.1;
+      const moved =
+        steady(cursor) && steady(globeDrag.cursor)
+          ? around(cursor) - around(globeDrag.cursor)
+          : 0;
       turnGlobeBy(
         camera,
         camera.position

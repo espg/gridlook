@@ -504,6 +504,14 @@ it("twists the view on a shift drag and takes hold again without it", async () =
     true
   );
   expect(camera.quaternion.angleTo(twisted)).toBeLessThan(1e-9);
+  // nor does crossing the centre, where the angle flips by half a turn
+  await move(
+    centre.x + 3 - pointer().clientX,
+    centre.y - pointer().clientY,
+    true
+  );
+  await move(-6, 0, true);
+  expect(camera.quaternion.angleTo(twisted)).toBeLessThan(1e-9);
   expect(getGlobeView(camera).lat).toBeCloseTo(lat, 9);
   expect(getGlobeView(camera).lon).toBeCloseTo(lon, 9);
   expect(camera.position.length()).toBeCloseTo(4, 12);
@@ -526,6 +534,30 @@ it("twists the view on a shift drag and takes hold again without it", async () =
   release();
   await vi.advanceTimersByTimeAsync(500);
   expect(camera.quaternion.angleTo(released)).toBeLessThan(1e-7);
+  scope.stop();
+});
+
+it("grabs with a new touch after one whose release never arrived", () => {
+  const { grid, scope, camera, fire } = setupGlobeDrag();
+  setGlobeView(camera, { lat: 10, lon: 20, bearing: 0 }, 4);
+  grid.redraw();
+  const touch = (type: string, pointerId: number, clientX: number) =>
+    fire(type, {
+      pointerId,
+      pointerType: "touch",
+      isPrimary: true,
+      button: 0,
+      timeStamp: clientX,
+      clientX,
+      clientY: 300,
+    });
+  touch("pointerdown", 5, 300);
+  // no pointerup for 5; the next finger is the first of a new gesture
+  touch("pointerdown", 6, 400);
+  const before = camera.position.clone();
+  touch("pointermove", 6, 440);
+  expect(camera.position.angleTo(before)).toBeGreaterThan(1e-3);
+  touch("pointerup", 6, 440);
   scope.stop();
 });
 
