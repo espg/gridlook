@@ -14,10 +14,7 @@ uniform sampler2D data;
 uniform vec2 dataUvOffset;
 uniform vec2 dataUvScale;
 uniform int clipToDataRect;
-uniform sampler2D coverMask;
-uniform int useCoverMask;
-uniform vec2 coverUvOffset;
-uniform vec2 coverUvScale;
+uniform int claimCells;
 uniform int projectionType;
 uniform float projectionRadius;
 uniform int edgeQuality;
@@ -26,17 +23,6 @@ varying vec2 vUv;
 varying vec2 vProjectedXY;
 
 void main() {
-    // A pyramid's backdrop stays out of where its level has cells: the
-    // level's missing values there are shown as missing, not filled in.
-    vec2 coverUv = (vUv - coverUvOffset) / coverUvScale;
-    // Test the rectangle before sampling: clamp-to-edge must not extend a
-    // cropped mask into neighbouring unread blocks.
-    if (useCoverMask == 1
-    && coverUv.x >= 0.0 && coverUv.x < 1.0
-    && coverUv.y >= 0.0 && coverUv.y < 1.0
-    && texture(coverMask, coverUv).r > 0.5) {
-        discard;
-    }
     vec2 dataUv = (vUv - dataUvOffset) / dataUvScale;
     // Only a HEALPix face cropped to its sparse data's bounding box clips here;
     // a full-face/full-globe texture (the common case) relies on the texture's
@@ -46,9 +32,18 @@ void main() {
         discard;
     }
     float v_value = texture(data, dataUv).r;
-    if ((edgeQuality > 0 && !isInsideProjectionDomain(vProjectedXY, projectionType, projectionRadius))
-    || is_nan(v_value) || v_value <= hideBelowValue || v_value >= hideAboveValue) {
+    if (edgeQuality > 0 && !isInsideProjectionDomain(vProjectedXY, projectionType, projectionRadius)) {
         discard;
+    }
+    if (is_nan(v_value) || v_value <= hideBelowValue || v_value >= hideAboveValue) {
+        // A level of a pyramid keeps a cell it does not draw (no value, or
+        // hidden) from its backdrop: no colour, but the stencil is marked.
+        // Infinity is where the texture has no cell at all.
+        if (claimCells == 0 || is_inf(v_value)) {
+            discard;
+        }
+        gl_FragColor = vec4(0.0);
+        return;
     }
     gl_FragColor.a = opacity;
     float normalized_value = clamp(addOffset + scaleFactor * v_value, 0.0, 1.0);

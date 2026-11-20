@@ -118,9 +118,8 @@ window, or outside the region it covers): the level marks the stencil buffer
 where it draws a cell and the coarsest level is drawn after it, only where
 nothing is marked, so it never shows through a translucent grid. A cell
 that is not drawn (no value, or hidden at or beyond a bound of the colour
-range) marks nothing either, so the coarsest level shows through it: along
-a coastline or at a threshold, coarse cells fill the gaps of the finer
-level. By default the colour range and histogram are taken from the
+range) is marked as well, so it stays empty: the coarsest level does not
+fill in what the level shown says is missing. By default the colour range and histogram are taken from the
 coarsest level, so colours do not shift as the view moves or the level
 changes (see the toggles below). When the levels do not share one range,
 the coarsest level is not drawn beneath, as its colours would be off the

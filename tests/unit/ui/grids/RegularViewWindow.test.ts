@@ -239,6 +239,9 @@ it("loads the view window of a large level over the whole coarsest level", async
   expect(backdrop[0].material.stencilWriteMask).toBe(0);
   expect(level[0].material.stencilZPass).toBe(THREE.ReplaceStencilOp);
   expect(level[0].material.stencilRef).toBe(backdrop[0].material.stencilRef);
+  // only the level marks the cells it does not draw
+  expect(level[0].material.uniforms.claimCells.value).toBe(1);
+  expect(backdrop[0].material.uniforms.claimCells.value).toBe(0);
   expect(level[0].material.depthFunc).toBe(THREE.LessEqualDepth);
   expect(store.varinfo!.bounds.high).toBeLessThan(0);
 

@@ -4,3 +4,7 @@ bool is_nan(float val) {
     // exponent all 1s AND zero mantissa = Infinity (not NaN)
     return (bits & 0x7F800000u) == 0x7F800000u && (bits & 0x007FFFFFu) != 0u;
 }
+
+bool is_inf(float val) {
+    return (floatBitsToUint(val) & 0x7FFFFFFFu) == 0x7F800000u;
+}

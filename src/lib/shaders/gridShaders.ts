@@ -99,13 +99,8 @@ export function makeGpuProjectedTextureMaterial(
       // bounding box turns this on. Left off elsewhere so a texture's own
       // wrap mode (e.g. RepeatWrapping across the lon-wrap seam) still works.
       clipToDataRect: { value: 0 },
-      // Off unless this is the backdrop of a pyramid: a mask over the face
-      // (red > 0.5) of where its level has cells, which the backdrop leaves to
-      // the level even where the level's values are missing.
-      coverMask: { value: null },
-      useCoverMask: { value: 0 },
-      coverUvOffset: { value: new THREE.Vector2(0, 0) },
-      coverUvScale: { value: new THREE.Vector2(1, 1) },
+      // On for a level of a pyramid (see levelMaterial).
+      claimCells: { value: 0 },
       // Projection uniforms
       projectionType: {
         value: PROJECTION_TYPE_BY_MODE[PROJECTION_TYPES.NEARSIDE_PERSPECTIVE],
@@ -363,15 +358,21 @@ const LEVEL_STENCIL_REF = 1;
 export const BACKDROP_RENDER_ORDER = 0.5;
 
 /**
- * A level marks the stencil wherever it draws a cell, so the backdrop drawn
+ * A level marks the stencil wherever it has a cell, so the backdrop drawn
  * after it (see backdropMaterial) fills only the rest, and never shows
  * through a translucent level. Every render target needs a stencil buffer.
+ * A cell that is not drawn (no value, or hidden) is marked too: its fragment
+ * is kept with alpha 0, which the blending below (NormalBlending, but on for
+ * an opaque material as well) leaves out of the colour.
  */
-export function levelMaterial<T extends THREE.Material>(material: T) {
+export function levelMaterial(material: THREE.ShaderMaterial) {
   material.stencilWrite = true;
   material.stencilRef = LEVEL_STENCIL_REF;
   material.stencilFunc = THREE.AlwaysStencilFunc;
   material.stencilZPass = THREE.ReplaceStencilOp;
+  material.uniforms.claimCells.value = 1;
+  material.blending = THREE.CustomBlending;
+  material.blendSrcAlpha = THREE.OneFactor;
   return material;
 }
 
