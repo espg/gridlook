@@ -193,6 +193,53 @@ export const STREAMLINES_NEED_WHOLE_LEVEL =
 /** Target on-screen size of one cell, in pixels, at the sub-camera point. */
 export const DEFAULT_PIXELS_PER_CELL = 16;
 
+export type TLevelQuality = "auto" | "fast" | "standard" | "sharp";
+
+export const LEVEL_QUALITIES: { value: TLevelQuality; label: string }[] = [
+  { value: "auto", label: "Auto (sharp for the screen)" },
+  { value: "fast", label: "Fast (8 px per cell)" },
+  { value: "standard", label: "Standard (16 px per cell)" },
+  { value: "sharp", label: "Sharp (2 px per cell)" },
+];
+
+/** Cell size target, in CSS pixels, of a quality; auto aims for 4 device pixels. */
+function pixelsPerCellOf(quality: TLevelQuality): number {
+  switch (quality) {
+    case "fast":
+      return 8;
+    case "standard":
+      return DEFAULT_PIXELS_PER_CELL;
+    case "sharp":
+      return 2;
+    default: {
+      const dpr = typeof window === "undefined" ? 1 : window.devicePixelRatio;
+      return Math.max(2, 4 / (dpr || 1));
+    }
+  }
+}
+
+// `pxpercell=<n>` in the URL pins the target (read once: the app rewrites the
+// URL later and drops unknown keys); the quality choice replaces it.
+const URL_PIXELS_PER_CELL = ((): number | undefined => {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+  const px = Number(
+    new URLSearchParams(window.location.search).get("pxpercell")
+  );
+  return px > 0 ? px : undefined;
+})();
+
+let activePixelsPerCell = URL_PIXELS_PER_CELL ?? pixelsPerCellOf("auto");
+
+export function setLevelQuality(quality: TLevelQuality) {
+  activePixelsPerCell = pixelsPerCellOf(quality);
+}
+
+function urlPixelsPerCell(): number {
+  return activePixelsPerCell;
+}
+
 /**
  * Hysteresis in orders (log2 of cell size, so one order is one unit): another
  * level replaces the active one only when it fits the target better by at
@@ -300,7 +347,7 @@ export function selectLevel(
     return active;
   }
   const target =
-    (options.pixelsPerCell ?? DEFAULT_PIXELS_PER_CELL) *
+    (options.pixelsPerCell ?? urlPixelsPerCell()) *
     (typeof camera === "number" ? camera : groundMetersPerPixel(camera));
   const mismatch = (index: number) =>
     Math.abs(Math.log2(levels[index].resolution!) - Math.log2(target));

@@ -24,6 +24,13 @@ import type { TSources } from "@/lib/types/GlobeTypes.ts";
  */
 export const LEVEL_PICK_INTERVAL_MS = 200;
 
+/**
+ * A finer level than the shown one is taken only once the camera has stayed
+ * this long (a coarser one at once), so zooming out never waits on, or shows,
+ * a half-loaded fine level.
+ */
+const LEVEL_FINER_SETTLE_MS = 350;
+
 export type TViewportSize = { width: number; height: number };
 
 /**
@@ -97,6 +104,74 @@ function fittingLevel(
   return held[picked] ?? store.selectedLevel;
 }
 
+type TLevelStore = ReturnType<typeof useGlobeControlStore>;
+
+/** What makes the automatic pick run again besides the camera. */
+function levelWatchKey(store: TLevelStore, sources: TSources | undefined) {
+  const levels = sources?.levels ?? [];
+  return [
+    store.levelAuto,
+    store.levelQuality,
+    // back on a variable with levels after one without
+    hasLevels(levels, store.varnameSelector),
+    ...levels.map((_, index) => store.loadsLevelByView(index)),
+  ].join();
+}
+
+/**
+ * `pickLevel` applies the fitting level at once; `pickLevelSettled` is the
+ * camera-driven one: a coarser level at once, a finer one only after the
+ * camera has rested, so zooming out never shows a half-loaded fine level.
+ */
+function createLevelPickers(
+  store: TLevelStore,
+  datasources: Ref<TSources | undefined>,
+  getViewport: () => TViewportSize,
+  cameraAlt: Ref<string | undefined>
+) {
+  let settleTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function fitting() {
+    const levels = datasources.value?.levels;
+    if (
+      !levels ||
+      !hasLevels(levels, store.varnameSelector) ||
+      !store.levelAuto
+    ) {
+      return undefined;
+    }
+    return {
+      levels,
+      picked: fittingLevel(store, levels, getViewport(), cameraAlt.value),
+    };
+  }
+
+  function pickLevel() {
+    clearTimeout(settleTimer);
+    const fit = fitting();
+    if (fit) {
+      store.selectLevel(fit.picked, false);
+    }
+  }
+
+  function pickLevelSettled() {
+    clearTimeout(settleTimer);
+    const fit = fitting();
+    if (!fit) {
+      return;
+    }
+    const shown = fit.levels[store.selectedLevel]?.resolution;
+    const next = fit.levels[fit.picked]?.resolution;
+    if (shown !== undefined && next !== undefined && next < shown) {
+      settleTimer = setTimeout(pickLevel, LEVEL_FINER_SETTLE_MS);
+      return;
+    }
+    store.selectLevel(fit.picked, false);
+  }
+
+  return { pickLevel, pickLevelSettled };
+}
+
 /**
  * Select the level a full-path varname names (from a link or the presenter),
  * without turning automatic selection off. The dataset reads the level at
@@ -139,36 +214,18 @@ export function useLevelSelection(
   const store = useGlobeControlStore();
   const { paramCameraAlt } = storeToRefs(useUrlParameterStore());
 
-  function pickLevel() {
-    const levels = datasources.value?.levels;
-    if (
-      !levels ||
-      !hasLevels(levels, store.varnameSelector) ||
-      !store.levelAuto
-    ) {
-      return;
-    }
-    store.selectLevel(
-      fittingLevel(store, levels, getViewport(), paramCameraAlt.value),
-      false
-    );
-  }
-
-  watchThrottled(() => store.metersPerPixel, pickLevel, {
-    throttle: LEVEL_PICK_INTERVAL_MS,
-  });
-  watch(
-    () =>
-      [
-        store.levelAuto,
-        // back on a variable with levels after one without
-        hasLevels(datasources.value?.levels ?? [], store.varnameSelector),
-        ...(datasources.value?.levels ?? []).map((_, index) =>
-          store.loadsLevelByView(index)
-        ),
-      ].join(),
-    pickLevel
+  const { pickLevel, pickLevelSettled } = createLevelPickers(
+    store,
+    datasources,
+    getViewport,
+    paramCameraAlt
   );
+
+  watchThrottled(() => store.metersPerPixel, pickLevelSettled, {
+    throttle: LEVEL_PICK_INTERVAL_MS,
+    trailing: true,
+  });
+  watch(() => levelWatchKey(store, datasources.value), pickLevel);
   watch(
     () => store.selectedLevel,
     (level) => {
